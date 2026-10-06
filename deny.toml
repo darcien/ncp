@@ -1,5 +1,14 @@
 [graph]
 all-features = true
+# Check only the release targets: macOS and Linux, x86_64 and arm64.
+targets = [
+  "x86_64-apple-darwin",
+  "aarch64-apple-darwin",
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-musl",
+  "aarch64-unknown-linux-musl",
+]
 
 [advisories]
 version = 2

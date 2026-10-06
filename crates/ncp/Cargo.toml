@@ -7,9 +7,15 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+process-wrap = { version = "10", default-features = false, features = ["tokio1", "process-group", "kill-on-drop"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2"] }
+rmcp = { version = "=3.5.1", default-features = false, features = ["client", "transport-async-rw", "transport-streamable-http-client-reqwest", "reqwest-tls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 thiserror = "2.0.21"
+tokio = { version = "1", features = ["rt", "macros", "time", "sync", "process", "io-util", "net", "signal"] }
+tokio-util = "0.7"
 url = "2.5.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
