@@ -38,6 +38,16 @@ Levels use [BCP 14][bcp14] key words, as the MCP spec does.
 | P13 | MAY | Tasks extension. `subscriptions/listen`. | [ext], [chg] |
 | P14 | SHOULD NOT | Roots, Sampling, Logging (deprecated in `2026-07-28`). | [dep] |
 
+Era cache (P2). The spec permits a client to keep the era across restarts of
+the same server configuration. `ncp` keeps the era for each server name with
+the transport target (the stdio command, arguments and directory, or the
+URL). A changed target makes the cached era invalid. `ncp` probes with
+`server/discover` in its own timeout, and connects again with `initialize` on
+a new transport when the server is legacy or does not answer in time. A
+legacy result after a timeout is not final: the server can be a slow modern
+server. Thus the next run probes again. A legacy result after a JSON-RPC error
+is final until the target changes.
+
 ### 3.2 Authorization (HTTP servers)
 
 The user logs in as themself. `ncp` is an OAuth 2.1 client as the MCP spec
@@ -118,12 +128,27 @@ no loss.
 - Path: `$XDG_CONFIG_HOME/ncp/mcp.json` (default `~/.config/ncp/mcp.json`)
   on macOS and Linux. User scope only in the MVP. Project scope comes with S5.
 - `type` values: `stdio`, `http`, `sse`. A `url` entry needs `type`, because
-  tools give a different meaning to a `url` with no `type`.
+  tools give a different meaning to a `url` with no `type`. An entry with
+  `command` and no `type` is `stdio`, as in all tools that read this shape.
+  `ncp` reads an `sse` entry, but it does not connect to it in the MVP (P5).
+- Server name: 1 to 64 ASCII letters, digits, `-` and `_`. Reason: the name
+  is a word in commands, and a part of credential keys. A tool name can
+  contain `.` and `/` (SEP-986), so the server name must not.
+- Server URL: `https`, or `http` to a loopback host only (`localhost`,
+  `127.0.0.0/8`, `::1`). No user name or password in the URL. Reason: tokens
+  and headers must not go over the network in plain text, and the file must
+  not hold a secret.
 - No secret in the file. `ncp` keeps secret `env` values and secret `headers`
   in the credential store, for each server and name.
 - `${VAR}` in a value expands from the environment. No other variable syntax,
-  and no command expansion.
+  and no command expansion. Expansion applies to `command`, `args`, `env`
+  values, `cwd`, `url` and `headers` values, not to keys. An unset variable
+  is an error for that server. A `$` that does not start `${` stays as text.
 - `ncp` ignores unknown keys, with a warning, so files from other tools load.
+  A key of the other transport (for example `headers` in a `stdio` entry) is
+  also an unknown key.
+- An invalid entry does not stop the other entries. `ncp` shows its error
+  when the user selects that server.
 
 ### 3.6 Performance
 
