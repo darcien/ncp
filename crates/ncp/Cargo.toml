@@ -12,5 +12,13 @@ serde_json = "1.0.151"
 thiserror = "2.0.21"
 url = "2.5.8"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "=3.6.3", features = ["apple-native"] }
+
+# The zbus backend is pure Rust. Its async-io executor runs on its own thread,
+# so a call from a tokio thread cannot deadlock as with the tokio backend.
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "=3.6.3", features = ["async-secret-service", "crypto-rust", "async-io"] }
+
 [lints]
 workspace = true

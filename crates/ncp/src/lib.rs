@@ -5,3 +5,4 @@ pub mod credential;
 pub mod era;
 pub mod expand;
 pub mod server;
+pub mod store;
