@@ -46,7 +46,8 @@ URL). A changed target makes the cached era invalid. `ncp` probes with
 a new transport when the server is legacy or does not answer in time. A
 legacy result after a timeout is not final: the server can be a slow modern
 server. Thus the next run probes again. A legacy result after a JSON-RPC error
-is final until the target changes.
+is final until the target changes. If `initialize` fails for a server with a
+final legacy era, `ncp` probes again, because the server can be modern now.
 
 ### 3.2 Authorization (HTTP servers)
 
@@ -149,6 +150,12 @@ no loss.
   also an unknown key.
 - An invalid entry does not stop the other entries. `ncp` shows its error
   when the user selects that server.
+- A `stdio` server gets the environment of `ncp` (with the proxy variables),
+  then the `env` of its entry, then its secrets from the credential store. A
+  later value replaces an earlier value with the same name.
+- A `stdio` server starts in its own process group, so that Ctrl-C reaches
+  only `ncp`, and `ncp` can send the cancel request. Thus `ncp` stops the
+  server as the spec describes: close stdin, wait, SIGTERM, wait, SIGKILL.
 
 ### 3.6 Performance
 
