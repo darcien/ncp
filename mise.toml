@@ -26,3 +26,7 @@ run = "typos"
 [tasks.check]
 description = "Run all static checks"
 depends = ["check:fmt", "check:clippy", "check:deny", "check:typos"]
+
+[tasks.test]
+description = "Run all tests. Tests use only local servers"
+run = "cargo test --workspace --locked"
