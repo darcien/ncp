@@ -1,0 +1,28 @@
+# Rust itself is pinned in rust-toolchain.toml (rustup). mise pins the other tools.
+[tools]
+cargo-deny = "0.20.2"
+typos = "1.50.3"
+
+[tasks.fmt]
+description = "Format all Rust code"
+run = "cargo fmt --all"
+
+[tasks."check:fmt"]
+description = "Check Rust formatting"
+run = "cargo fmt --all --check"
+
+[tasks."check:clippy"]
+description = "Lint with clippy, warnings are errors"
+run = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+
+[tasks."check:deny"]
+description = "Check dependency licenses, advisories, bans and sources"
+run = "cargo deny --locked check"
+
+[tasks."check:typos"]
+description = "Check spelling in code and docs"
+run = "typos"
+
+[tasks.check]
+description = "Run all static checks"
+depends = ["check:fmt", "check:clippy", "check:deny", "check:typos"]
