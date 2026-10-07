@@ -7,6 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+keyring-core = "=1.0.0"
 process-wrap = { version = "10", default-features = false, features = ["tokio1", "process-group", "kill-on-drop"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2"] }
 rmcp = { version = "=3.5.1", default-features = false, features = ["client", "transport-async-rw", "transport-streamable-http-client-reqwest", "reqwest-tls-no-provider"] }
@@ -18,13 +19,17 @@ tokio = { version = "1", features = ["rt", "macros", "time", "sync", "process", 
 tokio-util = "0.7"
 url = "2.5.8"
 
+# The legacy keychain API. The Data Protection keychain needs a provisioning
+# profile, which a command-line tool does not have.
 [target.'cfg(target_os = "macos")'.dependencies]
-keyring = { version = "=3.6.3", features = ["apple-native"] }
+apple-native-keyring-store = { version = "=1.0.2", default-features = false, features = ["keychain"] }
 
-# The zbus backend is pure Rust. Its async-io executor runs on its own thread,
-# so a call from a tokio thread cannot deadlock as with the tokio backend.
+# Pure Rust, so the static musl build needs no libdbus. zbus with async-io
+# blocks with async_io::block_on and not with a tokio runtime, so a call from
+# a tokio thread does not panic. The call still blocks: run it on a blocking
+# thread. deny.toml refuses the zbus tokio feature.
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "=3.6.3", features = ["async-secret-service", "crypto-rust", "async-io"] }
+zbus-secret-service-keyring-store = { version = "=1.0.1", default-features = false, features = ["rt-async-io-crypto-rust"] }
 
 [lints]
 workspace = true

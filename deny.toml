@@ -34,6 +34,13 @@ multiple-versions = "warn"
 wildcards = "deny"
 allow-wildcard-paths = true
 
+# The Secret Service store calls zbus through its blocking API. With the
+# tokio feature, zbus starts a private tokio runtime for each blocking call.
+# That panics on a thread of the tokio runtime of ncp.
+[[bans.features]]
+crate = "zbus"
+deny = ["tokio"]
+
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
