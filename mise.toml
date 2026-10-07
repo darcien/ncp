@@ -47,9 +47,7 @@ description = "Run all tests for the Linux musl target in a container"
 depends = ["linux:image"]
 run = "harness/linux/run.sh cargo test --workspace --locked"
 
-# One command before each commit, as `mix precommit` in Phoenix. It formats
-# the code first, then runs the checks and the tests on the host and in
-# Linux in parallel.
+# Format first, so that the checks see the formatted code.
 [tasks.precommit]
 description = "Format, then run all checks and tests on the host and in Linux"
 run = [
