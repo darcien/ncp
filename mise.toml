@@ -46,3 +46,8 @@ run = "harness/linux/run.sh cargo clippy --workspace --all-targets --locked -- -
 description = "Run all tests for the Linux musl target in a container"
 depends = ["linux:image"]
 run = "harness/linux/run.sh cargo test --workspace --locked"
+
+# One command before each commit. mise runs the dependencies in parallel.
+[tasks.verify]
+description = "Run all checks and tests, on the host and in Linux"
+depends = ["check", "test", "linux:check", "linux:test"]
