@@ -25,9 +25,20 @@ the decisions and their reasons.
   with the values as words (`--output-format <text|json>`). A flag name does
   not state a risk; the help text and the output state it. No `NCP_*`
   environment variables for now.
-- Prefer the MCP spec, then common practice, over our own inventions. The
-  network commands use the verbs of the MCP methods (`list`, `call`, `read`,
-  `get`).
+- How to choose, in this order:
+  1. The MCP spec.
+  2. Secure by default. A common practice that is not secure is not a
+     reference. For example, many tools keep secrets in a plain file by
+     default; `ncp` does not.
+  3. Good ergonomics for people and agents: the first try works, an error
+     says what failed and gives the exact fix, nothing hangs.
+  4. Common practice of well-known tools (uv first), when it agrees with 2
+     and 3.
+  5. KISS: the simplest design that meets the points above. No feature
+     without a real need and a test.
+
+  Our own inventions come last. The network commands use the verbs of the
+  MCP methods (`list`, `call`, `read`, `get`).
 - No command waits for input that it did not ask for. A command reads stdin
   only when an argument says so (`-`), when `secret set` reads the value, or
   when `auth login` reads a pasted redirect URL.

@@ -74,8 +74,8 @@ behavior, the design wins. The order of work is this plan; it replaces
 section 8 of the design.
 
 When the design does not answer a small question, choose the option that
-best fits section 1 of the design (spec first, then common practice, uv
-conventions, KISS). Record the choice and its reason in the design, section
+best fits section 1 of the design, in its order: the spec, secure by
+default, good ergonomics, common practice, KISS. Record the choice and its reason in the design, section
 9 "Decisions during build", in the same commit, and list it in
 `.scratch/progress.md` for the user to review. Continue the work. Stop only
 for the points below.
@@ -91,8 +91,8 @@ For each milestone:
    `mise run linux:check` and `mise run linux:test` pass.
 5. When a milestone adds or changes a command, a flag, an output field or a
    message, spawn an adversarial reviewer. It checks the change against
-   section 1 of the design (uv conventions, MCP spec first, common terms,
-   KISS). Fix each finding that conflicts with the design or the spec, then
+   section 1 of the design: the spec, secure by default, good ergonomics,
+   common practice and uv conventions, KISS. Fix each finding that conflicts with the design or the spec, then
    review again. Stop after 3 rounds. Other findings go to
    `.scratch/backlog/features.md`.
 6. Update `.scratch/progress.md`: done, next, blocked.
