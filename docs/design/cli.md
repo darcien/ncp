@@ -294,21 +294,18 @@ are removed. A cache file that does not load is ignored and written again.
 | C4 | No settings file. Settings for one server go in the `oauth` object of the entry. Only the methods of the MCP spec; only `clientId` in the MVP. | Other tools already use an `oauth` object, so no new key. A field without a test target is not built. |
 | C5 | Proxy as uv: the proxy variables first, then the manual HTTP and HTTPS proxy of the macOS system settings (reqwest `system-proxy`). No exception for loopback. | Common behavior of curl, Node, Bun, Deno, Python and uv (tested on 2026-10-07; Go is the exception). When a request to a loopback host through a proxy on another host fails, the error shows the route and the hint `export NO_PROXY=localhost,127.0.0.1,::1`. The macOS settings do not give the automatic proxy configuration or the bypass list. |
 | C6 | Server and tool as two words. Commands in noun groups with the verbs of the MCP methods. `server show` shows the handshake data, with `instructions`. `tool call ... --help` shows the tool. | No split rule to learn, and shell completion works for each word. The MCP spec names `instructions` as guidance for the client ([lifecycle][spec-lifecycle]); an agent that uses a shell has no other way to read it. |
-| C7 | No request waits forever. Each request has a limit of 300 s, and `--timeout <seconds>` changes it. The server start and the handshake (`initialize` after a probe timeout) have a fixed limit of 30 s. A timeout sends a cancel request. | The spec says implementations SHOULD set a timeout for all sent requests and SHOULD enforce a maximum ([timeouts][spec-timeouts]). An agent must not hang. 300 s and 30 s are the defaults of OpenAI Codex (`DEFAULT_TOOL_TIMEOUT`, `DEFAULT_STARTUP_TIMEOUT`); Goose also uses 300 s. Both use rmcp. |
+| C7 | No request waits forever. Each request has a limit of 300 s, and `--timeout <seconds>` changes it. The whole connect (server start, the 10 s probe, `initialize`) has a fixed limit of 30 s. A request timeout sends a cancel request. A connect timeout stops the server and sends no cancel request, because the spec says a client MUST NOT cancel `initialize`. | The spec says implementations SHOULD set a timeout for all sent requests and SHOULD enforce a maximum ([timeouts][spec-timeouts]). An agent must not hang. 300 s and 30 s are the defaults of OpenAI Codex (`DEFAULT_TOOL_TIMEOUT`, `DEFAULT_STARTUP_TIMEOUT`); Goose also uses 300 s. Both use rmcp. |
 
-## 8. Order after the gate
+## 8. Order of work
 
-1. Command line: `server list`, `server show`, `tool list`, `tool show`,
-   `tool call`, exit codes, JSON and text output, argument parsing and schema
-   check.
-2. Ctrl-C with the cancel request, `--timeout`, and the start limit.
-3. Secrets: `${NAME}` from the store and the file, `secret` commands, static
-   headers (A11), the macOS Keychain through `/usr/bin/security`.
-4. `--verbose` and `--timings`, the proxy route and the loopback hint.
-5. OAuth: `auth login`, `auth logout`, `auth status`, refresh, step-up, the
-   rmcp workarounds of [rmcp-open-points.md](../research/rmcp-open-points.md).
-6. Conformance adapter for the official suite (test harness report).
-7. Release build: musl targets, checksums.
+The order is in [plan.md](../plan.md), milestones 6 to 13.
+
+## 9. Decisions during build
+
+Small decisions that an agent makes during the build, with the reason. The
+user reviews them.
+
+None yet.
 
 [spec-tool-names]: https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool-names
 [spec-timeouts]: https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle#timeouts
