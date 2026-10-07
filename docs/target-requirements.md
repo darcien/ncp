@@ -43,11 +43,11 @@ the same server configuration. `ncp` keeps the era for each server name with
 the transport target (the stdio command, arguments and directory, or the
 URL). A changed target makes the cached era invalid. `ncp` probes with
 `server/discover` in its own timeout, and connects again with `initialize` on
-a new transport when the server is legacy or does not answer in time. A
-legacy result after a timeout is not final: the server can be a slow modern
-server. Thus the next run probes again. A legacy result after a JSON-RPC error
-is final until the target changes. If `initialize` fails for a server with a
-final legacy era, `ncp` probes again, because the server can be modern now.
+a new transport when the server is legacy or does not answer in time. The
+cached era stays until the target changes, also after a timeout. Thus a server
+that does not answer `server/discover` costs the timeout once, not at each
+run. When the cached era fails (the handshake with the cached era fails),
+`ncp` probes again, because the server can have changed.
 
 ### 3.2 Authorization (HTTP servers)
 
@@ -62,7 +62,7 @@ describes.
 | A4 | MUST | Validate `iss` in the authorization response (RFC 9207). | [auth] |
 | A5 | MUST | Keep client credentials for each issuer. Register again when the authorization server changes. | [reg] |
 | A6 | SHOULD | Client registration in the spec order: pre-registered client, then Client ID Metadata Document (CIMD), then Dynamic Client Registration (DCR). | [reg] |
-| A7 | SHOULD | The CIMD `client_id` URL is configurable. CIMD needs a metadata document at a stable HTTPS URL. | [reg] |
+| A7 | SHOULD | `ncp` has a CIMD metadata document at a stable HTTPS URL. Its place is a release decision. A URL for each user comes only when a real user needs it. | [reg] |
 | A8 | MUST | Refresh tokens with no user action. | [auth] |
 | A9 | SHOULD | Step-up after `403 insufficient_scope`: request the old and the new scopes, with a retry limit. | [auth] |
 | A10 | MUST | Login with no local browser: `ncp` shows the authorization URL and accepts the pasted redirect URL. | [auth] |
@@ -78,11 +78,11 @@ extension.
 |---|---|---|---|
 | S1 | MUST | Keep all secrets in the OS credential store: Keychain on macOS, Secret Service on Linux. Secrets are access tokens, refresh tokens, client secrets and static tokens. | [auth] |
 | S2 | MUST | No secret in a plain file by default. A `0600` file is permitted only after an explicit opt-in. With no credential store (for example Linux with no Secret Service), stop with an error that names this opt-in. | — |
-| S3 | MUST | No secret in process arguments or in logs. Debug output hides secrets. | [sec] |
+| S3 | MUST | No secret in process arguments or in logs. Verbose output hides secrets. | [sec] |
 | S4 | MUST | stdio servers get credentials through environment variables. `ncp` reads these values from the credential store. | [auth] |
 | S5 | SHOULD | A configuration file in a project directory starts stdio commands only after user approval. | — |
 | S6 | MUST | If a daemon exists, it listens only on a Unix socket that only the user can open. No network listener. | — |
-| S7 | MUST | On macOS, use the native Keychain API. Put the credential store behind one internal interface, so that a change of storage model or signing method changes only that module. | — |
+| S7 | MUST | On macOS, use the login Keychain through `/usr/bin/security`. Reason: `ncp` has no paid Developer ID; an ad-hoc signed binary changes identity at each update, and the native Keychain API then asks again for each item, which an agent cannot answer. Put the credential store behind one internal interface, so that a change of storage model or signing method changes only that module. | — |
 | S8 | MUST | A credential store call that gives no answer in 60 s stops with an error. A locked store waits for its unlock prompt with no limit, and on a machine with no display nobody can answer the prompt. | — |
 
 ### 3.4 Network
@@ -90,7 +90,7 @@ extension.
 | ID | Level | Requirement | Ref |
 |---|---|---|---|
 | N1 | MUST | Network access only to the configured MCP servers and their authorization servers. No telemetry, no download, no self-update. | — |
-| N2 | MUST | Proxy variables `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` (upper and lower case), with credentials in the proxy URL. This applies to MCP and OAuth requests. | — |
+| N2 | MUST | Proxy variables `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` (upper and lower case), with credentials in the proxy URL. When no variable is set, the manual HTTP and HTTPS proxy of the macOS system settings, as uv does. No exception for loopback hosts: `NO_PROXY` is the only exception list, as in curl and uv. This applies to MCP and OAuth requests. | — |
 | N3 | MUST | System root certificates, including roots that the company adds, with no extra setting. | — |
 | N4 | SHOULD | Optional CA file setting (`SSL_CERT_FILE`) for systems with no usable system store. | — |
 | N5 | MUST | stdio servers receive the proxy variables. | — |
@@ -105,12 +105,12 @@ defaults, fast, and usable in scripts.
 
 | ID | Level | Requirement | Ref |
 |---|---|---|---|
-| I1 | MUST | Output for people on a TTY. JSON output when stdout is not a TTY, or with `--json`. | — |
+| I1 | MUST | Output for people on a TTY. JSON output when stdout is not a TTY, or with `--output-format json`. | — |
 | I2 | MUST | The JSON output has a stable, documented schema. Results go to stdout, diagnostics go to stderr. | — |
 | I3 | MUST | Defined exit codes: success, tool error (`isError`), protocol or transport error, authorization error, usage error, input required. | [tools] |
 | I4 | MUST | Tool arguments as JSON, as `key=value` pairs, or from stdin. | — |
 | I5 | SHOULD | Show the input schema of a tool. Validate arguments against the schema before the call. | [tools] |
-| I6 | MUST | Debug mode shows JSON-RPC and HTTP traffic, with secrets hidden. | — |
+| I6 | MUST | Verbose output (`-vv`) shows JSON-RPC and HTTP traffic, with secrets hidden. | — |
 | I7 | SHOULD | `NO_COLOR` support. Shell completions. | — |
 | I8 | MUST | MVP configuration: the common `mcpServers` JSON core (see below). | [cfg] |
 
@@ -134,26 +134,34 @@ no loss.
   `command` and no `type` is `stdio`, as in all tools that read this shape.
   `ncp` reads an `sse` entry, but it does not connect to it in the MVP (P5).
 - Server name: 1 to 64 ASCII letters, digits, `-` and `_`. Reason: the name
-  is a word in commands, and a part of credential keys. A tool name can
-  contain `.` and `/` (SEP-986), so the server name must not.
+  is a word in commands, and a part of credential keys. Without `.`, `:` and
+  `/`, `ncp` can find a joined server and tool name (`github.search`) and show
+  the correct command.
 - Server URL: `https`, or `http` to a loopback host only (`localhost`,
   `127.0.0.0/8`, `::1`). No user name or password in the URL. Reason: tokens
   and headers must not go over the network in plain text, and the file must
   not hold a secret.
-- No secret in the file. `ncp` keeps secret `env` values and secret `headers`
-  in the credential store, for each server and name.
-- `${VAR}` in a value expands from the environment. No other variable syntax,
-  and no command expansion. Expansion applies to `command`, `args`, `env`
-  values, `cwd`, `url` and `headers` values, not to keys. An unset variable
-  is an error for that server. A `$` that does not start `${` stays as text.
+- No secret in the file. A secret is a named value. The file names it with
+  `${NAME}`.
+- `${VAR}` and `${env:VAR}` in a value expand. No other variable syntax, and
+  no command expansion. Expansion applies to `command`, `args`, `env` values,
+  `cwd`, `url` and `headers` values, not to keys. The value comes from the
+  environment, else from the credential store, else from the opt-in
+  credential file. A value from the store or the file expands only in `env`
+  and `headers` values, because a value in `args` shows in the process list.
+  A variable with no value is an error for that server. A `$` that does not
+  start `${` stays as text.
+- `oauth` is a known key of an `http` entry. The MVP reads only
+  `oauth.clientId` (a pre-registered client). Other keys in `oauth` are
+  unknown keys.
 - `ncp` ignores unknown keys, with a warning, so files from other tools load.
   A key of the other transport (for example `headers` in a `stdio` entry) is
   also an unknown key.
 - An invalid entry does not stop the other entries. `ncp` shows its error
   when the user selects that server.
 - A `stdio` server gets the environment of `ncp` (with the proxy variables),
-  then the `env` of its entry, then its secrets from the credential store. A
-  later value replaces an earlier value with the same name.
+  then the expanded `env` of its entry. A later value replaces an earlier
+  value with the same name.
 - A `stdio` server starts in its own process group, so that Ctrl-C reaches
   only `ncp`, and `ncp` can send the cancel request. Thus `ncp` stops the
   server as the spec describes: close stdin, wait, SIGTERM, wait, SIGKILL.
@@ -199,16 +207,8 @@ None of these items blocks development.
    authentication?
 2. Tests: company root certificate on macOS (needs approval), and Linux
    (`SSL_CERT_FILE`, system store, Secret Service).
-3. macOS release signing. The goal is free and secure, with no Keychain
-   prompt after an update. Decide before the first public macOS release.
-   Until then, local builds accept the prompt, or use the opt-in file store
-   (S2).
-   - Self-signed certificate: free. A test on a real Mac must show that the
-     Keychain partition list accepts a rebuild with no prompt.
-   - Ad-hoc signature: free. A prompt comes once for each version, and the
-     prompt blocks agents until a person accepts it.
-   - Developer ID: US$99 per year. Known to work. Not preferred: use it only
-     if the two free options fail.
+3. Closed: macOS signing. With S7 (the Keychain through `/usr/bin/security`),
+   an update gives no Keychain prompt, so `ncp` needs no paid Developer ID.
 
 Research and history: `research/`. The candidate evaluation is in
 `research/candidate-evaluation.md`.
