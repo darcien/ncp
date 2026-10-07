@@ -13,7 +13,7 @@ use ncp::{
     client::{self, CallError, ConnectError, Connection, Launch, Phase, Secrets},
     config::{RemoteServer, Server, StdioServer, Transport},
     credential::{CredentialKey, EnvName, HeaderName, Secret, SecretKind},
-    era::{Era, LegacyCause, ProtocolVersion},
+    era::{Era, ProtocolVersion},
     expand::Env,
     server::{ServerName, ServerUrl},
     store::{CredentialStore, MemoryStore},
@@ -105,11 +105,16 @@ fn modern() -> Era {
     }
 }
 
-fn legacy(cause: LegacyCause) -> Era {
+fn legacy() -> Era {
     Era::Legacy {
         version: version("2025-11-25"),
-        cause,
     }
+}
+
+fn discover_calls(fixture: &ncp_testkit::HttpFixture) -> usize {
+    fixture
+        .discover_calls
+        .load(std::sync::atomic::Ordering::SeqCst)
 }
 
 fn arguments(value: serde_json::Value) -> JsonObject {
@@ -157,7 +162,7 @@ async fn finds_modern_era_of_stdio_server_with_discover() {
 #[tokio::test]
 async fn falls_back_to_initialize_when_stdio_server_rejects_discover() {
     let connection = Setup::new(stdio(&["legacy"], &[])).connect().await.unwrap();
-    assert_eq!(connection.era(), &legacy(LegacyCause::ServerError));
+    assert_eq!(connection.era(), &legacy());
     assert_eq!(
         call_text(&connection, "echo", serde_json::json!({"text": "hi"})).await,
         "hi"
@@ -170,7 +175,7 @@ async fn falls_back_to_initialize_when_discover_times_out() {
     let mut setup = Setup::new(stdio(&["slow-3000"], &[]));
     setup.probe_timeout = Duration::from_millis(300);
     let connection = setup.connect().await.unwrap();
-    assert_eq!(connection.era(), &legacy(LegacyCause::ProbeTimeout));
+    assert_eq!(connection.era(), &legacy());
     assert_eq!(
         call_text(&connection, "echo", serde_json::json!({"text": "hi"})).await,
         "hi"
@@ -207,7 +212,7 @@ async fn falls_back_to_initialize_when_http_server_rejects_discover() {
         .connect()
         .await
         .unwrap();
-    assert_eq!(connection.era(), &legacy(LegacyCause::ServerError));
+    assert_eq!(connection.era(), &legacy());
     assert_eq!(
         call_text(&connection, "echo", serde_json::json!({"text": "hi"})).await,
         "hi"
@@ -223,7 +228,7 @@ async fn falls_back_to_initialize_when_http_discover_times_out() {
     let mut setup = Setup::new(http_server(&fixture.url, &[]));
     setup.probe_timeout = Duration::from_millis(300);
     let connection = setup.connect().await.unwrap();
-    assert_eq!(connection.era(), &legacy(LegacyCause::ProbeTimeout));
+    assert_eq!(connection.era(), &legacy());
     assert_eq!(
         call_text(&connection, "echo", serde_json::json!({"text": "hi"})).await,
         "hi"
@@ -232,36 +237,45 @@ async fn falls_back_to_initialize_when_http_discover_times_out() {
 }
 
 #[tokio::test]
-async fn skips_probe_for_cached_legacy_era_from_server_error() {
+async fn skips_probe_for_cached_legacy_era() {
     let fixture = serve_http(Mode::Legacy).await.unwrap();
     let mut setup = Setup::new(http_server(&fixture.url, &[]));
-    setup.cached = Some(legacy(LegacyCause::ServerError));
+    setup.cached = Some(legacy());
     let connection = setup.connect().await.unwrap();
-    assert_eq!(connection.era(), &legacy(LegacyCause::ServerError));
-    assert_eq!(
-        fixture
-            .discover_calls
-            .load(std::sync::atomic::Ordering::SeqCst),
-        0
-    );
+    assert_eq!(connection.era(), &legacy());
+    assert_eq!(discover_calls(&fixture), 0);
     connection.close().await;
 }
 
 #[tokio::test]
-async fn probes_again_for_cached_legacy_era_from_timeout() {
-    let fixture = serve_http(Mode::Modern).await.unwrap();
+async fn server_that_ignores_discover_costs_the_probe_timeout_only_once() {
+    let fixture = serve_http(Mode::Slow(Duration::from_secs(30)))
+        .await
+        .unwrap();
     let mut setup = Setup::new(http_server(&fixture.url, &[]));
-    setup.cached = Some(legacy(LegacyCause::ProbeTimeout));
-    let connection = setup.connect().await.unwrap();
-    assert_eq!(connection.era(), &modern());
-    connection.close().await;
+    setup.probe_timeout = Duration::from_millis(300);
+    let first = setup.connect().await.unwrap();
+    assert_eq!(first.era(), &legacy());
+    first.close().await;
+    setup.cached = Some(legacy());
+    setup.probe_timeout = Duration::from_secs(20);
+    let start = Instant::now();
+    let second = setup.connect().await.unwrap();
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        start.elapsed()
+    );
+    assert_eq!(second.era(), &legacy());
+    assert_eq!(discover_calls(&fixture), 1);
+    second.close().await;
 }
 
 #[tokio::test]
 async fn probes_when_cached_legacy_server_now_rejects_initialize() {
     let fixture = serve_http(Mode::ModernOnly).await.unwrap();
     let mut setup = Setup::new(http_server(&fixture.url, &[]));
-    setup.cached = Some(legacy(LegacyCause::ServerError));
+    setup.cached = Some(legacy());
     let connection = setup.connect().await.unwrap();
     assert_eq!(connection.era(), &modern());
     connection.close().await;

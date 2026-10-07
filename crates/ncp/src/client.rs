@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     config::{Server, Transport},
     credential::{CredentialKey, EnvName, HeaderName, Secret, SecretKind},
-    era::{self, Era, LegacyCause, ProtocolVersion, Startup},
+    era::{self, Era, ProtocolVersion, Startup},
     expand::Env,
     server::ServerName,
     store::{CredentialStore, StoreError},
@@ -154,7 +154,7 @@ pub async fn connect(launch: &Launch<'_>) -> Result<Connection, ConnectError> {
         Startup::Probe => probe(launch, ProtocolVersion::first_modern()).await,
         Startup::Discover(version) => probe(launch, version).await,
         Startup::Initialize(version) => {
-            match initialize(launch, version, LegacyCause::ServerError, Phase::Initialize).await {
+            match initialize(launch, version, Phase::Initialize).await {
                 // The server can be modern now: probe again. Over HTTP the
                 // rejection of `initialize` is not always a JSON-RPC error.
                 Err(ConnectError::Handshake { .. }) => {
@@ -179,20 +179,14 @@ async fn probe(
     let latest_legacy = ProtocolVersion::latest_legacy();
     // On a timeout the future is dropped. Its stdio process stops by
     // kill-on-drop, so a late answer cannot reach the next connection.
-    match tokio::time::timeout(launch.probe_timeout, handshake(launch, lifecycle, None)).await {
+    match tokio::time::timeout(launch.probe_timeout, handshake(launch, lifecycle)).await {
         Ok(Err(ConnectError::Handshake { source, .. })) if is_json_rpc_error(&source) => {
-            initialize(
-                launch,
-                latest_legacy,
-                LegacyCause::ServerError,
-                Phase::Initialize,
-            )
-            .await
+            initialize(launch, latest_legacy, Phase::Initialize).await
         }
         Ok(result) => result,
         Err(_) => {
             let phase = Phase::InitializeAfterTimeout(launch.probe_timeout);
-            initialize(launch, latest_legacy, LegacyCause::ProbeTimeout, phase).await
+            initialize(launch, latest_legacy, phase).await
         }
     }
 }
@@ -200,26 +194,17 @@ async fn probe(
 async fn initialize(
     launch: &Launch<'_>,
     version: ProtocolVersion,
-    cause: LegacyCause,
     phase: Phase,
 ) -> Result<Connection, ConnectError> {
     let info = client_info().with_protocol_version(to_rmcp(&version));
-    handshake_with(
-        launch,
-        ClientLifecycleMode::Initialize,
-        info,
-        Some(cause),
-        phase,
-    )
-    .await
+    handshake_with(launch, ClientLifecycleMode::Initialize, info, phase).await
 }
 
 async fn handshake(
     launch: &Launch<'_>,
     lifecycle: ClientLifecycleMode,
-    cause: Option<LegacyCause>,
 ) -> Result<Connection, ConnectError> {
-    handshake_with(launch, lifecycle, client_info(), cause, Phase::Discover).await
+    handshake_with(launch, lifecycle, client_info(), Phase::Discover).await
 }
 
 /// Starts a new transport and runs one handshake on it.
@@ -227,7 +212,6 @@ async fn handshake_with(
     launch: &Launch<'_>,
     lifecycle: ClientLifecycleMode,
     info: ClientConfig,
-    cause: Option<LegacyCause>,
     phase: Phase,
 ) -> Result<Connection, ConnectError> {
     let failed = |source| ConnectError::Handshake {
@@ -258,7 +242,7 @@ async fn handshake_with(
         }
         Transport::Sse(_) => return Err(ConnectError::SseNotSupported(launch.server.name.clone())),
     };
-    let era = era_of(&service, cause)?;
+    let era = era_of(&service)?;
     Ok(Connection {
         service,
         era,
@@ -273,7 +257,7 @@ fn client_info() -> ClientConfig {
     )
 }
 
-fn era_of(service: &Service, cause: Option<LegacyCause>) -> Result<Era, ConnectError> {
+fn era_of(service: &Service) -> Result<Era, ConnectError> {
     let text = service
         .peer_info()
         .map(|info| info.protocol_version.as_str().to_string())
@@ -282,10 +266,7 @@ fn era_of(service: &Service, cause: Option<LegacyCause>) -> Result<Era, ConnectE
     Ok(if version.is_modern() {
         Era::Modern { version }
     } else {
-        Era::Legacy {
-            version,
-            cause: cause.unwrap_or(LegacyCause::ServerError),
-        }
+        Era::Legacy { version }
     })
 }
 

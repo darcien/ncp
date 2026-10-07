@@ -4,6 +4,11 @@
 //! configuration (MCP 2026-07-28, basic/versioning, "Backward compatibility
 //! with initialization-based versions"). The cache keys each era by the
 //! server name and its transport target, so a changed target probes again.
+//!
+//! The cache keeps a legacy result also when it came from a probe timeout.
+//! Thus a server that does not answer `server/discover` costs the timeout
+//! once, and not at each run. When the handshake with the cached era fails,
+//! the client probes again, because the server can have changed.
 
 use std::{collections::BTreeMap, fmt};
 
@@ -96,25 +101,8 @@ impl fmt::Display for ProtocolVersion {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "era", rename_all = "snake_case")]
 pub enum Era {
-    Modern {
-        version: ProtocolVersion,
-    },
-    Legacy {
-        version: ProtocolVersion,
-        cause: LegacyCause,
-    },
-}
-
-/// Why the client used the `initialize` handshake.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LegacyCause {
-    /// The server answered `server/discover` with a JSON-RPC error. This is
-    /// final until the target changes.
-    ServerError,
-    /// The server did not answer `server/discover` in time. A slow modern
-    /// server also accepts `initialize`, so this result is not final.
-    ProbeTimeout,
+    Modern { version: ProtocolVersion },
+    Legacy { version: ProtocolVersion },
 }
 
 /// How to start a connection.
@@ -125,7 +113,8 @@ pub enum Startup {
     Probe,
     /// Send `server/discover` with this version first.
     Discover(ProtocolVersion),
-    /// Send `initialize` with this version. No probe.
+    /// Send `initialize` with this version. No probe. When this handshake
+    /// fails, probe.
     Initialize(ProtocolVersion),
 }
 
@@ -133,16 +122,9 @@ pub enum Startup {
 #[must_use]
 pub fn startup(cached: Option<&Era>) -> Startup {
     match cached {
-        None
-        | Some(Era::Legacy {
-            cause: LegacyCause::ProbeTimeout,
-            ..
-        }) => Startup::Probe,
+        None => Startup::Probe,
         Some(Era::Modern { version }) => Startup::Discover(version.clone()),
-        Some(Era::Legacy {
-            version,
-            cause: LegacyCause::ServerError,
-        }) => Startup::Initialize(version.clone()),
+        Some(Era::Legacy { version }) => Startup::Initialize(version.clone()),
     }
 }
 
@@ -259,24 +241,14 @@ mod tests {
     }
 
     #[test]
-    fn initializes_after_legacy_server_error() {
+    fn initializes_with_cached_legacy_version() {
         let era = Era::Legacy {
             version: version("2025-06-18"),
-            cause: LegacyCause::ServerError,
         };
         assert_eq!(
             startup(Some(&era)),
             Startup::Initialize(version("2025-06-18"))
         );
-    }
-
-    #[test]
-    fn probes_again_after_legacy_result_from_a_timeout() {
-        let era = Era::Legacy {
-            version: version("2025-11-25"),
-            cause: LegacyCause::ProbeTimeout,
-        };
-        assert_eq!(startup(Some(&era)), Startup::Probe);
     }
 
     #[test]
@@ -319,7 +291,6 @@ mod tests {
                 },
                 Era::Legacy {
                     version: version("2025-11-25"),
-                    cause: LegacyCause::ServerError,
                 },
             )
             .record(
