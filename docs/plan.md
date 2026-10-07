@@ -87,7 +87,7 @@ For each milestone:
    same commit as the code or an earlier one.
 3. Write tests named by behavior. Tests use only local servers and never the
    macOS Keychain or the Linux Secret Service of the host.
-4. Before each commit: `mise run verify` passes.
+4. Before each commit: `mise run precommit` passes.
 5. When a milestone adds or changes a command, a flag, an output field or a
    message, spawn an adversarial reviewer. It checks the change against
    section 1 of the design: the spec, secure by default, good ergonomics,

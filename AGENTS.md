@@ -56,9 +56,9 @@ the container.
 
 ## Checks
 
-- Run `mise run verify` before each commit. It runs all checks and tests on
-  the host and in the Linux container, in parallel. All must pass.
-- Run `mise run fmt` to format the code.
+- Run `mise run precommit` before each commit. It formats the code, then
+  runs all checks and tests on the host and in the Linux container, in
+  parallel. All must pass.
 - Tests use only local servers: stubs, rmcp fixtures, and official MCP test
   parts. Do not call third-party servers.
 
