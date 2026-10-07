@@ -129,46 +129,31 @@ Library changes with no command line.
 
 ## Milestone 7: command line
 
-Design sections 1 to 4. Parser: `clap` with `derive` (uv uses clap). Schema check: `jsonschema`
-with `default-features = false` (no network fetch of schemas).
+The minimum for a person or an agent to list and call tools. Design
+sections 1 to 4 give the details. Items marked "later" in the design wait
+in `.scratch/backlog/features.md`. Parser: `clap` with `derive`. Schema
+check: `jsonschema` with `default-features = false`.
 
 1. Commands: `server list`, `server show`, `tool list`, `tool show`,
-   `tool call` (with `--help`). Shell completion waits in the backlog: an
-   agent does not need it.
-2. `${NAME}` comes from the environment only in this milestone. The native
-   store and the file come in milestone 9. A hint names only commands that
-   exist; hints for `secret set` and `auth login` come with those commands.
-3. Names (section 2.1): two words, the joined-form error with the correct
-   command, the near-name suggestion, `--` for a tool name that starts with
-   `-`.
-4. Arguments (section 2.2): all forms, schema coercion, the check before the
-   call, `--no-validate`.
-5. Options (section 2.3): `--output-format`, `--color` and `NO_COLOR`,
-   `-q`, `--config-file`, `--timeout`.
-6. Output (section 4): text and JSON, JSON Lines on stderr, the error object,
-   exit codes (section 3), the hint on `tool list` when the server has
-   `instructions`, and the order of work in `ncp --help`. Text output of
-   `tool call`: text blocks as they are; one summary line for other content
-   (for example `[image image/png, 2048 bytes]`); `structuredContent` as JSON
-   only when there is no text block. A `CreateTaskResult` gives exit 3 with
-   the message that tasks are not supported.
-7. A missing configuration file is not an error, and `ncp` never creates
-   it. `server list` says in one line that no server is configured, with
-   the path of the file, and exits 0. A command that names a server that
-   does not exist gives exit 2, because the user asked for something that
-   `ncp` cannot do. This applies only to the default path: a file named with
-   `--config-file` that does not exist is a usage error (exit 2), as in uv.
-   A file that exists but does not parse is also exit 2.
-8. The era cache file at the XDG path (section 6), mode 0600. A file that
-   does not load is ignored and written again.
-9. Tests run the `ncp` binary against the fixture servers (stdio and HTTP)
-   and check stdout, stderr and the exit code. Each test runs the binary
-   with a clean environment and its own temporary `HOME` and `XDG_*`
-   folders.
-10. Sandbox (requirements section 4): `mise run linux:test` runs the tests
-    in a container with no network (`--network none`), after an online step
-    that fetches the crates. Thus a test that calls out fails and is
-    visible.
+   `tool call` (with `--help`).
+2. Arguments: `key=value` with schema coercion, `{...}`, `-` (stdin). The
+   schema check before the call, and `--no-validate`.
+3. Option: `--timeout`.
+4. Output: text on a TTY, JSON in a pipe, JSON Lines on stderr, the exit
+   codes. No color.
+5. Errors give the fix: a joined server and tool name, a missing tool name,
+   an unknown server or tool (with the path of the configuration file or
+   the hint `ncp tool list SERVER`).
+6. `${NAME}` comes from the environment only. Hints name only commands that
+   exist.
+7. Configuration file at the default path only. A missing file is not an
+   error: `server list` says that no server is configured, with the path,
+   and exits 0. `ncp` never creates the file. A file that does not parse
+   gives exit 2.
+8. The era cache file (section 6), mode 0600.
+9. Tests run the binary against the fixtures, with a clean environment and
+   temporary `HOME` and `XDG_*` folders. `mise run linux:test` runs them
+   with `--network none`, after an online step that fetches the crates.
 
 ## Milestone 8: Ctrl-C
 

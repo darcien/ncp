@@ -106,7 +106,7 @@ defaults, fast, and usable in scripts.
 
 | ID | Level | Requirement | Ref |
 |---|---|---|---|
-| I1 | MUST | Output for people on a TTY. JSON output when stdout is not a TTY, or with `--output-format json`. | — |
+| I1 | MUST | Output for people on a TTY. JSON output when stdout is not a TTY. | — |
 | I2 | MUST | The JSON output has a stable, documented schema. Results go to stdout, diagnostics go to stderr. | — |
 | I3 | MUST | Defined exit codes: success, tool error (`isError`), protocol or transport error, authorization error, usage error, input required. | [tools] |
 | I4 | MUST | Tool arguments as JSON, as `key=value` pairs, or from stdin. | — |

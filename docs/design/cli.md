@@ -105,7 +105,8 @@ pipe.
   `_`, `-` and `.` ([tool names][spec-tool-names]). It is not a MUST, so `ncp` accepts any tool name. A name
   with spaces needs shell quotes. A name that starts with `-` needs `--`
   before it.
-- An unknown server or tool name gives a usage error with the near names, for
+- An unknown server or tool name gives a usage error. The MVP points to
+  `ncp server list` or `ncp tool list SERVER`. Later: the near names, for
   example "no tool `search_issue`; did you mean `search_issues`?".
 - `tool list` prints names that the user can copy into `tool call`.
 
@@ -114,8 +115,8 @@ pipe.
 | Form | Meaning |
 |---|---|
 | `key=value` | The value is text. When the input schema gives the property type `number`, `integer`, `boolean`, `array` or `object`, `ncp` reads the value as JSON. A schema type `string` keeps the text, also for `123`. |
-| `key:=json` | The value is JSON, with no schema rule. |
-| `key=@path` | The value is the text of the file. `@@` at the start is a literal `@`. |
+| `key:=json` | Later. The value is JSON, with no schema rule. |
+| `key=@path` | Later. The value is the text of the file. `@@` at the start is a literal `@`. |
 | `{...}` as the only argument | The arguments object as JSON. |
 | `-` as the only argument | Read the arguments object as JSON from stdin. |
 
@@ -129,12 +130,12 @@ and the error says "missing tool name".
 
 | Option | Meaning |
 |---|---|
-| `--output-format <text\|json>` | Output format. Default: `text` on a TTY, else `json`. |
-| `--color <auto\|always\|never>` | Color in text output. Default `auto`. `NO_COLOR` also turns color off (I7). |
-| `-q`, `--quiet` | No hints and no warnings on stderr. Errors stay. |
+| `--output-format <text\|json>` | Later. Output format. Default: `text` on a TTY, else `json`. |
+| `--color <auto\|always\|never>` | Later, with color. Color in text output. Default `auto`. `NO_COLOR` also turns color off (I7). The MVP has no color. |
+| `-q`, `--quiet` | Later. No hints and no warnings on stderr. Errors stay. |
 | `-v`, `--verbose` | Diagnostics on stderr: the source of each variable (environment, native store, file; never the value), the proxy route and its source, the cached era. `-vv` adds the JSON-RPC messages and the HTTP requests, with secrets hidden (I6). |
 | `--timings` | Timings on stderr (F2): process start, configuration, credential read, server start, DNS, connect, server response, CPU time. |
-| `--config-file <path>` | Configuration file, as uv names the flag. Default in section 6. |
+| `--config-file <path>` | Later. Configuration file, as uv names the flag. A missing file named here is a usage error. Default in section 6. |
 | `--timeout <seconds>` | The time limit for one request, in whole seconds. Default 300 s (decision C7). A timeout sends a cancel request and exits with code 3. Progress notifications do not reset the clock. |
 | `--credential-store <native\|file>` | Only on `secret set` and `auth login`: the place for the new value. Default `native` (decision C2). |
 | `--no-browser` | Only on `auth login`: print the URL and read the redirect URL from stdin (A10). |
