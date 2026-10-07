@@ -46,13 +46,18 @@ Stop and ask the user before you:
 
 ## Credential store in tests
 
-Automated tests never use the macOS Keychain or the Linux Secret Service.
-The Keychain shows a prompt, and an agent cannot accept it. Use the in-memory
-store or the opt-in file store in tests.
+Automated tests do not use the macOS Keychain or the Secret Service of the
+host. The Keychain shows a prompt, and an agent cannot accept it. Use the
+in-memory store or the opt-in file store in tests.
+
+Tests of the Linux Secret Service store run only in the Linux harness
+container. Each test run starts its own D-Bus session and keyring daemon in
+the container.
 
 ## Checks
 
-- Run `mise run check` before each commit. All checks must pass.
+- Run `mise run verify` before each commit. It runs all checks and tests on
+  the host and in the Linux container, in parallel. All must pass.
 - Run `mise run fmt` to format the code.
 - Tests use only local servers: stubs, rmcp fixtures, and official MCP test
   parts. Do not call third-party servers.

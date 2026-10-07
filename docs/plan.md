@@ -87,8 +87,7 @@ For each milestone:
    same commit as the code or an earlier one.
 3. Write tests named by behavior. Tests use only local servers and never the
    macOS Keychain or the Linux Secret Service of the host.
-4. Before each commit: `mise run check`, `mise run test`,
-   `mise run linux:check` and `mise run linux:test` pass.
+4. Before each commit: `mise run verify` passes.
 5. When a milestone adds or changes a command, a flag, an output field or a
    message, spawn an adversarial reviewer. It checks the change against
    section 1 of the design: the spec, secure by default, good ergonomics,
@@ -191,9 +190,10 @@ Design section 2.4, decisions C1 and C2.
    `security dump-keychain` with no `-d` on macOS, filtered by the service
    `ncp`. The real-Mac steps of item 1 also check that this shows no prompt.
 6. Static headers for HTTP servers (A11).
-7. Linux harness step 2 (a private D-Bus and keyring daemon in the container)
-   needs a change to the credential rule in AGENTS.md. Ask the user first.
-   Until then, the Secret Service store has no automated test.
+7. Linux harness step 2: a container stage with `dbus` and `gnome-keyring`
+   from deb.debian.org. Each test run starts its own D-Bus session and
+   keyring daemon (AGENTS.md permits this only in the container). Test the
+   cases: no bus, no Secret Service, unlocked, locked (the time limit).
 
 ## Milestone 10: diagnostics and proxy
 
@@ -243,8 +243,16 @@ Design and method in `docs/research/test-harness.md`.
 
 1. A small adapter binary that maps each conformance scenario to `ncp`
    commands.
-2. **Stop and ask** before you install Node or npm packages that do not
-   come from the MCP organization.
+2. The user approved Node and the suite on 2026-10-08, with pinned versions
+   only. Before you install:
+   - Pin Node to an exact version in `mise.toml`.
+   - Find the exact version of `@modelcontextprotocol/conformance` on the
+     npm registry. Check that the MCP organization publishes it. Do not use
+     `latest`, a version range, or `npx` with no version.
+   - Install with `npm ci` from a committed `package-lock.json`, so that each
+     dependency has an exact version and an integrity hash.
+   - Record the versions and the hash of the suite in the test report.
+   Stop and ask if a check fails.
 3. Run the official suite (`@modelcontextprotocol/conformance`, pinned) for
    both protocol versions. Done when each failure is fixed or listed in the
    expected failures with a reason.
