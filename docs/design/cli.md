@@ -57,7 +57,7 @@ ncp [OPTIONS] auth status [<SERVER>]
 ncp [OPTIONS] secret set <NAME> [--credential-store <native|file>]
 ncp [OPTIONS] secret list
 ncp [OPTIONS] secret delete <NAME>
-ncp generate-shell-completion <bash|zsh|fish>
+ncp generate-shell-completion <bash|zsh|fish>      (after the MVP)
 ```
 
 | Command | Network | Result |
@@ -73,7 +73,7 @@ ncp generate-shell-completion <bash|zsh|fish>
 | `secret set` | No | Reads one value from stdin and keeps it under the name (section 2.4). On a TTY the input is not shown. The value never goes in an argument (S3). |
 | `secret list` | No | The names of the stored secrets and the place of each one (native store, file, or both). Names that no `${NAME}` in the configuration uses are marked. Never a value. |
 | `secret delete` | No | Removes the secret from all places and says from which. |
-| `generate-shell-completion` | No | The completion script for the shell. Server names come from the configuration. Tool names come only from a cache, or are not completed. Completion never starts a server. |
+| `generate-shell-completion` | No | After the MVP. The completion script for the shell. Server names come from the configuration. Tool names come only from a cache, or are not completed. Completion never starts a server. |
 
 `ncp --help` shows the normal order of work: `server list`, `server show`,
 `tool list`, `tool show`, `tool call`.

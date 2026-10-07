@@ -129,14 +129,12 @@ Library changes with no command line.
 
 ## Milestone 7: command line
 
-Design sections 1 to 4. Parser: `clap` with `derive`, and `clap_complete`
-for `generate-shell-completion` (uv uses clap). Schema check: `jsonschema`
+Design sections 1 to 4. Parser: `clap` with `derive` (uv uses clap). Schema check: `jsonschema`
 with `default-features = false` (no network fetch of schemas).
 
 1. Commands: `server list`, `server show`, `tool list`, `tool show`,
-   `tool call` (with `--help`), `generate-shell-completion`. Completion of
-   server names uses the dynamic completion of `clap_complete`, pinned with
-   `=`.
+   `tool call` (with `--help`). Shell completion waits in the backlog: an
+   agent does not need it.
 2. `${NAME}` comes from the environment only in this milestone. The native
    store and the file come in milestone 9. A hint names only commands that
    exist; hints for `secret set` and `auth login` come with those commands.
@@ -154,8 +152,11 @@ with `default-features = false` (no network fetch of schemas).
    (for example `[image image/png, 2048 bytes]`); `structuredContent` as JSON
    only when there is no text block. A `CreateTaskResult` gives exit 3 with
    the message that tasks are not supported.
-7. A missing configuration file: `server list` shows no servers, exits 0,
-   and gives a hint with the path. A server name then gives exit 2.
+7. A missing configuration file is not an error, and `ncp` never creates
+   it. `server list` says in one line that no server is configured, with
+   the path of the file, and exits 0. A command that names a server that
+   does not exist gives exit 2, because the user asked for something that
+   `ncp` cannot do.
 8. The era cache file at the XDG path (section 6), mode 0600. A file that
    does not load is ignored and written again.
 9. Tests run the `ncp` binary against the fixture servers (stdio and HTTP)
@@ -215,8 +216,12 @@ Design sections 2.3 and 4, decision C5.
    its source, the cached era. `-vv`: JSON-RPC messages and HTTP requests,
    with secrets hidden (I6, S3). Hidden: each `env` and header value that
    came from `${...}`, the `Authorization`, `Proxy-Authorization` and
-   `Cookie` headers, the user information in proxy URLs, and all OAuth
-   token and client secret fields.
+   `Cookie` headers, the user information in proxy and server URLs, URL
+   query parameters with a secret name (for example `token`, `api_key`),
+   and all OAuth token and client secret fields. As uv does, a hidden value
+   shows as `****`, always with the same length. An empty value shows as
+   empty, and a value that is not set does not show. Thus the user can see
+   if a value is set, empty, or missing, but never its length.
 2. `--timings` (F2), in text and JSON.
 3. Turn on reqwest `system-proxy`. Get the route from the same matcher as
    reqwest (`hyper_util::client::proxy::Matcher::from_system`). When a
