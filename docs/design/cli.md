@@ -313,7 +313,10 @@ The order is in [plan.md](../plan.md), milestones 6 to 13.
 Small decisions that an agent makes during the build, with the reason. The
 user reviews them.
 
-None yet.
+| ID | Decision | Reason |
+|---|---|---|
+| B1 | After a request timeout or a Ctrl-C, `ncp` waits at most 2 s to send the cancel request. Then it continues with the result of the request. | Good ergonomics: a server that does not read the cancel request must not stop the exit. 2 s is also the wait of each stop step of a stdio server. |
+| B2 | `tool list` reads all pages of `tools/list`. Each page is one request with its own time limit. | The spec: the time limit applies to each request. One limit for all pages would need a second option. |
 
 [spec-tool-names]: https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool-names
 [spec-timeouts]: https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle#timeouts
