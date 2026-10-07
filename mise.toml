@@ -30,3 +30,19 @@ depends = ["check:fmt", "check:clippy", "check:deny", "check:typos"]
 [tasks.test]
 description = "Run all tests. Tests use only local servers"
 run = "cargo test --workspace --locked"
+
+# The Linux tasks run in a container (harness/linux). NCP_LINUX_PLATFORM
+# selects linux/arm64 (default) or linux/amd64.
+[tasks."linux:image"]
+description = "Build the Linux harness image for the musl target"
+run = "harness/linux/run.sh image"
+
+[tasks."linux:check"]
+description = "Lint with clippy for the Linux musl target in a container"
+depends = ["linux:image"]
+run = "harness/linux/run.sh cargo clippy --workspace --all-targets --locked -- -D warnings"
+
+[tasks."linux:test"]
+description = "Run all tests for the Linux musl target in a container"
+depends = ["linux:image"]
+run = "harness/linux/run.sh cargo test --workspace --locked"
