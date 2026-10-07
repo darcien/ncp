@@ -37,6 +37,7 @@ Levels use [BCP 14][bcp14] key words, as the MCP spec does.
 | P12 | SHOULD | Cache list results with the `ttlMs` and `cacheScope` hints. | [chg] |
 | P13 | MAY | Tasks extension. `subscriptions/listen`. | [ext], [chg] |
 | P14 | SHOULD NOT | Roots, Sampling, Logging (deprecated in `2026-07-28`). | [dep] |
+| P15 | MUST | No request waits forever. Each request has a time limit (default 300 s, configurable). The server start and the handshake have a limit of 30 s. A timeout sends a cancel request. Reason: an agent must not hang. | [timeouts] |
 
 Era cache (P2). The spec permits a client to keep the era across restarts of
 the same server configuration. `ncp` keeps the era for each server name with
@@ -221,6 +222,7 @@ Research and history: `research/`. The candidate evaluation is in
 [stdio]: https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio
 [http]: https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http
 [tools]: https://modelcontextprotocol.io/specification/2026-07-28/server/tools
+[timeouts]: https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle#timeouts
 [res]: https://modelcontextprotocol.io/specification/2026-07-28/server/resources
 [prompts]: https://modelcontextprotocol.io/specification/2026-07-28/server/prompts
 [mrtr]: https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr

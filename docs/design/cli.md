@@ -51,7 +51,6 @@ ncp [OPTIONS] auth status [<SERVER>]
 ncp [OPTIONS] secret set <NAME> [--credential-store <native|file>]
 ncp [OPTIONS] secret list
 ncp [OPTIONS] secret delete <NAME>
-ncp [OPTIONS] cache clean
 ncp generate-shell-completion <bash|zsh|fish>
 ```
 
@@ -68,7 +67,6 @@ ncp generate-shell-completion <bash|zsh|fish>
 | `secret set` | No | Reads one value from stdin and keeps it under the name (section 2.4). On a TTY the input is not shown. The value never goes in an argument (S3). |
 | `secret list` | No | The names of the stored secrets and the place of each one (native store, file, or both). Names that no `${NAME}` in the configuration uses are marked. Never a value. |
 | `secret delete` | No | Removes the secret from all places and says from which. |
-| `cache clean` | No | Removes all caches (section 6). `ncp` works the same with no cache. |
 | `generate-shell-completion` | No | The completion script for the shell. Server names come from the configuration. Tool names come only from a cache, or are not completed. Completion never starts a server. |
 
 `ncp --help` shows the normal order of work: `server list`, `server show`,
@@ -131,7 +129,7 @@ and the error says "missing tool name".
 | `-v`, `--verbose` | Diagnostics on stderr: the source of each variable (environment, native store, file; never the value), the proxy route and its source, the cached era. `-vv` adds the JSON-RPC messages and the HTTP requests, with secrets hidden (I6). |
 | `--timings` | Timings on stderr (F2): process start, configuration, credential read, server start, DNS, connect, server response, CPU time. |
 | `--config-file <path>` | Configuration file, as uv names the flag. Default in section 6. |
-| `--timeout <seconds>` | Wait for the result of one request, in whole seconds. A timeout sends a cancel request. The spec says implementations SHOULD set a timeout for each request and SHOULD enforce a maximum ([timeouts][spec-timeouts]). Default: open (section 7). |
+| `--timeout <seconds>` | The time limit for one request, in whole seconds. Default 300 s (decision C7). A timeout sends a cancel request and exits with code 3. Progress notifications do not reset the clock. |
 | `--credential-store <native\|file>` | Only on `secret set` and `auth login`: the place for the new value. Default `native` (decision C2). |
 | `--no-browser` | Only on `auth login`: print the URL and read the redirect URL from stdin (A10). |
 | `--no-validate` | Only on `tool call`: do not check the arguments against the input schema. |
@@ -293,17 +291,18 @@ are removed. A cache file that does not load is ignored and written again.
 | C1a | The environment comes before the store. | Common practice. A CI job or `op run` can give a value with no change to the store. `-v` shows the source of each name. |
 | C1b | On macOS, `ncp` uses the login Keychain through `/usr/bin/security`. | `ncp` has no paid Developer ID. An ad-hoc signed binary changes identity at each update, and the native API then asks again for each item. An agent cannot answer the dialog. The cost: a process of the same user can read the items through `security`, as with gh and with the Linux Secret Service. |
 | C2 | `--credential-store <native\|file>` on the commands that write. Default `native`. No environment variable. | Secure by default. The opt-in is at the moment of need, and the error names it. The same behavior in each shell, because reads check all places. |
-| C3 | Probe timeout 10 s, the rmcp value, with no option. The era cache keeps any result for the server configuration, and probes again only when the cached path fails. `cache clean` removes all caches. This replaces the advice of early-tests.md to keep the cause of a legacy result. | The MCP spec permits a client to keep the result for the same server configuration ([versioning][spec-versioning]). A server that does not answer `server/discover` then costs the timeout once, not at each call. A changed server repairs itself, because a failure causes a new probe. Consequence: a server for both eras that is slow at its first start (for example an `npx` download) stays legacy until `cache clean`. It works, with the legacy protocol. |
+| C3 | Probe timeout 10 s, the rmcp value, with no option. The era cache keeps any result for the server configuration, and probes again only when the cached path fails. No command clears the cache in the MVP; the user can remove `~/.cache/ncp`. This replaces the advice of early-tests.md to keep the cause of a legacy result. | The MCP spec permits a client to keep the result for the same server configuration ([versioning][spec-versioning]). A server that does not answer `server/discover` then costs the timeout once, not at each call. A changed server repairs itself, because a failure causes a new probe. Consequence: a server for both eras that is slow at its first start (for example an `npx` download) stays legacy until the cache is removed. It works, with the legacy protocol. |
 | C4 | No settings file. Settings for one server go in the `oauth` object of the entry. Only the methods of the MCP spec; only `clientId` in the MVP. | Other tools already use an `oauth` object, so no new key. A field without a test target is not built. |
 | C5 | Proxy as uv: the proxy variables first, then the manual HTTP and HTTPS proxy of the macOS system settings (reqwest `system-proxy`). No exception for loopback. | Common behavior of curl, Node, Bun, Deno, Python and uv (tested on 2026-10-07; Go is the exception). When a request to a loopback host through a proxy on another host fails, the error shows the route and the hint `export NO_PROXY=localhost,127.0.0.1,::1`. The macOS settings do not give the automatic proxy configuration or the bypass list. |
 | C6 | Server and tool as two words. Commands in noun groups with the verbs of the MCP methods. `server show` shows the handshake data, with `instructions`. `tool call ... --help` shows the tool. | No split rule to learn, and shell completion works for each word. The MCP spec names `instructions` as guidance for the client ([lifecycle][spec-lifecycle]); an agent that uses a shell has no other way to read it. |
+| C7 | No request waits forever. Each request has a limit of 300 s, and `--timeout <seconds>` changes it. The server start and the handshake (`initialize` after a probe timeout) have a fixed limit of 30 s. A timeout sends a cancel request. | The spec says implementations SHOULD set a timeout for all sent requests and SHOULD enforce a maximum ([timeouts][spec-timeouts]). An agent must not hang. 300 s and 30 s are the defaults of OpenAI Codex (`DEFAULT_TOOL_TIMEOUT`, `DEFAULT_STARTUP_TIMEOUT`); Goose also uses 300 s. Both use rmcp. |
 
 ## 8. Order after the gate
 
 1. Command line: `server list`, `server show`, `tool list`, `tool show`,
    `tool call`, exit codes, JSON and text output, argument parsing and schema
    check.
-2. Ctrl-C with the cancel request, and `--timeout`.
+2. Ctrl-C with the cancel request, `--timeout`, and the start limit.
 3. Secrets: `${NAME}` from the store and the file, `secret` commands, static
    headers (A11), the macOS Keychain through `/usr/bin/security`.
 4. `--verbose` and `--timings`, the proxy route and the loopback hint.
