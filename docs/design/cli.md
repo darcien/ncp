@@ -1,7 +1,6 @@
 # Design: command line
 
-Status: decisions made with the user on 2026-10-08 (section 7). Waits for the
-final review and acceptance (plan milestone 5, gate).
+Status: accepted by the user on 2026-10-08 (plan milestone 5, gate).
 Baseline: [target-requirements.md](../target-requirements.md). Input:
 [interface-and-config.md](../research/interface-and-config.md),
 [early-tests.md](../research/early-tests.md),
