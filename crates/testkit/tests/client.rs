@@ -283,10 +283,11 @@ async fn probes_when_cached_legacy_server_now_rejects_initialize() {
 
 #[tokio::test]
 async fn names_probe_timeout_when_initialize_fails_after_it() {
-    let fixture = serve_http(Mode::ModernOnly).await.unwrap();
+    let fixture = serve_http(Mode::SlowModernOnly(Duration::from_secs(30)))
+        .await
+        .unwrap();
     let mut setup = Setup::new(http_server(&fixture.url, &[]));
-    // No round trip is faster than zero: the probe always times out.
-    setup.probe_timeout = Duration::ZERO;
+    setup.probe_timeout = Duration::from_millis(200);
     let error = setup.connect().await.err().unwrap();
     assert!(
         matches!(

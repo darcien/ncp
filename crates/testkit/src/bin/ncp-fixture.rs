@@ -16,7 +16,9 @@ use tokio::signal::unix::{SignalKind, signal};
 async fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(mode) = args.first().and_then(|text| Mode::parse(text).ok()) else {
-        eprintln!("usage: ncp-fixture <modern|legacy|slow-MS|modern-only> [linger|ignore-term]");
+        eprintln!(
+            "usage: ncp-fixture <modern|legacy|slow-MS|modern-only|slow-modern-only-MS> [linger|ignore-term]"
+        );
         return ExitCode::from(2);
     };
     let option = args.get(1).map(String::as_str);

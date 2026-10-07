@@ -6,6 +6,7 @@
 //! - `legacy`: answers with "method not found", as a `2025-11-25` server does.
 //! - `slow-N`: answers after N ms. Also accepts `initialize`.
 //! - `modern-only`: answers at once, and rejects `initialize`.
+//! - `slow-modern-only-N`: answers after N ms, and rejects `initialize`.
 
 use std::{
     borrow::Cow,
@@ -38,6 +39,7 @@ pub enum Mode {
     Legacy,
     Slow(Duration),
     ModernOnly,
+    SlowModernOnly(Duration),
 }
 
 impl Mode {
@@ -49,11 +51,18 @@ impl Mode {
             "modern" => Ok(Self::Modern),
             "legacy" => Ok(Self::Legacy),
             "modern-only" => Ok(Self::ModernOnly),
-            other => other
-                .strip_prefix("slow-")
-                .and_then(|ms| ms.parse().ok())
-                .map(|ms| Self::Slow(Duration::from_millis(ms)))
-                .ok_or_else(|| other.to_string()),
+            other => {
+                let millis = |prefix: &str| {
+                    other
+                        .strip_prefix(prefix)
+                        .and_then(|ms| ms.parse().ok())
+                        .map(Duration::from_millis)
+                };
+                millis("slow-modern-only-")
+                    .map(Self::SlowModernOnly)
+                    .or_else(|| millis("slow-").map(Self::Slow))
+                    .ok_or_else(|| other.to_string())
+            }
         }
     }
 }
@@ -118,7 +127,9 @@ impl ServerHandler for Fixture {
 
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
         match self.mode {
-            Mode::ModernOnly => Cow::Borrowed(&[ProtocolVersion::V_2026_07_28]),
+            Mode::ModernOnly | Mode::SlowModernOnly(_) => {
+                Cow::Borrowed(&[ProtocolVersion::V_2026_07_28])
+            }
             _ => Cow::Borrowed(ProtocolVersion::KNOWN_VERSIONS),
         }
     }
@@ -141,7 +152,7 @@ impl ServerHandler for Fixture {
                     "Method not found",
                     None,
                 )),
-                Mode::Slow(delay) => {
+                Mode::Slow(delay) | Mode::SlowModernOnly(delay) => {
                     tokio::time::sleep(delay).await;
                     Ok(result)
                 }
