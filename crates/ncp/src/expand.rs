@@ -1,8 +1,9 @@
 //! `${VAR}` expansion in configuration values.
 //!
-//! Only `${VAR}` is supported. Other agent tools use other forms, and some
-//! run commands. A value with an unknown form keeps it as text, so the
-//! configuration never runs code.
+//! Only `${VAR}` and `${env:VAR}` are supported. Cursor, Cline and Windsurf
+//! write the second form, so their files load with no change. Other forms
+//! can run commands or ask for input. They are errors, so the configuration
+//! never runs code.
 
 use std::collections::HashMap;
 
@@ -19,7 +20,8 @@ pub enum ExpandError {
     BadName(String),
 }
 
-/// Replaces each `${VAR}` in `text` with its value from `env`.
+/// Replaces each `${VAR}` and `${env:VAR}` in `text` with its value from
+/// `env`.
 ///
 /// # Errors
 ///
@@ -36,9 +38,10 @@ pub fn expand(text: &str, env: &Env) -> Result<String, ExpandError> {
     }
 }
 
-fn lookup<'a>(name: &str, env: &'a Env) -> Result<&'a str, ExpandError> {
+fn lookup<'a>(reference: &str, env: &'a Env) -> Result<&'a str, ExpandError> {
+    let name = reference.strip_prefix("env:").unwrap_or(reference);
     if !is_variable_name(name) {
-        return Err(ExpandError::BadName(name.to_string()));
+        return Err(ExpandError::BadName(reference.to_string()));
     }
     env.get(name)
         .map(String::as_str)
@@ -77,6 +80,18 @@ mod tests {
     }
 
     #[test]
+    fn expands_env_prefix_form_as_the_same_variable() {
+        assert_eq!(
+            expand("${env:HOME}/${HOME}", &env()).unwrap(),
+            "/home/u//home/u"
+        );
+        assert_eq!(
+            expand("${env:NOPE}", &env()),
+            Err(ExpandError::Unset("NOPE".into()))
+        );
+    }
+
+    #[test]
     fn keeps_text_without_variables() {
         assert_eq!(
             expand("plain $HOME $ {x}", &env()).unwrap(),
@@ -110,8 +125,12 @@ mod tests {
             Err(ExpandError::BadName("HOME:-x".into()))
         );
         assert_eq!(
-            expand("${env:HOME}", &env()),
-            Err(ExpandError::BadName("env:HOME".into()))
+            expand("${env:}", &env()),
+            Err(ExpandError::BadName("env:".into()))
+        );
+        assert_eq!(
+            expand("${input:token}", &env()),
+            Err(ExpandError::BadName("input:token".into()))
         );
         assert_eq!(
             expand("${}", &env()),
