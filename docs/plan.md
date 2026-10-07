@@ -25,7 +25,7 @@ record it and continue.
    `https_proxy`, `NO_PROXY`, and credentials in the proxy URL.
 5. Timings through the `reqwest::Client` that we give to rmcp: DNS, connect,
    and response time.
-6. `keyring` 3.6 with the zbus Secret Service store: does it build for
+6. `keyring-core` 1 with the zbus Secret Service store: does it build for
    `x86_64-unknown-linux-musl`? A build check only. If the toolchain for this
    target is not available, record the step as blocked.
 
