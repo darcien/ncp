@@ -1,7 +1,9 @@
-//! The credential model: the kinds of secrets, and the key of each secret.
+//! The credential model: the secrets, and the key of each item in a store.
 //!
-//! All secrets go to the credential store, never to the configuration file.
-//! A key names one secret of one server.
+//! A secret is a named value, the same as an environment variable. The
+//! configuration names it with `${NAME}`. OAuth tokens and client
+//! credentials are separate items for each server. No secret goes to the
+//! configuration file.
 
 use std::fmt;
 
@@ -9,6 +11,9 @@ use crate::{expand::is_variable_name, server::ServerName};
 
 /// The service name of all `ncp` items in the credential store.
 pub const SERVICE: &str = "ncp";
+
+const SECRET_PREFIX: &str = "secret/";
+const OAUTH_PREFIX: &str = "oauth/";
 
 /// A secret value. `Debug` hides the value, so that a secret cannot go to a
 /// log by accident. There is no `Display`.
@@ -34,24 +39,16 @@ impl fmt::Debug for Secret {
     }
 }
 
-/// The name of an environment variable for a stdio server.
+/// The name of a secret: a POSIX environment variable name, because
+/// `${NAME}` in the configuration names it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct EnvName(String);
-
-/// The name of an HTTP header. Header names are not case-sensitive
-/// (RFC 9110 §5.1), so the name is kept in lower case.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct HeaderName(String);
+pub struct SecretName(String);
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum SecretNameError {
-    #[error("{0:?} is not an environment variable name")]
-    Env(String),
-    #[error("{0:?} is not an HTTP header name")]
-    Header(String),
-}
+#[error("{0:?} is not a secret name; use letters, digits and '_', and do not start with a digit")]
+pub struct SecretNameError(String);
 
-impl EnvName {
+impl SecretName {
     /// # Errors
     ///
     /// Returns an error when the text is not an environment variable name.
@@ -59,7 +56,7 @@ impl EnvName {
         if is_variable_name(text) {
             Ok(Self(text.to_string()))
         } else {
-            Err(SecretNameError::Env(text.to_string()))
+            Err(SecretNameError(text.to_string()))
         }
     }
 
@@ -69,61 +66,49 @@ impl EnvName {
     }
 }
 
-impl HeaderName {
-    /// # Errors
-    ///
-    /// Returns an error when the text is not a token (RFC 9110 §5.6.2).
-    pub fn parse(text: &str) -> Result<Self, SecretNameError> {
-        let is_token_char = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
-        if !text.is_empty() && text.chars().all(is_token_char) {
-            Ok(Self(text.to_ascii_lowercase()))
-        } else {
-            Err(SecretNameError::Header(text.to_string()))
-        }
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
+impl fmt::Display for SecretName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
     }
 }
 
-/// The kinds of secrets.
+/// The key of one item in a store.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum SecretKind {
-    /// A static value of an environment variable for a stdio server.
-    Env(EnvName),
-    /// A static header value, for example a bearer token or an API key.
-    Header(HeaderName),
-    /// The OAuth access token and refresh token.
-    OAuthTokens,
-    /// The OAuth client credentials, with the issuer that registered them.
-    OAuthClient,
-}
-
-/// The key of one secret of one server.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CredentialKey {
-    pub server: ServerName,
-    pub kind: SecretKind,
+pub enum CredentialKey {
+    /// A named value for `${NAME}`.
+    Secret(SecretName),
+    /// The OAuth access token and refresh token of a server.
+    OAuthTokens(ServerName),
+    /// The OAuth client credentials of a server, with the issuer that
+    /// registered them.
+    OAuthClient(ServerName),
 }
 
 impl CredentialKey {
-    #[must_use]
-    pub fn new(server: ServerName, kind: SecretKind) -> Self {
-        Self { server, kind }
-    }
-
-    /// The account of the item in the credential store. A server name has no
-    /// `/`, so each key gives a different account.
+    /// The account of the item in the store. A secret name and a server
+    /// name have no `/`, so each key gives a different account.
     #[must_use]
     pub fn account(&self) -> String {
-        let server = self.server.as_str();
-        match &self.kind {
-            SecretKind::Env(name) => format!("{server}/env/{}", name.as_str()),
-            SecretKind::Header(name) => format!("{server}/header/{}", name.as_str()),
-            SecretKind::OAuthTokens => format!("{server}/oauth/tokens"),
-            SecretKind::OAuthClient => format!("{server}/oauth/client"),
+        match self {
+            Self::Secret(name) => format!("{SECRET_PREFIX}{}", name.as_str()),
+            Self::OAuthTokens(server) => format!("{OAUTH_PREFIX}{}/tokens", server.as_str()),
+            Self::OAuthClient(server) => format!("{OAUTH_PREFIX}{}/client", server.as_str()),
+        }
+    }
+
+    /// The key of an account, or `None` for an account that `ncp` does not
+    /// make, for example from an older version.
+    #[must_use]
+    pub fn from_account(account: &str) -> Option<Self> {
+        if let Some(name) = account.strip_prefix(SECRET_PREFIX) {
+            return SecretName::parse(name).ok().map(Self::Secret);
+        }
+        let (server, item) = account.strip_prefix(OAUTH_PREFIX)?.split_once('/')?;
+        let server = ServerName::parse(server).ok()?;
+        match item {
+            "tokens" => Some(Self::OAuthTokens(server)),
+            "client" => Some(Self::OAuthClient(server)),
+            _ => None,
         }
     }
 }
@@ -132,8 +117,8 @@ impl CredentialKey {
 mod tests {
     use super::*;
 
-    fn key(kind: SecretKind) -> CredentialKey {
-        CredentialKey::new(ServerName::parse("gh").unwrap(), kind)
+    fn server() -> ServerName {
+        ServerName::parse("gh").unwrap()
     }
 
     #[test]
@@ -144,41 +129,41 @@ mod tests {
     }
 
     #[test]
-    fn gives_a_different_account_for_each_kind() {
-        let accounts = [
-            key(SecretKind::Env(EnvName::parse("API_KEY").unwrap())).account(),
-            key(SecretKind::Header(
-                HeaderName::parse("Authorization").unwrap(),
-            ))
-            .account(),
-            key(SecretKind::OAuthTokens).account(),
-            key(SecretKind::OAuthClient).account(),
+    fn gives_a_different_account_for_each_key() {
+        let keys = [
+            CredentialKey::Secret(SecretName::parse("GITHUB_TOKEN").unwrap()),
+            CredentialKey::OAuthTokens(server()),
+            CredentialKey::OAuthClient(server()),
         ];
+        let accounts: Vec<String> = keys.iter().map(CredentialKey::account).collect();
         assert_eq!(
             accounts,
-            [
-                "gh/env/API_KEY",
-                "gh/header/authorization",
-                "gh/oauth/tokens",
-                "gh/oauth/client"
-            ]
+            ["secret/GITHUB_TOKEN", "oauth/gh/tokens", "oauth/gh/client"]
         );
+        for (key, account) in keys.iter().zip(&accounts) {
+            assert_eq!(CredentialKey::from_account(account).as_ref(), Some(key));
+        }
     }
 
     #[test]
-    fn header_names_that_differ_only_in_case_give_one_key() {
-        assert_eq!(
-            HeaderName::parse("X-Api-Key").unwrap(),
-            HeaderName::parse("x-api-key").unwrap()
-        );
+    fn ignores_accounts_that_ncp_does_not_make() {
+        for account in [
+            "gh/env/API_KEY",
+            "secret/1A",
+            "oauth/gh/other",
+            "oauth/a.b/tokens",
+            "",
+        ] {
+            assert_eq!(CredentialKey::from_account(account), None, "{account}");
+        }
     }
 
     #[test]
-    fn rejects_bad_env_and_header_names() {
-        assert!(EnvName::parse("1A").is_err());
-        assert!(EnvName::parse("A-B").is_err());
-        assert!(HeaderName::parse("").is_err());
-        assert!(HeaderName::parse("X Key").is_err());
-        assert!(HeaderName::parse("X:Key").is_err());
+    fn secret_names_are_variable_names() {
+        assert!(SecretName::parse("API_KEY_2").is_ok());
+        assert!(SecretName::parse("_X").is_ok());
+        assert!(SecretName::parse("1A").is_err());
+        assert!(SecretName::parse("A-B").is_err());
+        assert!(SecretName::parse("").is_err());
     }
 }

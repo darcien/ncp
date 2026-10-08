@@ -55,7 +55,7 @@ const USER_CANCELED: i32 = 128;
 /// limit of each store call, so that `ncp` stops the program before the
 /// caller gives up: a program that stays could show a dialog after the
 /// exit of `ncp`, or write an item late.
-const PROGRAM_LIMIT: Duration = Duration::from_secs(55);
+pub const PROGRAM_LIMIT: Duration = Duration::from_secs(55);
 
 /// A credential store that runs the `security` program.
 #[derive(Debug, Clone)]
@@ -190,14 +190,15 @@ impl CredentialStore for SecurityStore {
         }
     }
 
-    fn delete(&self, key: &CredentialKey) -> Result<(), StoreError> {
+    fn delete(&self, key: &CredentialKey) -> Result<bool, StoreError> {
         let account = key.account();
         let output = self.run(
             &["delete-generic-password", "-s", SERVICE, "-a", &account],
             None,
         )?;
         match output.status.code() {
-            Some(0 | ITEM_NOT_FOUND) => Ok(()),
+            Some(0) => Ok(true),
+            Some(ITEM_NOT_FOUND) => Ok(false),
             code => Err(exit_error(
                 "delete-generic-password",
                 code,
@@ -205,6 +206,42 @@ impl CredentialStore for SecurityStore {
             )),
         }
     }
+
+    /// `dump-keychain` with no `-d` shows the attributes of each item and
+    /// no value, so it decrypts nothing.
+    fn keys(&self) -> Result<Vec<CredentialKey>, StoreError> {
+        let output = self.run(&["dump-keychain"], None)?;
+        match output.status.code() {
+            Some(0) => {
+                let text = String::from_utf8_lossy(&output.stdout);
+                Ok(super::keys_of(
+                    ncp_accounts(&text).iter().map(String::as_str),
+                ))
+            }
+            code => Err(exit_error("dump-keychain", code, &diagnostics(&output))),
+        }
+    }
+}
+
+/// The accounts of the generic password items of service `ncp` in the
+/// output of `dump-keychain`. Each item starts with a `keychain:` line, and
+/// has one attribute on each line, for example `"acct"<blob>="secret/A"`.
+/// A value with bytes that are not printable shows as hexadecimal digits;
+/// `ncp` makes no such account, so such a value is left out.
+fn ncp_accounts(dump: &str) -> Vec<String> {
+    let attribute = |line: &str, name: &str| {
+        line.trim_start()
+            .strip_prefix(&format!("\"{name}\"<blob>=\""))
+            .and_then(|rest| rest.strip_suffix('"'))
+            .map(str::to_string)
+    };
+    dump.split("keychain: ")
+        .filter_map(|item| {
+            let service = item.lines().find_map(|line| attribute(line, "svce"))?;
+            let account = item.lines().find_map(|line| attribute(line, "acct"))?;
+            (service == SERVICE).then_some(account)
+        })
+        .collect()
 }
 
 fn not_started(program: &Path, error: &io::Error) -> StoreError {
@@ -347,6 +384,38 @@ mod tests {
             panic!("a bad value must fail");
         };
         assert!(!message.contains("secret@@"));
+    }
+
+    #[test]
+    fn finds_the_accounts_of_ncp_in_a_keychain_dump() {
+        let dump = r#"keychain: "/Users/u/Library/Keychains/login.keychain-db"
+version: 512
+class: "genp"
+attributes:
+    0x00000007 <blob>="ncp"
+    "acct"<blob>="secret/GITHUB_TOKEN"
+    "svce"<blob>="ncp"
+keychain: "/Users/u/Library/Keychains/login.keychain-db"
+version: 512
+class: "genp"
+attributes:
+    "acct"<blob>="secret/OTHER"
+    "svce"<blob>="other-app"
+keychain: "/Users/u/Library/Keychains/login.keychain-db"
+class: "genp"
+attributes:
+    "acct"<blob>=0x00FF  " ÿ"
+    "svce"<blob>="ncp"
+keychain: "/Users/u/Library/Keychains/login.keychain-db"
+class: "genp"
+attributes:
+    "svce"<blob>="ncp"
+    "acct"<blob>="oauth/gh/tokens"
+"#;
+        assert_eq!(
+            ncp_accounts(dump),
+            ["secret/GITHUB_TOKEN", "oauth/gh/tokens"]
+        );
     }
 
     #[test]

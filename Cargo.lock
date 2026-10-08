@@ -1323,6 +1323,7 @@ dependencies = [
  "reqwest",
  "rmcp",
  "rustls",
+ "secret-service",
  "serde",
  "serde_json",
  "thiserror",

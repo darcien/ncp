@@ -4,9 +4,10 @@
 //! limit. An async caller runs them through [`crate::store::run_blocking`].
 //! Automated tests do not use this store.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use keyring_core::Error;
+use secret_service::{EncryptionType, blocking::SecretService};
 
 use crate::{
     credential::{CredentialKey, SERVICE, Secret},
@@ -25,7 +26,9 @@ impl NativeStore {
     ///
     /// Returns an error when there is no usable Secret Service, for example
     /// with no session bus.
-    pub fn open() -> Result<Self, StoreError> {
+    /// The calls run in this process, so the limit of the caller is enough:
+    /// nothing stays after the exit of `ncp`.
+    pub fn open(_limit: std::time::Duration) -> Result<Self, StoreError> {
         platform_store()
             .map(|store| Self { store })
             .map_err(store_error)
@@ -75,10 +78,36 @@ impl CredentialStore for NativeStore {
             .map_err(store_error)
     }
 
-    fn delete(&self, key: &CredentialKey) -> Result<(), StoreError> {
+    fn delete(&self, key: &CredentialKey) -> Result<bool, StoreError> {
         match self.entry(key)?.delete_credential() {
-            Ok(()) | Err(Error::NoEntry) => Ok(()),
+            Ok(()) => Ok(true),
+            Err(Error::NoEntry) => Ok(false),
             Err(error) => Err(store_error(error)),
         }
+    }
+
+    /// A search by attribute that does not unlock. keyring-core unlocks
+    /// each locked item that a search finds, which shows a prompt. The names
+    /// of a locked item are not readable, so a locked item gives an error
+    /// and no partial list.
+    fn keys(&self) -> Result<Vec<CredentialKey>, StoreError> {
+        let unavailable = |error: secret_service::Error| StoreError::Unavailable(error.to_string());
+        let service = SecretService::connect(EncryptionType::Plain).map_err(unavailable)?;
+        let found = service
+            .search_items(HashMap::from([("service", SERVICE)]))
+            .map_err(unavailable)?;
+        if !found.locked.is_empty() {
+            return Err(StoreError::Denied(format!(
+                "{} items are locked; unlock the keyring to list them",
+                found.locked.len()
+            )));
+        }
+        let accounts: Vec<String> = found
+            .unlocked
+            .iter()
+            .filter_map(|item| item.get_attributes().ok())
+            .filter_map(|mut attributes| attributes.remove("username"))
+            .collect();
+        Ok(crate::store::keys_of(accounts.iter().map(String::as_str)))
     }
 }

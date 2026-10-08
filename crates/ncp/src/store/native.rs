@@ -25,13 +25,14 @@ mod keychain {
     pub struct NativeStore(SecurityStore);
 
     impl NativeStore {
-        /// Opens the login Keychain. This starts no process.
+        /// Opens the login Keychain. This starts no process. Each run of
+        /// the program has the limit.
         ///
         /// # Errors
         ///
         /// Returns no error. The result has the same type as on Linux.
-        pub fn open() -> Result<Self, StoreError> {
-            Ok(Self(SecurityStore::new()))
+        pub fn open(limit: std::time::Duration) -> Result<Self, StoreError> {
+            Ok(Self(SecurityStore::new().with_limit(limit)))
         }
     }
 
@@ -44,8 +45,12 @@ mod keychain {
             self.0.save(key, secret)
         }
 
-        fn delete(&self, key: &CredentialKey) -> Result<(), StoreError> {
+        fn delete(&self, key: &CredentialKey) -> Result<bool, StoreError> {
             self.0.delete(key)
+        }
+
+        fn keys(&self) -> Result<Vec<CredentialKey>, StoreError> {
+            self.0.keys()
         }
     }
 }

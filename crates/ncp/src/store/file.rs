@@ -79,10 +79,15 @@ impl CredentialStore for FileStore {
         })
     }
 
-    fn delete(&self, key: &CredentialKey) -> Result<(), StoreError> {
-        self.change(|secrets| {
-            secrets.remove(&key.account());
-        })
+    fn delete(&self, key: &CredentialKey) -> Result<bool, StoreError> {
+        let mut removed = false;
+        self.change(|secrets| removed = secrets.remove(&key.account()).is_some())?;
+        Ok(removed)
+    }
+
+    fn keys(&self) -> Result<Vec<CredentialKey>, StoreError> {
+        let content = self.read()?;
+        Ok(super::keys_of(content.secrets.keys().map(String::as_str)))
     }
 }
 
@@ -102,7 +107,7 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::{credential::SecretKind, server::ServerName};
+    use crate::server::ServerName;
 
     /// A new, empty directory for one test.
     fn scratch_dir(test: &str) -> PathBuf {
@@ -112,7 +117,7 @@ mod tests {
     }
 
     fn key() -> CredentialKey {
-        CredentialKey::new(ServerName::parse("s").unwrap(), SecretKind::OAuthTokens)
+        CredentialKey::OAuthTokens(ServerName::parse("s").unwrap())
     }
 
     #[test]

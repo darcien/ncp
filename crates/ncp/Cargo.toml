@@ -30,6 +30,9 @@ url = "2.5.8"
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring-core = "=1.0.0"
 zbus-secret-service-keyring-store = { version = "=1.0.1", default-features = false, features = ["rt-async-io-crypto-rust"] }
+# The same version as the store uses. A direct search gives the locked and
+# the unlocked items apart, so that a list of names needs no unlock.
+secret-service = { version = "=5.2.0", default-features = false, features = ["rt-async-io-crypto-rust"] }
 
 [lints]
 workspace = true

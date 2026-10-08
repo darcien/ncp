@@ -33,10 +33,12 @@ impl CredentialStore for MemoryStore {
         })
     }
 
-    fn delete(&self, key: &CredentialKey) -> Result<(), StoreError> {
-        self.with(|secrets| {
-            secrets.remove(key);
-        })
+    fn delete(&self, key: &CredentialKey) -> Result<bool, StoreError> {
+        self.with(|secrets| secrets.remove(key).is_some())
+    }
+
+    fn keys(&self) -> Result<Vec<CredentialKey>, StoreError> {
+        self.with(|secrets| secrets.keys().cloned().collect())
     }
 }
 

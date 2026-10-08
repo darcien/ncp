@@ -24,6 +24,8 @@
 //! - `add-generic-password [-U] -s SERVICE -a ACCOUNT -w PASSWORD`
 //! - `find-generic-password -s SERVICE -a ACCOUNT [-w]`
 //! - `delete-generic-password -s SERVICE -a ACCOUNT`
+//! - `dump-keychain`: the attributes of each item, with no value, in the
+//!   form of the real program.
 
 use std::{
     collections::BTreeMap,
@@ -208,6 +210,12 @@ fn run(dir: &Path, words: &[&str]) -> u8 {
     let Some((command, options)) = words.split_first() else {
         return 0;
     };
+    if *command == "dump-keychain" && options.is_empty() {
+        return match dump(&items_path(dir)) {
+            Ok(()) => 0,
+            Err(failed) => failed.code(),
+        };
+    }
     let parsed = parse_options(options, *command == "add-generic-password");
     let result = match (*command, parsed) {
         ("add-generic-password", Some(options)) => add(&items_path(dir), &options),
@@ -315,6 +323,22 @@ fn find(path: &Path, options: &Options) -> Result<(), Failed> {
             "keychain: \"fake\"\n    \"acct\"<blob>=\"{account}\"\n    \"svce\"<blob>=\"{service}\""
         );
     }
+    Ok(())
+}
+
+fn dump(path: &Path) -> Result<(), Failed> {
+    let items = read_items(path)?;
+    let text = items
+        .iter()
+        .flat_map(|(service, accounts)| accounts.keys().map(move |account| (service, account)))
+        .fold(String::new(), |mut text, (service, account)| {
+            let _ = write!(
+                text,
+                "keychain: \"/fake/login.keychain-db\"\nversion: 512\nclass: \"genp\"\nattributes:\n    \"acct\"<blob>=\"{account}\"\n    \"svce\"<blob>=\"{service}\"\n"
+            );
+            text
+        });
+    print!("{text}");
     Ok(())
 }
 

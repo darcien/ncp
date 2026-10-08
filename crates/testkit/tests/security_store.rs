@@ -7,7 +7,7 @@
 use std::{fs, path::PathBuf};
 
 use ncp::{
-    credential::{CredentialKey, EnvName, Secret, SecretKind},
+    credential::{CredentialKey, Secret, SecretName},
     server::ServerName,
     store::{CredentialStore, SecurityStore, StoreError},
 };
@@ -33,12 +33,12 @@ fn store(dir: &std::path::Path) -> SecurityStore {
     SecurityStore::with_program(dir.join("security"))
 }
 
-fn key(server: &str, kind: SecretKind) -> CredentialKey {
-    CredentialKey::new(ServerName::parse(server).unwrap(), kind)
+fn server(name: &str) -> ServerName {
+    ServerName::parse(name).unwrap()
 }
 
 fn tokens() -> CredentialKey {
-    key("a", SecretKind::OAuthTokens)
+    CredentialKey::OAuthTokens(server("a"))
 }
 
 fn secret(text: &str) -> Secret {
@@ -53,8 +53,8 @@ fn calls(dir: &std::path::Path) -> String {
 fn keeps_secrets_by_key() {
     let dir = keychain("contract");
     let store = store(&dir);
-    let env = key("a", SecretKind::Env(EnvName::parse("API_KEY").unwrap()));
-    let other_server = key("b", SecretKind::OAuthTokens);
+    let env = CredentialKey::Secret(SecretName::parse("API_KEY").unwrap());
+    let other_server = CredentialKey::OAuthTokens(server("b"));
 
     assert_eq!(store.load(&tokens()).unwrap(), None);
     store.save(&tokens(), &secret("t1")).unwrap();
@@ -108,7 +108,7 @@ fn stores_the_value_in_encoded_form() {
     let dir = keychain("encoded");
     store(&dir).save(&tokens(), &secret(HARD_VALUE)).unwrap();
     let items = fs::read_to_string(dir.join("items.json")).unwrap();
-    assert!(items.contains("\"a/oauth/tokens\": \"ncp-base64:"));
+    assert!(items.contains("\"oauth/a/tokens\": \"ncp-base64:"));
     assert!(!items.contains("he said"));
     fs::remove_dir_all(dir).unwrap();
 }
@@ -118,7 +118,7 @@ fn reads_a_value_with_no_mark_as_plain_text() {
     let dir = keychain("plain");
     fs::write(
         dir.join("items.json"),
-        r#"{"ncp": {"a/oauth/tokens": "added by hand"}}"#,
+        r#"{"ncp": {"oauth/a/tokens": "added by hand"}}"#,
     )
     .unwrap();
     assert_eq!(

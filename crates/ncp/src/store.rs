@@ -15,7 +15,7 @@ use std::{path::PathBuf, time::Duration};
 pub use file::FileStore;
 pub use memory::MemoryStore;
 pub use native::NativeStore;
-pub use security::SecurityStore;
+pub use security::{PROGRAM_LIMIT, SecurityStore};
 
 use crate::credential::{CredentialKey, Secret};
 
@@ -32,13 +32,34 @@ pub trait CredentialStore: Send + Sync {
     /// Returns an error when the store cannot be written.
     fn save(&self, key: &CredentialKey, secret: &Secret) -> Result<(), StoreError>;
 
-    /// Removes the secret. Removing a secret that does not exist is not an
-    /// error.
+    /// Removes the secret. True when the store had it. Removing a secret
+    /// that does not exist is not an error.
     ///
     /// # Errors
     ///
     /// Returns an error when the store cannot be written.
-    fn delete(&self, key: &CredentialKey) -> Result<(), StoreError>;
+    fn delete(&self, key: &CredentialKey) -> Result<bool, StoreError>;
+
+    /// The keys of all `ncp` items, in order. The call reads no value, so a
+    /// locked store does not need an unlock for it. An item that `ncp` does
+    /// not make is left out.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the store cannot be read.
+    fn keys(&self) -> Result<Vec<CredentialKey>, StoreError>;
+}
+
+/// The keys of the accounts that `ncp` makes, in order.
+#[must_use]
+pub fn keys_of<'a>(accounts: impl IntoIterator<Item = &'a str>) -> Vec<CredentialKey> {
+    let mut keys: Vec<CredentialKey> = accounts
+        .into_iter()
+        .filter_map(CredentialKey::from_account)
+        .collect();
+    keys.sort();
+    keys.dedup();
+    keys
 }
 
 /// Store errors. No variant holds a secret value.
@@ -64,6 +85,9 @@ pub enum StoreError {
         .0.as_secs()
     )]
     NoAnswer(Duration),
+    /// Ctrl-C during the call.
+    #[error("the store call was interrupted")]
+    Interrupted,
 }
 
 /// The time limit for one store call. A locked store waits for its unlock
@@ -102,10 +126,10 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::{credential::SecretKind, server::ServerName};
+    use crate::server::ServerName;
 
     fn tokens_key() -> CredentialKey {
-        CredentialKey::new(ServerName::parse("a").unwrap(), SecretKind::OAuthTokens)
+        CredentialKey::OAuthTokens(ServerName::parse("a").unwrap())
     }
 
     #[tokio::test]
@@ -137,17 +161,26 @@ mod tests {
 }
 
 #[cfg(test)]
+mod keys_tests {
+    use super::*;
+
+    #[test]
+    fn keeps_only_the_accounts_that_ncp_makes_in_order() {
+        let keys = keys_of(["secret/B", "old/env/X", "secret/A", "secret/A"]);
+        let accounts: Vec<String> = keys.iter().map(CredentialKey::account).collect();
+        assert_eq!(accounts, ["secret/A", "secret/B"]);
+    }
+}
+
+#[cfg(test)]
 mod contract {
     //! The behavior that each store must have.
 
     use super::*;
-    use crate::{
-        credential::{EnvName, SecretKind},
-        server::ServerName,
-    };
+    use crate::{credential::SecretName, server::ServerName};
 
-    fn key(server: &str, kind: SecretKind) -> CredentialKey {
-        CredentialKey::new(ServerName::parse(server).unwrap(), kind)
+    fn server(name: &str) -> ServerName {
+        ServerName::parse(name).unwrap()
     }
 
     fn secret(text: &str) -> Secret {
@@ -155,9 +188,9 @@ mod contract {
     }
 
     pub fn check(store: &dyn CredentialStore) {
-        let tokens = key("a", SecretKind::OAuthTokens);
-        let env = key("a", SecretKind::Env(EnvName::parse("API_KEY").unwrap()));
-        let other_server = key("b", SecretKind::OAuthTokens);
+        let tokens = CredentialKey::OAuthTokens(server("a"));
+        let env = CredentialKey::Secret(SecretName::parse("API_KEY").unwrap());
+        let other_server = CredentialKey::OAuthTokens(server("b"));
 
         assert_eq!(store.load(&tokens).unwrap(), None);
         store.save(&tokens, &secret("t1")).unwrap();
@@ -169,9 +202,12 @@ mod contract {
         store.save(&tokens, &secret("t2")).unwrap();
         assert_eq!(store.load(&tokens).unwrap(), Some(secret("t2")));
 
-        store.delete(&tokens).unwrap();
+        assert_eq!(store.keys().unwrap(), [env.clone(), tokens.clone()]);
+
+        assert!(store.delete(&tokens).unwrap());
         assert_eq!(store.load(&tokens).unwrap(), None);
         assert_eq!(store.load(&env).unwrap(), Some(secret("e1")));
-        store.delete(&tokens).unwrap();
+        assert!(!store.delete(&tokens).unwrap());
+        assert_eq!(store.keys().unwrap(), [env]);
     }
 }
