@@ -202,3 +202,25 @@ fn reports_a_missing_program_as_unavailable() {
     ));
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn stops_a_program_that_gives_no_answer_at_the_limit() {
+    let dir = keychain("no-answer");
+    fs::write(dir.join("delay"), "30000").unwrap();
+    let start = std::time::Instant::now();
+    let limit = std::time::Duration::from_millis(300);
+    let result = store(&dir).with_limit(limit).load(&tokens());
+    assert!(
+        matches!(result, Err(StoreError::NoAnswer(d)) if d == limit),
+        "{result:?}"
+    );
+    assert!(start.elapsed() < std::time::Duration::from_secs(3));
+    // The program is gone: no process has the fake of this test as its path.
+    let program = dir.join("security").display().to_string();
+    let found = std::process::Command::new("pgrep")
+        .args(["-f", &program])
+        .output()
+        .unwrap();
+    assert!(found.stdout.is_empty(), "the program still runs");
+    fs::remove_dir_all(dir).unwrap();
+}

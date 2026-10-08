@@ -11,6 +11,9 @@
 //! - `items.json`: the items, as `{service: {account: password}}`.
 //! - `calls.log`: the arguments of each call, as one JSON array on each
 //!   line.
+//! - `delay`: when it exists, each call first waits the number of
+//!   milliseconds in this file. This is a program that gives no answer, for
+//!   example at an unlock dialog.
 //! - `fail`: when it exists, each call copies its input to stderr and exits
 //!   with the code in this file. This is a program that fails and shows the
 //!   data it received.
@@ -58,6 +61,12 @@ fn main() -> ExitCode {
     let words: Vec<&str> = args.iter().skip(1).map(String::as_str).collect();
     if record_call(&dir, &words).is_err() {
         return ExitCode::from(FAILURE);
+    }
+    if let Some(ms) = fs::read_to_string(dir.join("delay"))
+        .ok()
+        .and_then(|text| text.trim().parse::<u64>().ok())
+    {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
     }
     if let Some(code) = failure_code(&dir) {
         let _ = io::copy(&mut io::stdin(), &mut io::stderr());

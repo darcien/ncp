@@ -17,9 +17,11 @@
 //! on each platform.
 
 use std::{
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
+    process::{Child, Command, ExitStatus, Output, Stdio},
+    thread::JoinHandle,
+    time::{Duration, Instant},
 };
 
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -49,10 +51,17 @@ const NO_SUCH_KEYCHAIN: i32 = 50;
 const AUTH_FAILED: i32 = 51;
 const USER_CANCELED: i32 = 128;
 
+/// The time that one run of the program gets. It is shorter than the
+/// limit of each store call, so that `ncp` stops the program before the
+/// caller gives up: a program that stays could show a dialog after the
+/// exit of `ncp`, or write an item late.
+const PROGRAM_LIMIT: Duration = Duration::from_secs(55);
+
 /// A credential store that runs the `security` program.
 #[derive(Debug, Clone)]
 pub struct SecurityStore {
     program: PathBuf,
+    limit: Duration,
 }
 
 impl SecurityStore {
@@ -68,7 +77,15 @@ impl SecurityStore {
     pub fn with_program(program: impl Into<PathBuf>) -> Self {
         Self {
             program: program.into(),
+            limit: PROGRAM_LIMIT,
         }
+    }
+
+    /// The same store with another time limit for each run. Tests use a
+    /// short limit.
+    #[must_use]
+    pub fn with_limit(self, limit: Duration) -> Self {
+        Self { limit, ..self }
     }
 
     fn run(&self, args: &[&str], input: Option<&str>) -> Result<Output, StoreError> {
@@ -88,18 +105,54 @@ impl SecurityStore {
             (Some(text), Some(mut stdin)) => stdin.write_all(text.as_bytes()),
             _ => Ok(()),
         };
-        // Wait also when the input failed, so that no stopped process stays.
-        let output = child
-            .wait_with_output()
-            .map_err(|error| StoreError::Failure(format!("{}: {error}", self.program.display())))?;
+        // Read the output on other threads, so that a full pipe cannot stop
+        // the program while this thread waits for it.
+        let stdout = read_all(child.stdout.take());
+        let stderr = read_all(child.stderr.take());
+        let status = self.wait(&mut child)?;
         sent.map_err(|error| {
             StoreError::Failure(format!(
                 "cannot send the command to {}: {error}",
                 self.program.display()
             ))
         })?;
-        Ok(output)
+        Ok(Output {
+            status,
+            stdout: stdout.join().unwrap_or_default(),
+            stderr: stderr.join().unwrap_or_default(),
+        })
     }
+
+    /// Waits for the program until the limit, then stops it.
+    fn wait(&self, child: &mut Child) -> Result<ExitStatus, StoreError> {
+        let deadline = Instant::now() + self.limit;
+        let failure =
+            |error: io::Error| StoreError::Failure(format!("{}: {error}", self.program.display()));
+        loop {
+            if let Some(status) = child.try_wait().map_err(failure)? {
+                return Ok(status);
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(StoreError::NoAnswer(self.limit));
+            }
+            std::thread::sleep(WAIT_STEP);
+        }
+    }
+}
+
+/// The time between two checks for the end of the program.
+const WAIT_STEP: Duration = Duration::from_millis(10);
+
+fn read_all(pipe: Option<impl Read + Send + 'static>) -> JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    })
 }
 
 impl Default for SecurityStore {
