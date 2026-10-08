@@ -88,12 +88,54 @@ pub enum Command {
     /// Tools of a server
     #[command(subcommand)]
     Tool(ToolCommand),
+    /// Resources of a server
+    #[command(subcommand)]
+    Resource(ResourceCommand),
+    /// Prompts of a server
+    #[command(subcommand)]
+    Prompt(PromptCommand),
     /// OAuth login of HTTP servers
     #[command(subcommand)]
     Auth(AuthCommand),
     /// Named values for ${NAME} in the configuration
     #[command(subcommand)]
     Secret(SecretCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ResourceCommand {
+    /// List the resources and the resource templates of a server.
+    List {
+        /// The server name from the configuration
+        server: String,
+    },
+    /// Read one resource. The text goes to stdout as it is; with
+    /// --output-format json, the MCP result.
+    Read {
+        /// The server name from the configuration
+        server: String,
+        /// The resource URI
+        uri: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PromptCommand {
+    /// List the prompts of a server.
+    List {
+        /// The server name from the configuration
+        server: String,
+    },
+    /// Get one prompt with its arguments: key=value pairs, or key=@path
+    /// for the text of a file.
+    Get {
+        /// The server name from the configuration
+        server: String,
+        /// The prompt name
+        prompt: String,
+        /// The prompt arguments
+        arguments: Vec<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

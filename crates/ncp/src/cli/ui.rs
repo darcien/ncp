@@ -61,6 +61,9 @@ impl Verbosity {
 pub struct Ui {
     pub format: Format,
     pub verbosity: Verbosity,
+    /// True when `--output-format` names the format. `resource read`
+    /// writes raw contents unless the user asks for JSON.
+    pub format_named: bool,
 }
 
 impl Ui {
@@ -132,6 +135,21 @@ impl Ui {
                 ));
             }
         }))
+    }
+}
+
+/// Writes bytes to stdout, for example the contents of a resource.
+///
+/// # Errors
+///
+/// Returns a failure when stdout cannot be written.
+pub fn write_stdout_bytes(bytes: &[u8]) -> Result<(), Failure> {
+    let mut stdout = std::io::stdout().lock();
+    match stdout.write_all(bytes).and_then(|()| stdout.flush()) {
+        Err(error) if error.kind() != ErrorKind::BrokenPipe => Err(Failure::protocol(format!(
+            "cannot write the result to stdout: {error}"
+        ))),
+        _ => Ok(()),
     }
 }
 

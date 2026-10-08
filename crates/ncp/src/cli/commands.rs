@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
 
 use super::{
-    args::{CallArgs, Cli, ServerCommand, ToolCommand},
+    args::{CallArgs, Cli, PromptCommand, ResourceCommand, ServerCommand, ToolCommand},
     outcome::{Exit, Failure},
     render,
     schema_check::{self, Outcome},
@@ -21,7 +21,7 @@ use super::{
     ui,
 };
 use crate::{
-    client::{Connection, RequestError},
+    client::{Answer, Connection, RequestError},
     config::{EntryError, Server},
 };
 
@@ -29,6 +29,24 @@ pub async fn server(context: &Context<'_>, command: ServerCommand) -> Result<(),
     match command {
         ServerCommand::List => server_list(context),
         ServerCommand::Show { server } => server_show(context, &server).await,
+    }
+}
+
+pub async fn resource(context: &Context<'_>, command: ResourceCommand) -> Result<(), Failure> {
+    match command {
+        ResourceCommand::List { server } => resource_list(context, &server).await,
+        ResourceCommand::Read { server, uri } => resource_read(context, &server, &uri).await,
+    }
+}
+
+pub async fn prompt(context: &Context<'_>, command: PromptCommand) -> Result<(), Failure> {
+    match command {
+        PromptCommand::List { server } => prompt_list(context, &server).await,
+        PromptCommand::Get {
+            server,
+            prompt,
+            arguments,
+        } => prompt_get(context, &server, &prompt, &arguments).await,
     }
 }
 
@@ -364,6 +382,245 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
 fn mirrors_parameters(server: &Server, connection: &Connection) -> bool {
     matches!(server.transport, crate::config::Transport::Http(_))
         && matches!(connection.era(), crate::era::Era::Modern { .. })
+}
+
+/// True when the server says in its handshake that it has the feature.
+fn offers(
+    connection: &Connection,
+    feature: impl Fn(&rmcp::model::ServerCapabilities) -> bool,
+) -> bool {
+    connection
+        .server_info()
+        .is_some_and(|info| feature(&info.capabilities))
+}
+
+/// A list request that a server can lack: "method not found" gives an
+/// empty list, because the list is a part of a larger answer.
+fn empty_when_missing<T>(result: Result<Vec<T>, RequestError>) -> Result<Vec<T>, RequestError> {
+    match result {
+        Err(RequestError::Service(ServiceError::McpError(data)))
+            if data.code == ErrorCode::METHOD_NOT_FOUND =>
+        {
+            Ok(Vec::new())
+        }
+        other => other,
+    }
+}
+
+async fn resource_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
+    let loaded = load(context)?;
+    let server = select(context, &loaded, word, show_fix)?;
+    let name = server.name.as_str();
+    let found = with_connection(context, server, async |connection| {
+        if !offers(connection, |capabilities| capabilities.resources.is_some()) {
+            return Ok(None);
+        }
+        let resources = connection
+            .list_resources(context.limits())
+            .await
+            .map_err(|error| session::request_failure(server, "resources/list", &error))?;
+        let templates =
+            empty_when_missing(connection.list_resource_templates(context.limits()).await)
+                .map_err(|error| {
+                    session::request_failure(server, "resources/templates/list", &error)
+                })?;
+        Ok(Some((resources, templates)))
+    })
+    .await?;
+    let (resources, templates) = found.unwrap_or_else(|| {
+        context.ui.hint(
+            Some(name),
+            "the server offers no resources in its handshake",
+        );
+        (Vec::new(), Vec::new())
+    });
+    let resources = serde_json::to_value(&resources).unwrap_or(Value::Null);
+    let templates = serde_json::to_value(&templates).unwrap_or(Value::Null);
+    let list = |value: &Value| value.as_array().cloned().unwrap_or_default();
+    context.ui.result(
+        || render::resource_list(&list(&resources), &list(&templates)),
+        || json!({"server": name, "resources": resources, "resourceTemplates": templates}),
+    )
+}
+
+/// The failure of a request that names a thing by name or URI: "invalid
+/// params" or "resource not found" is a usage error with the command that
+/// lists the names.
+fn named_failure(server: &Server, method: &str, error: &RequestError, list: &str) -> Failure {
+    let name = server.name.as_str();
+    match error {
+        RequestError::Service(ServiceError::McpError(data))
+            if data.code == ErrorCode::INVALID_PARAMS
+                || data.code == ErrorCode::RESOURCE_NOT_FOUND =>
+        {
+            Failure::usage(format!("{method}: the server refused it: {}", data.message))
+                .server(name)
+                .hint(format!("ncp {list} list {}", render::shell_word(name)))
+        }
+        _ => session::request_failure(server, method, error),
+    }
+}
+
+async fn resource_read(context: &Context<'_>, word: &str, uri: &str) -> Result<(), Failure> {
+    let loaded = load(context)?;
+    let server = select(context, &loaded, word, show_fix)?;
+    let name = server.name.as_str();
+    let answer = with_connection(context, server, async |connection| {
+        connection
+            .read_resource(uri, context.limits())
+            .await
+            .map_err(|error| named_failure(server, "resources/read", &error, "resource"))
+    })
+    .await?;
+    let result = match answer {
+        Answer::Complete(result) => result,
+        Answer::InputRequired(result) => {
+            return input_required(context, name, "the resource", &result);
+        }
+    };
+    let value = serde_json::to_value(&result).unwrap_or(Value::Null);
+    if context.ui.format_named && context.ui.format == ui::Format::Json {
+        return ui::write_stdout(&ui::json_line(&value));
+    }
+    write_contents(&value)
+}
+
+/// The contents as they are: text, and the bytes of a blob. On a TTY, a
+/// blob shows as a summary, and text gets the escapes of all text output.
+fn write_contents(result: &Value) -> Result<(), Failure> {
+    let terminal = std::io::stdout().is_terminal();
+    let contents = result
+        .get("contents")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for content in contents {
+        if let Some(text) = content.get("text").and_then(Value::as_str) {
+            if terminal {
+                ui::write_stdout(&ui::printable(text))?;
+            } else {
+                ui::write_stdout(text)?;
+            }
+        } else if let Some(blob) = content.get("blob").and_then(Value::as_str) {
+            use base64::Engine as _;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(blob)
+                .map_err(|error| {
+                    Failure::protocol(format!(
+                        "the server sent a blob that is not base64: {error}"
+                    ))
+                })?;
+            if terminal {
+                let mime = content
+                    .get("mimeType")
+                    .and_then(Value::as_str)
+                    .unwrap_or("binary data");
+                ui::write_stdout(&format!(
+                    "[{} bytes of {mime}; send stdout to a file to get them]\n",
+                    bytes.len()
+                ))?;
+            } else {
+                ui::write_stdout_bytes(&bytes)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// An `input_required` result: on stdout, with exit 5, as for a tool call.
+fn input_required(
+    context: &Context<'_>,
+    server: &str,
+    what: &str,
+    result: &rmcp::model::InputRequiredResult,
+) -> Result<(), Failure> {
+    let value = serde_json::to_value(result).unwrap_or(Value::Null);
+    context
+        .ui
+        .result(|| format!("{}\n", render::pretty(&value)), || value.clone())?;
+    Err(Failure::new(
+        Exit::InputRequired,
+        format!("{what} asks for more input, and ncp cannot give it yet"),
+    )
+    .server(server))
+}
+
+async fn prompt_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
+    let loaded = load(context)?;
+    let server = select(context, &loaded, word, show_fix)?;
+    let name = server.name.as_str();
+    let prompts = with_connection(context, server, async |connection| {
+        if !offers(connection, |capabilities| capabilities.prompts.is_some()) {
+            return Ok(None);
+        }
+        connection
+            .list_prompts(context.limits())
+            .await
+            .map(Some)
+            .map_err(|error| session::request_failure(server, "prompts/list", &error))
+    })
+    .await?
+    .unwrap_or_else(|| {
+        context
+            .ui
+            .hint(Some(name), "the server offers no prompts in its handshake");
+        Vec::new()
+    });
+    let prompts = serde_json::to_value(&prompts).unwrap_or(Value::Null);
+    let list = prompts.as_array().cloned().unwrap_or_default();
+    context.ui.result(
+        || render::prompt_list(&list),
+        || json!({"server": name, "prompts": prompts}),
+    )
+}
+
+/// The arguments of a prompt: text only, as the spec gives them.
+fn prompt_arguments(words: &[String]) -> Result<JsonObject, Failure> {
+    let pairs = match tool_args::parse(words).map_err(|error| Failure::usage(error.to_string()))? {
+        Input::Pairs(pairs) => read_files(pairs)?,
+        _ => {
+            return Err(Failure::usage(
+                "prompt arguments are key=value or key=@path pairs",
+            ));
+        }
+    };
+    pairs
+        .into_iter()
+        .map(|(key, given)| match given {
+            Given::Text(text) => Ok((key, Value::String(text))),
+            _ => Err(Failure::usage(format!(
+                "prompt argument {key:?} must be text: use {key}=value"
+            ))),
+        })
+        .collect()
+}
+
+async fn prompt_get(
+    context: &Context<'_>,
+    word: &str,
+    prompt: &str,
+    words: &[String],
+) -> Result<(), Failure> {
+    let arguments = prompt_arguments(words)?;
+    let loaded = load(context)?;
+    let server = select(context, &loaded, word, show_fix)?;
+    let name = server.name.as_str();
+    let answer = with_connection(context, server, async |connection| {
+        connection
+            .get_prompt(prompt, arguments.clone(), context.limits())
+            .await
+            .map_err(|error| named_failure(server, "prompts/get", &error, "prompt"))
+    })
+    .await?;
+    match answer {
+        Answer::Complete(result) => {
+            let value = serde_json::to_value(&result).unwrap_or(Value::Null);
+            context
+                .ui
+                .result(|| render::prompt_messages(&value), || value.clone())
+        }
+        Answer::InputRequired(result) => input_required(context, name, "the prompt", &result),
+    }
 }
 
 fn print_call_help() -> Result<(), Failure> {

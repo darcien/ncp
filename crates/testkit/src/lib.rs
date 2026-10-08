@@ -29,8 +29,11 @@ use rmcp::{
     ErrorData, RoleServer, ServerHandler,
     model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, DiscoverResult,
-        ErrorCode, InputRequiredResult, JsonObject, ListToolsResult, PaginatedRequestParams,
-        ProtocolVersion, ServerCapabilities, ServerConfig, Tool,
+        ErrorCode, GetPromptRequestParams, GetPromptResponse, GetPromptResult, InputRequiredResult,
+        JsonObject, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult,
+        ListToolsResult, PaginatedRequestParams, Prompt, PromptArgument, PromptMessage,
+        ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult,
+        Resource, ResourceContents, ResourceTemplate, Role, ServerCapabilities, ServerConfig, Tool,
     },
     service::{MaybeSendFuture, RequestContext},
     transport::streamable_http_server::{
@@ -130,8 +133,14 @@ fn argument<'a>(arguments: &'a JsonObject, name: &str) -> &'a str {
 
 impl ServerHandler for Fixture {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_instructions("Fixture server for the tests of ncp.")
+        ServerConfig::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .enable_prompts()
+                .build(),
+        )
+        .with_instructions("Fixture server for the tests of ncp.")
     }
 
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
@@ -175,6 +184,94 @@ impl ServerHandler for Fixture {
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListToolsResult, ErrorData>> + MaybeSendFuture + '_ {
         std::future::ready(Ok(ListToolsResult::with_all_items(tools())))
+    }
+
+    fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ListResourcesResult, ErrorData>> + MaybeSendFuture + '_ {
+        std::future::ready(Ok(ListResourcesResult::with_all_items(vec![
+            Resource::new("fixture://greeting", "greeting")
+                .with_description("A greeting")
+                .with_mime_type("text/plain"),
+            Resource::new("fixture://logo", "logo").with_mime_type("image/png"),
+        ])))
+    }
+
+    fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ListResourceTemplatesResult, ErrorData>> + MaybeSendFuture + '_
+    {
+        std::future::ready(Ok(ListResourceTemplatesResult::with_all_items(vec![
+            ResourceTemplate::new("fixture://echo/{text}", "echo")
+                .with_description("Returns the text"),
+        ])))
+    }
+
+    fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ReadResourceResponse, ErrorData>> + MaybeSendFuture + '_ {
+        let uri = request.uri;
+        let contents = match uri.as_str() {
+            "fixture://greeting" => Some(ResourceContents::text("hello\n", uri.as_str())),
+            // The bytes of a PNG signature, in base64.
+            "fixture://logo" => Some(
+                ResourceContents::blob("iVBORw0KGgo=", uri.as_str()).with_mime_type("image/png"),
+            ),
+            other => other
+                .strip_prefix("fixture://echo/")
+                .map(|text| ResourceContents::text(text, uri.as_str())),
+        };
+        std::future::ready(match contents {
+            Some(contents) => Ok(ReadResourceResponse::Complete(ReadResourceResult::new(
+                vec![contents],
+            ))),
+            None => Err(ErrorData::resource_not_found(
+                format!("no resource {uri}"),
+                None,
+            )),
+        })
+    }
+
+    fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ListPromptsResult, ErrorData>> + MaybeSendFuture + '_ {
+        let name = PromptArgument::new("name")
+            .with_description("Who to greet")
+            .with_required(true);
+        std::future::ready(Ok(ListPromptsResult::with_all_items(vec![Prompt::new(
+            "greet",
+            Some("Greet a person"),
+            Some(vec![name]),
+        )])))
+    }
+
+    fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<GetPromptResponse, ErrorData>> + MaybeSendFuture + '_ {
+        let arguments = request.arguments.unwrap_or_default();
+        std::future::ready(match (request.name.as_str(), arguments.get("name")) {
+            ("greet", Some(serde_json::Value::String(name))) => {
+                let message = PromptMessage::new_text(Role::User, format!("Hello, {name}!"));
+                Ok(GetPromptResponse::Complete(
+                    GetPromptResult::new(vec![message]).with_description("A greeting"),
+                ))
+            }
+            ("greet", _) => Err(ErrorData::invalid_params("missing argument name", None)),
+            (other, _) => Err(ErrorData::invalid_params(
+                format!("no prompt {other}"),
+                None,
+            )),
+        })
     }
 
     async fn call_tool(

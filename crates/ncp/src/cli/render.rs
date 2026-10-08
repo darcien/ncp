@@ -287,36 +287,136 @@ pub fn call_result(result: &Value) -> String {
             .map(|value| format!("{}\n", pretty(value)))
             .unwrap_or_default();
     }
-    content
-        .iter()
-        .map(|block| {
-            let field = |key: &str| block.get(key).and_then(Value::as_str).unwrap_or("?");
-            let line = match field("type") {
-                "text" => field("text").to_string(),
-                "image" | "audio" => format!(
-                    "[{} {}, {} bytes as base64]",
-                    field("type"),
-                    field("mimeType"),
-                    field("data").len()
-                ),
-                "resource" => format!(
-                    "[resource {}]",
-                    block
-                        .get("resource")
-                        .and_then(|resource| resource.get("uri"))
+    content.iter().map(content_line).collect()
+}
+
+/// One content block as a line: text as it is, other kinds as a summary.
+fn content_line(block: &Value) -> String {
+    let field = |key: &str| block.get(key).and_then(Value::as_str).unwrap_or("?");
+    let line = match field("type") {
+        "text" => field("text").to_string(),
+        "image" | "audio" => format!(
+            "[{} {}, {} bytes as base64]",
+            field("type"),
+            field("mimeType"),
+            field("data").len()
+        ),
+        "resource" => format!(
+            "[resource {}]",
+            block
+                .get("resource")
+                .and_then(|resource| resource.get("uri"))
+                .and_then(Value::as_str)
+                .unwrap_or("?")
+        ),
+        "resource_link" => format!("[resource link {}]", field("uri")),
+        other => format!("[{other} content]"),
+    };
+    if line.ends_with('\n') {
+        line
+    } else {
+        format!("{line}\n")
+    }
+}
+
+/// The first line of a text field, or empty.
+fn first_line(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .and_then(|text| text.lines().next())
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// `resource list`: the resources, then the templates, each with its
+/// title or the first line of its description.
+#[must_use]
+pub fn resource_list(resources: &[Value], templates: &[Value]) -> String {
+    let rows = |items: &[Value], uri_key: &str| -> Vec<Vec<String>> {
+        items
+            .iter()
+            .map(|item| {
+                let summary = item
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .map_or_else(|| first_line(item, "description"), str::to_string);
+                vec![
+                    item.get(uri_key)
                         .and_then(Value::as_str)
                         .unwrap_or("?")
-                ),
-                "resource_link" => format!("[resource link {}]", field("uri")),
-                other => format!("[{other} content]"),
-            };
-            if line.ends_with('\n') {
-                line
-            } else {
-                format!("{line}\n")
-            }
+                        .to_string(),
+                    first_line(item, "mimeType"),
+                    summary,
+                ]
+            })
+            .collect()
+    };
+    let section = |title: &str, items: &[Value], uri_key: &str| {
+        if items.is_empty() {
+            format!("{title}: none\n")
+        } else {
+            format!("{title}:\n{}", table(&rows(items, uri_key)))
+        }
+    };
+    format!(
+        "{}\n{}",
+        section("Resources", resources, "uri"),
+        section("Templates", templates, "uriTemplate")
+    )
+}
+
+/// `prompt list`: the name, the first line of the description, and the
+/// arguments, with the required ones marked.
+#[must_use]
+pub fn prompt_list(prompts: &[Value]) -> String {
+    let rows: Vec<Vec<String>> = prompts
+        .iter()
+        .map(|prompt| {
+            let arguments: Vec<String> = prompt
+                .get("arguments")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .map(|argument| {
+                    let name = argument.get("name").and_then(Value::as_str).unwrap_or("?");
+                    if argument.get("required") == Some(&Value::Bool(true)) {
+                        format!("{name}=")
+                    } else {
+                        format!("[{name}=]")
+                    }
+                })
+                .collect();
+            vec![
+                prompt
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("?")
+                    .to_string(),
+                first_line(prompt, "description"),
+                arguments.join(" "),
+            ]
         })
-        .collect()
+        .collect();
+    table(&rows)
+}
+
+/// `prompt get`: each message as `role: content`.
+#[must_use]
+pub fn prompt_messages(result: &Value) -> String {
+    result
+        .get("messages")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .fold(String::new(), |mut text, message| {
+            let role = message.get("role").and_then(Value::as_str).unwrap_or("?");
+            let content = message.get("content").map(content_line).unwrap_or_default();
+            let _ = write!(text, "{role}: {content}");
+            text
+        })
 }
 
 #[must_use]

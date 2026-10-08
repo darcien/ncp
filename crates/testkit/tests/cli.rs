@@ -1753,3 +1753,61 @@ fn unknown_names_get_the_nearest_known_name() {
     let message = run.error()["message"].as_str().unwrap().to_string();
     assert!(message.ends_with("did you mean \"echo\"?"), "{message}");
 }
+
+#[test]
+fn resource_list_gives_resources_and_templates() {
+    let home = Home::new("resource-list");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let run = home.run(&["resource", "list", "fx"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let out = run.stdout();
+    assert_eq!(out["server"], "fx");
+    assert_eq!(out["resources"][0]["uri"], "fixture://greeting");
+    assert_eq!(
+        out["resourceTemplates"][0]["uriTemplate"],
+        "fixture://echo/{text}"
+    );
+}
+
+#[test]
+fn resource_read_writes_the_contents_as_they_are_and_json_on_request() {
+    let home = Home::new("resource-read");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let run = home.run(&["resource", "read", "fx", "fixture://greeting"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(run.0.stdout, b"hello\n");
+    let run = home.run(&["resource", "read", "fx", "fixture://logo"]);
+    assert_eq!(run.0.stdout, b"\x89PNG\r\n\x1a\n");
+    let run = home.run(&[
+        "--output-format",
+        "json",
+        "resource",
+        "read",
+        "fx",
+        "fixture://echo/x",
+    ]);
+    assert_eq!(run.stdout()["contents"][0]["text"], "x");
+    let run = home.run(&["resource", "read", "fx", "fixture://none"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(run.error()["hint"], "ncp resource list fx");
+}
+
+#[test]
+fn prompt_list_and_get_use_the_prompt_arguments() {
+    let home = Home::new("prompts");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let run = home.run(&["prompt", "list", "fx"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(run.stdout()["prompts"][0]["name"], "greet");
+    let run = home.run(&["prompt", "get", "fx", "greet", "name=Ada"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(
+        run.stdout()["messages"][0]["content"]["text"],
+        "Hello, Ada!"
+    );
+    let run = home.run(&["prompt", "get", "fx", "greet"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(run.error()["hint"], "ncp prompt list fx");
+    let run = home.run(&["prompt", "get", "fx", "greet", "name:=1"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+}

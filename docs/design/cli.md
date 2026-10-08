@@ -78,8 +78,8 @@ ncp generate-shell-completion <bash|zsh|fish>      (after the MVP)
 `ncp --help` shows the normal order of work: `server list`, `server show`,
 `tool list`, `tool show`, `tool call`.
 
-Resources and prompts (P7) come after the MVP, in the same shape. Each
-command uses the MCP methods on its line:
+Resources and prompts (P7) have the same shape. Each command uses the MCP
+methods on its line:
 
 ```
 ncp resource list <SERVER>                     resources/list, resources/templates/list
@@ -220,6 +220,10 @@ Rules:
 | `tool call` | MCP `CallToolResult`, or MCP `InputRequiredResult` (code 5) |
 | `auth status` | `{"servers": [{"name", "loggedIn", "issuer", "scopes", "expiresAt"}]}` |
 | `secret list` | `{"secrets": [{"name", "places": ["native", "file"], "used": true}]}` |
+| `resource list` | `{"server": "<name>", "resources": [MCP Resource], "resourceTemplates": [MCP ResourceTemplate]}` |
+| `resource read` | The contents as they are (B58); with `--output-format json`, MCP `ReadResourceResult` |
+| `prompt list` | `{"server": "<name>", "prompts": [MCP Prompt]}` |
+| `prompt get` | MCP `GetPromptResult`, or MCP `InputRequiredResult` (code 5) |
 
 ```json
 {"name": "github", "transport": "http", "target": "https://api.example.com/mcp"}
@@ -373,6 +377,7 @@ user reviews them.
 | B55 | Lock files: `$XDG_STATE_HOME/ncp/credentials.lock` for each change of the credential file, and `$XDG_STATE_HOME/ncp/oauth-<server>.lock` for each refresh of the tokens of a server, in the native store or the file. They are empty, mode 0600. A refresh waits at most 45 s for another process, then reads the tokens again. | Two processes that refresh at the same time use one refresh token twice; with rotation the second refresh fails, and the user must log in again. Agents start calls in parallel. The file lock of `std` needs no new dependency. |
 | B56 | `-q` and `-v` together are a usage error. `-q` keeps the server log of a stdio server and the result. `--config-file` takes a path that is relative to the working directory, and the file must exist (exit 2). `--output-format` changes only the format, not the TTY checks (for example the hidden input of `secret set`). | A quiet run with diagnostics has no meaning. The server log is the only view of a server failure. A typing error in a named path must not look like an empty configuration. |
 | B57 | The text of a `key=@path` file follows the schema rule of `key=value`: a property of type `number` reads the text as JSON. A relative path is relative to the working directory. `ncp` reads each file before it connects; a file that it cannot read is a usage error (exit 2). The first `=` splits a word; a `:` just before it makes the value JSON (`key:=json`). | The file is a long `key=value`, so the same rule applies. A typing error in a path must not start a server. |
+| B58 | `resource read` writes the contents as they are, also in a pipe: text with no change, and the bytes of a blob. Only `--output-format json` gives the MCP `ReadResourceResult`. On a TTY, text gets the escapes of B15, and a blob shows as one summary line. A server with no `resources` or `prompts` capability gives an empty list and a hint. A server with no `resources/templates/list` gives no templates. "Invalid params" and "resource not found" are usage errors with the hint `ncp resource list SERVER` or `ncp prompt list SERVER`. Prompt arguments are `key=value` or `key=@path`: the spec gives them as text. `input_required` gives exit 5, as for `tool call`. | Section 2: the output can go into a pipe, for example an image into a file. A binary on a terminal can change the terminal. |
 | B50 | When `SSL_CERT_FILE` is set, `ncp` trusts the PEM roots in the file in addition to the system store. A file that `ncp` cannot read, or that has no certificate, gives exit 3 with the path and the variable name, and so does an empty value. Only an http server reads the file, so a stdio server works with a bad value. On Linux the system store reads `SSL_CERT_FILE` (and `SSL_CERT_DIR`) in place of the system roots, so there the file replaces the system roots, as in OpenSSL; an empty value there loads no root. `ncp` cannot change this, because it does not change its own environment. | N4, with the variable name of curl, OpenSSL and uv. A silent fallback gives a TLS error that does not name the cause. |
 
 [spec-tool-names]: https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool-names

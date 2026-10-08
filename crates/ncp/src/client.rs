@@ -21,8 +21,11 @@ use rmcp::{
     ClientLifecycleMode, ClientServiceExt, RoleClient,
     model::{
         CallToolRequest, CallToolRequestParams, CallToolResponse, ClientCapabilities, ClientConfig,
-        ClientRequest, Implementation, JsonObject, ListToolsRequest, PaginatedRequestParams,
-        ServerPeerInfo, ServerResult, Tool,
+        ClientRequest, Cursor, GetPromptRequest, GetPromptRequestParams, GetPromptResult,
+        Implementation, InputRequiredResult, JsonObject, ListPromptsRequest,
+        ListResourceTemplatesRequest, ListResourcesRequest, ListToolsRequest,
+        PaginatedRequestParams, Prompt, ReadResourceRequest, ReadResourceRequestParams,
+        ReadResourceResult, Resource, ResourceTemplate, ServerPeerInfo, ServerResult, Tool,
     },
     service::{ClientInitializeError, PeerRequestOptions, RunningService, ServiceError},
     transport::async_rw::AsyncRwTransport,
@@ -476,6 +479,14 @@ fn to_rmcp(version: &ProtocolVersion) -> rmcp::model::ProtocolVersion {
         .unwrap_or(rmcp::model::ProtocolVersion::LATEST_WITH_INITIALIZE)
 }
 
+/// The answer to a request that can ask for more input (multi-round
+/// requests): the result, or the `input_required` result for the caller.
+#[derive(Debug)]
+pub enum Answer<T> {
+    Complete(T),
+    InputRequired(InputRequiredResult),
+}
+
 /// How a request can end early: the cancel token of the caller (Ctrl-C),
 /// and the time limit.
 #[derive(Debug, Clone, Copy)]
@@ -510,18 +521,142 @@ impl Connection {
     /// Returns an error when a `tools/list` request fails, is cancelled or
     /// passes its time limit.
     pub async fn list_tools(&self, limits: RequestLimits<'_>) -> Result<Vec<Tool>, RequestError> {
-        let mut tools = Vec::new();
+        self.pages(
+            limits,
+            |params| ClientRequest::ListToolsRequest(ListToolsRequest::with_param(params)),
+            |result| match result {
+                ServerResult::ListToolsResult(page) => Some((page.tools, page.next_cursor)),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Lists all resources.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a `resources/list` request fails.
+    pub async fn list_resources(
+        &self,
+        limits: RequestLimits<'_>,
+    ) -> Result<Vec<Resource>, RequestError> {
+        self.pages(
+            limits,
+            |params| ClientRequest::ListResourcesRequest(ListResourcesRequest::with_param(params)),
+            |result| match result {
+                ServerResult::ListResourcesResult(page) => Some((page.resources, page.next_cursor)),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Lists all resource templates.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a `resources/templates/list` request fails.
+    pub async fn list_resource_templates(
+        &self,
+        limits: RequestLimits<'_>,
+    ) -> Result<Vec<ResourceTemplate>, RequestError> {
+        self.pages(
+            limits,
+            |params| {
+                ClientRequest::ListResourceTemplatesRequest(
+                    ListResourceTemplatesRequest::with_param(params),
+                )
+            },
+            |result| match result {
+                ServerResult::ListResourceTemplatesResult(page) => {
+                    Some((page.resource_templates, page.next_cursor))
+                }
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Lists all prompts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a `prompts/list` request fails.
+    pub async fn list_prompts(
+        &self,
+        limits: RequestLimits<'_>,
+    ) -> Result<Vec<Prompt>, RequestError> {
+        self.pages(
+            limits,
+            |params| ClientRequest::ListPromptsRequest(ListPromptsRequest::with_param(params)),
+            |result| match result {
+                ServerResult::ListPromptsResult(page) => Some((page.prompts, page.next_cursor)),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Reads one resource. An `input_required` result goes back to the
+    /// caller, as for a tool call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request fails.
+    pub async fn read_resource(
+        &self,
+        uri: &str,
+        limits: RequestLimits<'_>,
+    ) -> Result<Answer<ReadResourceResult>, RequestError> {
+        let params = ReadResourceRequestParams::new(uri);
+        let request = ClientRequest::ReadResourceRequest(ReadResourceRequest::new(params));
+        match self.request(request, limits).await? {
+            ServerResult::ReadResourceResult(result) => Ok(Answer::Complete(result)),
+            ServerResult::InputRequiredResult(result) => Ok(Answer::InputRequired(result)),
+            _ => Err(RequestError::UnexpectedResult),
+        }
+    }
+
+    /// Gets one prompt with its arguments.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request fails.
+    pub async fn get_prompt(
+        &self,
+        name: &str,
+        arguments: JsonObject,
+        limits: RequestLimits<'_>,
+    ) -> Result<Answer<GetPromptResult>, RequestError> {
+        let mut params = GetPromptRequestParams::new(name);
+        params.arguments = (!arguments.is_empty()).then_some(arguments);
+        let request = ClientRequest::GetPromptRequest(GetPromptRequest::new(params));
+        match self.request(request, limits).await? {
+            ServerResult::GetPromptResult(result) => Ok(Answer::Complete(result)),
+            ServerResult::InputRequiredResult(result) => Ok(Answer::InputRequired(result)),
+            _ => Err(RequestError::UnexpectedResult),
+        }
+    }
+
+    /// All pages of a list. Each page is one request with its own limits
+    /// (the spec: the time limit applies to each request).
+    async fn pages<T>(
+        &self,
+        limits: RequestLimits<'_>,
+        request: impl Fn(PaginatedRequestParams) -> ClientRequest,
+        page: impl Fn(ServerResult) -> Option<(Vec<T>, Option<Cursor>)>,
+    ) -> Result<Vec<T>, RequestError> {
+        let mut items = Vec::new();
         let mut cursor = None;
         loop {
             let params = PaginatedRequestParams::default().with_cursor(cursor);
-            let request = ClientRequest::ListToolsRequest(ListToolsRequest::with_param(params));
-            let ServerResult::ListToolsResult(page) = self.request(request, limits).await? else {
-                return Err(RequestError::UnexpectedResult);
-            };
-            tools.extend(page.tools);
-            cursor = page.next_cursor;
+            let result = self.request(request(params), limits).await?;
+            let (found, next) = page(result).ok_or(RequestError::UnexpectedResult)?;
+            items.extend(found);
+            cursor = next;
             if cursor.is_none() {
-                return Ok(tools);
+                return Ok(items);
             }
         }
     }
