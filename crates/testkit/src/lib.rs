@@ -18,6 +18,8 @@ use std::{
     time::Duration,
 };
 
+use bytes::Bytes;
+use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use rmcp::{
     ErrorData, RoleServer, ServerHandler,
     model::{
@@ -123,6 +125,7 @@ fn argument<'a>(arguments: &'a JsonObject, name: &str) -> &'a str {
 impl ServerHandler for Fixture {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+            .with_instructions("Fixture server for the tests of ncp.")
     }
 
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
@@ -217,6 +220,16 @@ impl ServerHandler for Fixture {
     }
 }
 
+fn unauthorized() -> http::Response<BoxBody<Bytes, Infallible>> {
+    let mut response = http::Response::new(Full::new(Bytes::new()).boxed());
+    *response.status_mut() = http::StatusCode::UNAUTHORIZED;
+    response.headers_mut().insert(
+        http::header::WWW_AUTHENTICATE,
+        http::HeaderValue::from_static("Bearer"),
+    );
+    response
+}
+
 /// A Streamable HTTP fixture on a free loopback port. The server stops when
 /// the value is dropped.
 pub struct HttpFixture {
@@ -237,6 +250,20 @@ impl Drop for HttpFixture {
 ///
 /// Returns an error when no loopback port is free.
 pub async fn serve_http(mode: Mode) -> std::io::Result<HttpFixture> {
+    serve_http_with(mode, None).await
+}
+
+/// Starts a Streamable HTTP fixture. With a token, each request without
+/// the header `Authorization: Bearer <token>` gets `401`.
+///
+/// # Errors
+///
+/// Returns an error when no loopback port is free.
+pub async fn serve_http_with(
+    mode: Mode,
+    bearer_token: Option<&str>,
+) -> std::io::Result<HttpFixture> {
+    let expected = bearer_token.map(|token| format!("Bearer {token}"));
     let fixture = Fixture::new(mode);
     let discover_calls = fixture.discover_calls.clone();
     let stop = CancellationToken::new();
@@ -260,10 +287,24 @@ pub async fn serve_http(mode: Mode) -> std::io::Result<HttpFixture> {
                 () = accept_stop.cancelled() => return,
             };
             let service = service.clone();
+            let expected = expected.clone();
             tokio::spawn(async move {
-                let handler = hyper::service::service_fn(move |request| {
+                let handler = hyper::service::service_fn(move |request: http::Request<_>| {
                     let service = service.clone();
-                    async move { Ok::<_, Infallible>(service.handle(request).await) }
+                    let sent = request
+                        .headers()
+                        .get(http::header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok());
+                    let allowed = expected
+                        .as_deref()
+                        .is_none_or(|expected| sent == Some(expected));
+                    async move {
+                        if allowed {
+                            Ok::<_, Infallible>(service.handle(request).await)
+                        } else {
+                            Ok(unauthorized())
+                        }
+                    }
                 });
                 let _ = hyper::server::conn::http1::Builder::new()
                     .serve_connection(hyper_util::rt::TokioIo::new(stream), handler)
