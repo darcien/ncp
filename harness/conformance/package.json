@@ -1,0 +1,9 @@
+{
+  "name": "ncp-conformance",
+  "private": true,
+  "description": "The official MCP conformance suite at one exact version, for the conformance tests of ncp",
+  "license": "MIT OR Apache-2.0",
+  "dependencies": {
+    "@modelcontextprotocol/conformance": "0.2.0-alpha.12"
+  }
+}

@@ -1,5 +1,7 @@
 # Rust itself is pinned in rust-toolchain.toml (rustup). mise pins the other tools.
 [tools]
+# The official MCP conformance suite runs on Node (harness/conformance).
+node = "22.23.3"
 cargo-deny = "0.20.2"
 typos = "1.50.3"
 
@@ -62,6 +64,17 @@ run = [
   "harness/linux/run.sh cargo fetch --locked",
   "harness/linux/run.sh offline cargo test --workspace --locked",
 ]
+
+# The conformance suite: an online install from the lock file, then an
+# offline run. See harness/conformance/run.sh.
+[tasks."conformance:install"]
+description = "Install the pinned MCP conformance suite from its lock file"
+dir = "harness/conformance"
+run = "npm ci --ignore-scripts"
+
+[tasks.conformance]
+description = "Run the official MCP conformance suite against ncp for each protocol version"
+run = "harness/conformance/run.sh"
 
 # Run it before the other Linux tasks: a volume that is in use cannot be
 # removed.
