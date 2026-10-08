@@ -192,7 +192,7 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
     };
     let connection = client::connect(&launch)
         .await
-        .map_err(|error| connect_failure(server, &error))?;
+        .map_err(|error| connect_failure(context.env, server, &error))?;
     if cached.as_ref() != Some(connection.era()) {
         let cache = cache.record(server.name.clone(), target, connection.era().clone());
         if let Err(error) = era_file::save(cache_path, &cache) {
@@ -202,7 +202,7 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
     Ok(connection)
 }
 
-fn connect_failure(server: &Server, error: &ConnectError) -> Failure {
+fn connect_failure(env: &Env, server: &Server, error: &ConnectError) -> Failure {
     let exit = match error {
         ConnectError::Cancelled => return interrupted().server(server.name.as_str()),
         _ if error.needs_authorization() => Exit::Auth,
@@ -218,7 +218,31 @@ fn connect_failure(server: &Server, error: &ConnectError) -> Failure {
         },
         other => other.to_string(),
     };
-    Failure::new(exit, hide_expanded_url(server, message)).server(server.name.as_str())
+    let failure =
+        Failure::new(exit, hide_expanded_url(server, message)).server(server.name.as_str());
+    match (&server.transport, exit) {
+        (Transport::Http(remote), Exit::Protocol) => through_proxy(env, &remote.url, failure),
+        _ => failure,
+    }
+}
+
+/// A request to a loopback host through a proxy on another host cannot
+/// reach the server, because no exception for loopback exists (design C5).
+/// The failure then names the route and the fix.
+fn through_proxy(env: &Env, url: &crate::server::ServerUrl, failure: Failure) -> Failure {
+    let Ok(target) = url::Url::parse(url.as_str()) else {
+        return failure;
+    };
+    let route = crate::proxy::route(env, &target);
+    if route.sends_loopback_away(&target) {
+        Failure {
+            message: format!("{}; the request went through the {route}", failure.message),
+            ..failure
+        }
+        .hint("export NO_PROXY=localhost,127.0.0.1,::1")
+    } else {
+        failure
+    }
 }
 
 /// The message with the expanded URL replaced by the URL as the file writes

@@ -9,5 +9,6 @@ pub mod era_file;
 pub mod expand;
 pub mod paths;
 mod private_file;
+pub mod proxy;
 pub mod server;
 pub mod store;

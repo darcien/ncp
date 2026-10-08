@@ -863,3 +863,38 @@ fn copy_check_of_a_slow_native_store_stops_at_its_limit_and_leaves_no_program() 
         .unwrap();
     assert!(found.stdout.is_empty(), "a security program still runs");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn loopback_server_through_a_remote_proxy_gives_the_no_proxy_hint() {
+    let fixture = serve_http(Mode::Modern).await.unwrap();
+    let home = Home::new("remote-proxy").set("HTTP_PROXY", "http://proxy.invalid:3128");
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 3, "{}", run.describe());
+    let error = run.error();
+    assert_eq!(error["hint"], "export NO_PROXY=localhost,127.0.0.1,::1");
+    let message = error["message"].as_str().unwrap();
+    assert!(
+        message.contains("proxy.invalid") && message.contains("HTTP_PROXY"),
+        "{message}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn requests_go_through_the_proxy_unless_no_proxy_names_the_host() {
+    let fixture = serve_http(Mode::Modern).await.unwrap();
+    let proxy = ncp_testkit::serve_fake_proxy().await.unwrap();
+    let home = Home::new("local-proxy").set("HTTP_PROXY", &proxy.url);
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 3, "{}", run.describe());
+    let lines = proxy.request_lines.lock().unwrap().clone();
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with(&format!("POST {}", fixture.url))),
+        "{lines:?}"
+    );
+    let home = home.set("NO_PROXY", "127.0.0.1");
+    assert_eq!(home.run(&["tool", "list", "web"]).code(), 0);
+}

@@ -318,3 +318,60 @@ pub async fn serve_http_with(
         stop,
     })
 }
+
+/// A proxy that records the first line of each request and answers each
+/// one with `502 Bad Gateway`. It stops when the value is dropped.
+pub struct FakeProxy {
+    pub url: String,
+    pub request_lines: Arc<std::sync::Mutex<Vec<String>>>,
+    stop: CancellationToken,
+}
+
+impl Drop for FakeProxy {
+    fn drop(&mut self) {
+        self.stop.cancel();
+    }
+}
+
+/// Starts a fake proxy on a free loopback port.
+///
+/// # Errors
+///
+/// Returns an error when no loopback port is free.
+pub async fn serve_fake_proxy() -> std::io::Result<FakeProxy> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let url = format!("http://{}", listener.local_addr()?);
+    let request_lines: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let stop = CancellationToken::new();
+    let (lines, accept_stop) = (request_lines.clone(), stop.clone());
+    tokio::spawn(async move {
+        loop {
+            let mut stream = tokio::select! {
+                accepted = listener.accept() => match accepted {
+                    Ok((stream, _)) => stream,
+                    Err(_) => return,
+                },
+                () = accept_stop.cancelled() => return,
+            };
+            let lines = lines.clone();
+            tokio::spawn(async move {
+                let mut first = String::new();
+                let mut reader = BufReader::new(&mut stream);
+                if reader.read_line(&mut first).await.is_ok() {
+                    if let Ok(mut lines) = lines.lock() {
+                        lines.push(first.trim_end().to_string());
+                    }
+                    let _ = stream
+                        .write_all(b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                        .await;
+                }
+            });
+        }
+    });
+    Ok(FakeProxy {
+        url,
+        request_lines,
+        stop,
+    })
+}
