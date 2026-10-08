@@ -93,6 +93,7 @@ impl Setup {
             http: &http,
             probe_timeout: self.probe_timeout,
             connect_limit: self.connect_limit,
+            server_log: &client::stdio::ServerLog::Inherit,
         })
         .await
     }

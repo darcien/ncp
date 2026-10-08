@@ -29,7 +29,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    config::{Server, Transport},
+    config::{Server, Target, Transport},
     credential::{CredentialKey, EnvName, HeaderName, Secret, SecretKind},
     era::{self, Era, ProtocolVersion, Startup},
     expand::Env,
@@ -104,6 +104,8 @@ pub struct Launch<'a> {
     pub probe_timeout: Duration,
     /// Normally [`CONNECT_LIMIT`].
     pub connect_limit: Duration,
+    /// Where the stderr of a stdio server goes.
+    pub server_log: &'a stdio::ServerLog,
 }
 
 /// The handshake step that failed.
@@ -132,11 +134,15 @@ impl fmt::Display for Phase {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectError {
-    #[error("server {0}: the sse transport is not supported")]
+    #[error("the sse transport is not supported")]
     SseNotSupported(ServerName),
-    #[error("cannot start {command:?}: {source}")]
+    #[error(
+        "cannot start {command:?}{}: {source}",
+        cwd.as_ref().map(|cwd| format!(" in {cwd:?}")).unwrap_or_default()
+    )]
     Spawn {
         command: String,
+        cwd: Option<String>,
         source: std::io::Error,
     },
     #[error(transparent)]
@@ -268,9 +274,20 @@ async fn handshake(
         Transport::Stdio(server) => {
             let env = stdio::child_env(launch.base_env, &server.env, &launch.secrets.env);
             let (process, stdout, stdin) =
-                stdio::spawn(server, &env).map_err(|source| ConnectError::Spawn {
-                    command: server.command.clone(),
-                    source,
+                stdio::spawn(server, &env, launch.server_log).map_err(|source| {
+                    ConnectError::Spawn {
+                        // The command as the file writes it: an expanded
+                        // value must not show.
+                        command: match &launch.server.target {
+                            Target::Stdio { command, .. } => command.clone(),
+                            Target::Remote { .. } => String::new(),
+                        },
+                        cwd: match &launch.server.target {
+                            Target::Stdio { cwd, .. } => cwd.clone(),
+                            Target::Remote { .. } => None,
+                        },
+                        source,
+                    }
                 })?;
             let serve = info.serve_with_lifecycle((stdout, stdin), lifecycle);
             // The handshake future owns stdin. When it ends, stdin closes.
