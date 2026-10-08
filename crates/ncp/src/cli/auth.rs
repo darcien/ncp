@@ -6,8 +6,8 @@
 use std::{io::IsTerminal, sync::Arc};
 
 use rmcp::transport::auth::{
-    AuthError, AuthorizationManager, AuthorizationMetadata, AuthorizationRequest,
-    AuthorizationSession,
+    AuthClient, AuthError, AuthorizationManager, AuthorizationMetadata, AuthorizationRequest,
+    AuthorizationSession, OAuthClientConfig,
 };
 use serde_json::{Value, json};
 use tokio::{
@@ -23,6 +23,7 @@ use super::{
     session::{self, Context},
 };
 use crate::{
+    client::RequestError,
     config::{RemoteServer, Server, Transport},
     credential::CredentialKey,
     oauth::{
@@ -231,7 +232,16 @@ async fn login(
     session
         .handle_callback_with_issuer(&callback.code, &callback.state, callback.iss.as_deref())
         .await
-        .map_err(|error| auth_failure("OAuth token request", &error).server(name))?;
+        .map_err(|error| match error {
+            // For example a token set that is too long for the Keychain
+            // through `security`.
+            AuthError::CredentialStoreError(_) if place == CredentialPlace::Native => {
+                Failure::new(Exit::Auth, format!("cannot keep the tokens: {error}"))
+                    .hint(format!("ncp auth login {name} --credential-store file"))
+                    .server(name)
+            }
+            error => auth_failure("OAuth token request", &error).server(name),
+        })?;
     let granted = session.auth_manager.get_current_scopes().await;
     context.ui.result(
         || {
@@ -247,6 +257,193 @@ async fn login(
     )
 }
 
+/// The OAuth client with the stored tokens of the server, or `None` when
+/// no place has tokens, or when the tokens are for another issuer. `ncp`
+/// calls this only after the server answered `401`, so that a server with
+/// no login never opens the native store (design C1).
+///
+/// # Errors
+///
+/// Returns a failure when a store cannot answer or when discovery fails.
+pub(super) async fn stored_login(
+    context: &Context<'_>,
+    server: &Server,
+    remote: &RemoteServer,
+    http: &reqwest::Client,
+    observer: &crate::client::observe::Observer,
+) -> Result<Option<crate::client::http::Authorized>, Failure> {
+    let name = server.name.as_str();
+    let key = CredentialKey::OAuthTokens(server.name.clone());
+    let native = secrets::native(context).await.ok();
+    let file = secrets::file(context);
+    let mut found = None;
+    for store in native.into_iter().chain([file]) {
+        let wanted = key.clone();
+        let secret = secrets::call(context, &store, move |store| store.load(&wanted))
+            .await
+            .map_err(|error| secrets::store_failure(&error).server(name))?;
+        if let Some(secret) = secret {
+            found = Some((store, secret));
+            break;
+        }
+    }
+    let Some((store, secret)) = found else {
+        return Ok(None);
+    };
+    let tokens =
+        parse_tokens(&secret).map_err(|error| Failure::protocol(error.to_string()).server(name))?;
+    let client_id = tokens.client_id.clone();
+    context.ui.debug(Some(name), "read the stored OAuth tokens");
+    let oauth_http = OAuthHttp::new(context.env, observer)
+        .map_err(|error| Failure::protocol(error.to_string()).server(name))?;
+    let mut manager =
+        AuthorizationManager::new_with_oauth_http_client(remote.url.as_str(), Arc::new(oauth_http))
+            .await
+            .map_err(|error| auth_failure("OAuth setup", &error).server(name))?;
+    manager.set_credential_store(
+        TokenStore::new(server.name.clone(), store.clone()).with_tokens(tokens),
+    );
+    let usable = manager
+        .initialize_from_store()
+        .await
+        .map_err(|error| auth_failure("OAuth discovery", &error).server(name))?;
+    if !usable {
+        return Ok(None);
+    }
+    // rmcp configures only the client ID from the tokens. A refresh of a
+    // confidential client needs the secret of the client item too.
+    let client_key = CredentialKey::OAuthClient(server.name.clone());
+    let client = secrets::call(context, &store, move |store| store.load(&client_key))
+        .await
+        .map_err(|error| secrets::store_failure(&error).server(name))?
+        .and_then(|secret| ClientItem::from_secret(&secret).ok());
+    if let Some(ClientItem {
+        client_id: stored_id,
+        client_secret: Some(client_secret),
+        ..
+    }) = client
+        && stored_id == client_id
+    {
+        let config = OAuthClientConfig::new(client_id, RedirectUri::new(0).to_string())
+            .with_client_secret(client_secret);
+        manager
+            .configure_client(config)
+            .map_err(|error| auth_failure("OAuth setup", &error).server(name))?;
+    }
+    Ok(Some(AuthClient::new(
+        crate::client::http::observed(http, observer),
+        manager,
+    )))
+}
+
+/// The field of the tokens item that keeps the scopes of a `403
+/// insufficient_scope` answer until the next login. rmcp ignores it.
+const REQUIRED_SCOPES: &str = "ncp_required_scopes";
+
+/// Keeps the scopes that the server asked for in a `403` answer in the
+/// tokens item, so that the next `auth login` asks for them with the
+/// scopes that the user has (requirement A9). A failure gives a warning:
+/// the error of the call is the result.
+pub(super) async fn remember_scopes(context: &Context<'_>, server: &Server, error: &RequestError) {
+    let Some(scopes) = error.required_scopes().filter(|scopes| !scopes.is_empty()) else {
+        return;
+    };
+    let name = server.name.as_str();
+    if let Err(failure) = add_required_scopes(context, server, &scopes).await {
+        context.ui.warning(
+            Some(name),
+            &format!(
+                "cannot keep the scopes for the next login: {}",
+                failure.message
+            ),
+        );
+    }
+}
+
+async fn add_required_scopes(
+    context: &Context<'_>,
+    server: &Server,
+    scopes: &[String],
+) -> Result<(), Failure> {
+    let key = CredentialKey::OAuthTokens(server.name.clone());
+    let native = secrets::native(context).await.ok();
+    let file = secrets::file(context);
+    for store in native.into_iter().chain([file]) {
+        let wanted = key.clone();
+        let Some(secret) = secrets::call(context, &store, move |store| store.load(&wanted))
+            .await
+            .map_err(|error| secrets::store_failure(&error))?
+        else {
+            continue;
+        };
+        let mut tokens: Value = serde_json::from_str(secret.expose()).map_err(|error| {
+            Failure::protocol(format!("the stored tokens are not JSON: {error}"))
+        })?;
+        let required = union(&scope_list(&tokens[REQUIRED_SCOPES]), scopes);
+        tokens[REQUIRED_SCOPES] = json!(required);
+        let secret = items::to_secret("tokens", &tokens)
+            .map_err(|error| Failure::protocol(error.to_string()))?;
+        let saved = key.clone();
+        secrets::call(context, &store, move |store| store.save(&saved, &secret))
+            .await
+            .map_err(|error| secrets::store_failure(&error))?;
+        context.ui.debug(
+            Some(server.name.as_str()),
+            &format!("kept the scopes {} for the next login", required.join(" ")),
+        );
+        return Ok(());
+    }
+    Ok(())
+}
+
+fn scope_list(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|scopes| {
+            scopes
+                .iter()
+                .filter_map(|scope| scope.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The scopes of both lists, each one once, in the order of the lists.
+fn union(first: &[String], second: &[String]) -> Vec<String> {
+    first
+        .iter()
+        .chain(second)
+        .fold(Vec::new(), |mut all, scope| {
+            if !all.contains(scope) {
+                all.push(scope.clone());
+            }
+            all
+        })
+}
+
+/// The scopes for a new login: the scopes that rmcp selects, the scopes
+/// that the user has, and the scopes of a `403` answer since the last
+/// login. A step-up asks for the old and the new scopes (requirement A9).
+async fn login_scopes(
+    context: &Context<'_>,
+    server: &Server,
+    store: &Arc<dyn CredentialStore>,
+    selected: &[String],
+) -> Vec<String> {
+    let key = CredentialKey::OAuthTokens(server.name.clone());
+    let stored = secrets::call(context, store, move |store| store.load(&key))
+        .await
+        .ok()
+        .flatten()
+        .and_then(|secret| serde_json::from_str::<Value>(secret.expose()).ok())
+        .unwrap_or(Value::Null);
+    let held = union(
+        &scope_list(&stored["granted_scopes"]),
+        &scope_list(&stored[REQUIRED_SCOPES]),
+    );
+    union(selected, &held)
+}
+
 /// The client for the login, in the order of the spec (requirement A6):
 /// the `oauth.clientId` of the configuration, then the stored client of
 /// the same issuer, then a new registration. A Client ID Metadata Document
@@ -260,7 +457,11 @@ async fn client_request(
     issuer: &str,
     redirect: &RedirectUri,
 ) -> Result<AuthorizationRequest, Failure> {
-    let request = AuthorizationRequest::new(redirect.to_string()).with_client_name(CLIENT_NAME);
+    let selected = manager.select_scopes(None, &[]);
+    let scopes = login_scopes(context, server, store, &selected).await;
+    let request = AuthorizationRequest::new(redirect.to_string())
+        .with_client_name(CLIENT_NAME)
+        .with_scopes(scopes.clone());
     if let Some(client_id) = &remote.oauth_client_id {
         return Ok(request.with_preregistered_client(client_id.clone()));
     }
@@ -277,7 +478,7 @@ async fn client_request(
     let client = if let Some(item) = stored.filter(|item| item.is_for(issuer)) {
         item
     } else {
-        let item = register(manager, issuer, redirect).await?;
+        let item = register(manager, issuer, redirect, &scopes).await?;
         let secret = item
             .to_secret()
             .map_err(|error| Failure::protocol(error.to_string()))?;
@@ -303,8 +504,8 @@ async fn register(
     manager: &mut AuthorizationManager,
     issuer: &str,
     redirect: &RedirectUri,
+    scopes: &[String],
 ) -> Result<ClientItem, Failure> {
-    let scopes = manager.select_scopes(None, &[]);
     let scope_refs: Vec<&str> = scopes.iter().map(String::as_str).collect();
     let config = manager
         .register_client(CLIENT_NAME, &redirect.to_string(), &scope_refs)

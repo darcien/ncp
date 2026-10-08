@@ -9,10 +9,15 @@ use std::collections::{BTreeMap, HashMap};
 use reqwest::header::{HeaderName, HeaderValue};
 use rmcp::transport::{
     DynamicTransportError, StreamableHttpClientTransport,
-    streamable_http_client::{StreamableHttpClientTransportConfig, StreamableHttpError},
+    auth::AuthClient,
+    streamable_http_client::{
+        StreamableHttpClient, StreamableHttpClientTransportConfig, StreamableHttpError,
+    },
 };
 
-use super::observe::{Observed, ObservedConnectLayer, ObservedHttp, ObservedResolver, Observer};
+use super::observe::{
+    Observed as ObservedTransport, ObservedConnectLayer, ObservedHttp, ObservedResolver, Observer,
+};
 use crate::{
     config::{Expanded, RemoteServer},
     expand::Env,
@@ -129,29 +134,37 @@ fn header(
     Ok((header_name, header_value))
 }
 
-/// The transport of one connection. The observer gets each HTTP request
-/// and each message.
-pub type Transport = Observed<StreamableHttpClientTransport<ObservedHttp<reqwest::Client>>>;
+/// The HTTP client of the transport: reqwest with the observer.
+pub type Observed = ObservedHttp<reqwest::Client>;
+
+/// The HTTP client that sends the OAuth access token of the server, and
+/// refreshes it after a `401` (rmcp `AuthClient`).
+pub type Authorized = AuthClient<Observed>;
+
+/// The HTTP client of the transport, with the observer.
+#[must_use]
+pub fn observed(http: &reqwest::Client, observer: &Observer) -> Observed {
+    ObservedHttp {
+        inner: http.clone(),
+        observer: observer.clone(),
+    }
+}
 
 /// Makes the transport for one connection, with the expanded headers of the
-/// entry.
+/// entry. The observer gets each message.
 ///
 /// # Errors
 ///
 /// Returns an error for a header name or value that HTTP does not permit.
-pub fn transport(
-    http: &reqwest::Client,
+pub fn transport<C: StreamableHttpClient>(
+    client: C,
     server: &RemoteServer,
     expanded: &BTreeMap<String, Expanded>,
     observer: &Observer,
-) -> Result<Transport, HttpError> {
+) -> Result<ObservedTransport<StreamableHttpClientTransport<C>>, HttpError> {
     let config = StreamableHttpClientTransportConfig::with_uri(server.url.as_str())
         .custom_headers(headers(expanded)?);
-    let client = ObservedHttp {
-        inner: http.clone(),
-        observer: observer.clone(),
-    };
-    Ok(Observed::new(
+    Ok(ObservedTransport::new(
         StreamableHttpClientTransport::with_client(client, config),
         observer.clone(),
     ))
@@ -167,6 +180,27 @@ pub fn needs_authorization(error: &DynamicTransportError) -> bool {
             .downcast_ref::<StreamableHttpError<reqwest::Error>>(),
         Some(StreamableHttpError::AuthRequired(_) | StreamableHttpError::InsufficientScope(_))
     )
+}
+
+/// The scopes that the server asked for in its `403 insufficient_scope`
+/// answer, or `None` for another error.
+#[must_use]
+pub fn required_scopes(error: &DynamicTransportError) -> Option<Vec<String>> {
+    match error
+        .error
+        .downcast_ref::<StreamableHttpError<reqwest::Error>>()
+    {
+        Some(StreamableHttpError::InsufficientScope(insufficient)) => Some(
+            insufficient
+                .required_scope
+                .as_deref()
+                .unwrap_or_default()
+                .split_whitespace()
+                .map(str::to_string)
+                .collect(),
+        ),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

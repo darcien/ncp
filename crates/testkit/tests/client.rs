@@ -97,6 +97,7 @@ impl Setup {
             server_log: &client::stdio::ServerLog::Inherit,
             cancel: &self.cancel,
             observer: &client::observe::Observer::default(),
+            authorized: None,
         })
         .await
     }

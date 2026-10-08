@@ -490,7 +490,7 @@ async fn oauth_handle(
                 "resource": resource,
                 "authorization_servers": [oauth.auth.issuer()],
                 "bearer_methods_supported": ["header"],
-                "scopes_supported": ["a", "b"],
+                "scopes_supported": oauth.auth.scopes_supported(),
             }),
         );
     }

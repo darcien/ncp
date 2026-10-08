@@ -229,12 +229,30 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
         server_log: &ui.server_log(name),
         cancel: &context.cancel,
         observer: &observer,
+        authorized: None,
     };
     // The connect future holds two transports with their observers. Boxed,
     // it does not make each command future large.
-    let connection = Box::pin(client::connect(&launch))
-        .await
-        .map_err(|error| connect_failure(context.env, server, &error))?;
+    let connection = match (
+        Box::pin(client::connect(&launch)).await,
+        &server.transport,
+        &http,
+    ) {
+        (Err(error), Transport::Http(remote), Some(http)) if error.needs_authorization() => {
+            let Some(authorized) =
+                super::auth::stored_login(context, server, remote, http, &observer).await?
+            else {
+                return Err(connect_failure(context.env, server, &error));
+            };
+            let launch = Launch {
+                authorized: Some(&authorized),
+                ..launch
+            };
+            Box::pin(client::connect(&launch)).await
+        }
+        (result, ..) => result,
+    }
+    .map_err(|error| connect_failure(context.env, server, &error))?;
     if cached.as_ref() != Some(connection.era()) {
         ui.debug(
             Some(name),
@@ -289,6 +307,11 @@ fn connect_failure(env: &Env, server: &Server, error: &ConnectError) -> Failure 
     };
     let failure =
         Failure::new(exit, hide_expanded_url(server, message)).server(server.name.as_str());
+    let failure = if exit == Exit::Auth {
+        failure.hint(login_hint(server))
+    } else {
+        failure
+    };
     // A proxy on another host can also answer 401 or 403.
     match &server.transport {
         Transport::Http(remote) => through_proxy(env, &remote.url, failure),
@@ -347,6 +370,14 @@ fn causes(error: &(dyn std::error::Error + 'static)) -> String {
         .join(": ")
 }
 
+/// The command that logs in to the server.
+fn login_hint(server: &Server) -> String {
+    format!(
+        "ncp auth login {}",
+        super::render::shell_word(server.name.as_str())
+    )
+}
+
 /// Ctrl-C. `ncp` sent the cancel request or stopped the server first.
 #[must_use]
 pub fn interrupted() -> Failure {
@@ -360,10 +391,15 @@ pub fn request_failure(server: &Server, method: &str, error: &RequestError) -> F
         RequestError::Cancelled => interrupted(),
         RequestError::Timeout(_) => Failure::protocol(format!("{method}: {error}"))
             .hint("give a longer limit with --timeout <SECONDS>"),
-        _ if error.needs_authorization() => Failure::new(
-            Exit::Auth,
-            format!("{method}: the server needs a login or more scopes"),
-        ),
+        _ if error.needs_authorization() => {
+            let need = match error.required_scopes() {
+                Some(scopes) if !scopes.is_empty() => {
+                    format!("the server needs the scopes {}", scopes.join(" "))
+                }
+                _ => "the server needs a login or more scopes".to_string(),
+            };
+            Failure::new(Exit::Auth, format!("{method}: {need}")).hint(login_hint(server))
+        }
         RequestError::Service(rmcp::ServiceError::McpError(data)) => Failure::protocol(format!(
             "{method}: the server returned error {}: {}",
             data.code.0, data.message

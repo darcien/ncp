@@ -72,6 +72,9 @@ pub struct Launch<'a> {
     pub cancel: &'a CancellationToken,
     /// Gets the messages and the times of the connection.
     pub observer: &'a observe::Observer,
+    /// The OAuth client with the stored tokens, for an http server that
+    /// needs a login.
+    pub authorized: Option<&'a http::Authorized>,
 }
 
 /// The handshake step that failed.
@@ -161,6 +164,15 @@ impl RequestError {
     #[must_use]
     pub fn needs_authorization(&self) -> bool {
         matches!(self, Self::Service(ServiceError::TransportSend(error)) if http::needs_authorization(error))
+    }
+
+    /// The scopes of a `403 insufficient_scope` answer.
+    #[must_use]
+    pub fn required_scopes(&self) -> Option<Vec<String>> {
+        match self {
+            Self::Service(ServiceError::TransportSend(error)) => http::required_scopes(error),
+            _ => None,
+        }
     }
 }
 
@@ -303,14 +315,30 @@ async fn handshake(
             }
         }
         Transport::Http(server) => {
-            let transport = http::transport(
-                launch.http.ok_or(ConnectError::NoHttpClient)?,
-                server,
-                &launch.values.headers,
-                launch.observer,
-            )?;
-            let serve = info.serve_with_lifecycle(transport, lifecycle);
-            match race(serve, deadline, launch.cancel).await {
+            let headers = &launch.values.headers;
+            let ended = if let Some(authorized) = launch.authorized {
+                let transport =
+                    http::transport(authorized.clone(), server, headers, launch.observer)?;
+                race(
+                    info.serve_with_lifecycle(transport, lifecycle),
+                    deadline,
+                    launch.cancel,
+                )
+                .await
+            } else {
+                let client = http::observed(
+                    launch.http.ok_or(ConnectError::NoHttpClient)?,
+                    launch.observer,
+                );
+                let transport = http::transport(client, server, headers, launch.observer)?;
+                race(
+                    info.serve_with_lifecycle(transport, lifecycle),
+                    deadline,
+                    launch.cancel,
+                )
+                .await
+            };
+            match ended {
                 Ended::Done(service) => (service.map_err(failed)?, None),
                 ended => return Err(ended.into_error(timeout)),
             }

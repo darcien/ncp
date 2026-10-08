@@ -162,6 +162,13 @@ impl AuthState {
         format!("{}{}", self.origin, self.lock().settings.issuer_path)
     }
 
+    /// The scopes that the server supports. The MCP fixture names them in
+    /// its protected resource metadata too.
+    #[must_use]
+    pub fn scopes_supported(&self) -> Vec<String> {
+        self.lock().settings.scopes_supported.clone()
+    }
+
     /// The scopes of a valid access token, or `None` for an unknown or an
     /// expired token.
     #[must_use]

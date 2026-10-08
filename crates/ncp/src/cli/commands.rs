@@ -180,10 +180,13 @@ async fn list(
     server: &Server,
     connection: &Connection,
 ) -> Result<Vec<Tool>, Failure> {
-    connection
-        .list_tools(context.limits())
-        .await
-        .map_err(|error| session::request_failure(server, "tools/list", &error))
+    match connection.list_tools(context.limits()).await {
+        Ok(tools) => Ok(tools),
+        Err(error) => {
+            super::auth::remember_scopes(context, server, &error).await;
+            Err(session::request_failure(server, "tools/list", &error))
+        }
+    }
 }
 
 async fn tool_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
@@ -320,8 +323,14 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
         }
         let response = connection
             .call_tool(tool_name, arguments, context.limits())
-            .await
-            .map_err(|error| call_failure(server, tool_name, &error))?;
+            .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                super::auth::remember_scopes(context, server, &error).await;
+                return Err(call_failure(server, tool_name, &error));
+            }
+        };
         print_response(context, name, tool_name, response)
     })
     .await

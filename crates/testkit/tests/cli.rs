@@ -1293,3 +1293,83 @@ fn stdio_server_works_with_a_bad_ssl_cert_file() {
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tool_list_sends_the_stored_token_after_a_login() {
+    let (_auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    let home = oauth_home("token-use", &fixture.url);
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 4, "{}", run.describe());
+    assert_eq!(run.error()["hint"], "ncp auth login web");
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(run.stdout()["tools"].is_array());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn expired_token_is_refreshed_with_no_user_action_and_kept() {
+    let (auth, fixture) = oauth_fixture(AuthSettings {
+        expires_in: 5,
+        ..AuthSettings::default()
+    })
+    .await;
+    let home = oauth_home("refresh", &fixture.url);
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    let before = std::fs::read_to_string(home.root.join("state/ncp/credentials.json")).unwrap();
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(auth.record().refresh_grants >= 1, "{:?}", auth.record());
+    let after = std::fs::read_to_string(home.root.join("state/ncp/credentials.json")).unwrap();
+    assert_ne!(before, after, "the new tokens go back to the file");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rejected_refresh_asks_for_a_new_login() {
+    let (_auth, fixture) = oauth_fixture(AuthSettings {
+        expires_in: 5,
+        reject_refresh: true,
+        ..AuthSettings::default()
+    })
+    .await;
+    let home = oauth_home("refresh-rejected", &fixture.url);
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 4, "{}", run.describe());
+    assert_eq!(run.error()["hint"], "ncp auth login web");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_after_insufficient_scope_asks_for_the_old_and_the_new_scopes() {
+    let auth = ncp_testkit::auth_server::serve_auth(AuthSettings {
+        scopes_supported: vec!["a".into()],
+        ..AuthSettings::default()
+    })
+    .await
+    .unwrap();
+    let step_up = ncp_testkit::StepUp {
+        tool: "echo".into(),
+        scope: "b".into(),
+    };
+    let fixture = ncp_testkit::serve_http_with_oauth(Mode::Modern, &auth, Some(step_up))
+        .await
+        .unwrap();
+    let home = oauth_home("step-up", &fixture.url);
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    let call = ["tool", "call", "web", "echo", "text=hi"];
+    let run = home.run(&call);
+    assert_eq!(run.code(), 4, "{}", run.describe());
+    let error = run.error();
+    assert!(
+        error["message"].as_str().unwrap().contains("scopes b"),
+        "{error}"
+    );
+    assert_eq!(error["hint"], "ncp auth login web");
+    let run = home.run(&LOGIN_TO_FILE);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let scope = auth.record().authorize_scope.unwrap();
+    let scopes: Vec<&str> = scope.split_whitespace().collect();
+    assert!(scopes.contains(&"a") && scopes.contains(&"b"), "{scope}");
+    let run = home.run(&call);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+}
