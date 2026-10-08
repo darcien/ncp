@@ -61,6 +61,9 @@ impl Verbosity {
 pub struct Ui {
     pub format: Format,
     pub verbosity: Verbosity,
+    /// Color in the labels of errors, warnings, hints and diagnostics on
+    /// stderr. Only in text output.
+    pub color: bool,
 }
 
 impl Ui {
@@ -87,20 +90,20 @@ impl Ui {
 
     pub fn warning(self, server: Option<&str>, message: &str) {
         if self.verbosity > Verbosity::Quiet {
-            self.stderr(&note("warning", self.format, server, message));
+            self.note(&note("warning", self.format, server, message));
         }
     }
 
     pub fn hint(self, server: Option<&str>, message: &str) {
         if self.verbosity > Verbosity::Quiet {
-            self.stderr(&note("hint", self.format, server, message));
+            self.note(&note("hint", self.format, server, message));
         }
     }
 
     /// A `-v` diagnostic. It never holds a secret value.
     pub fn debug(self, server: Option<&str>, message: &str) {
         if self.verbosity >= Verbosity::Verbose {
-            self.stderr(&note("debug", self.format, server, message));
+            self.note(&note("debug", self.format, server, message));
         }
     }
 
@@ -111,7 +114,17 @@ impl Ui {
     }
 
     pub fn error(self, failure: &Failure) {
-        self.stderr(&error_text(self.format, failure));
+        self.note(&error_text(self.format, failure));
+    }
+
+    /// A note of `ncp`, with colored labels when color is on. A line of a
+    /// server log never gets color, so that a server cannot look like
+    /// `ncp`.
+    fn note(self, text: &str) {
+        match (self.format, self.color) {
+            (Format::Text, true) => stderr(&painted(&printable(text))),
+            _ => self.stderr(text),
+        }
     }
 
     /// Text goes out with control characters as escapes. JSON lines are
@@ -198,6 +211,41 @@ pub fn printable(text: &str) -> Cow<'_, str> {
     } else {
         Cow::Borrowed(text)
     }
+}
+
+/// The color of each label, as ANSI SGR codes.
+const LABELS: [(&str, &str); 4] = [
+    ("error:", "1;31"),
+    ("warning:", "1;33"),
+    ("hint:", "1;36"),
+    ("debug:", "2"),
+];
+
+/// The text with the label at the start of each line in its color.
+#[must_use]
+pub fn painted(text: &str) -> String {
+    text.split_inclusive('\n')
+        .map(|line| {
+            LABELS
+                .iter()
+                .find_map(|(label, code)| {
+                    line.strip_prefix(label)
+                        .map(|rest| format!("\u{1b}[{code}m{label}\u{1b}[0m{rest}"))
+                })
+                .unwrap_or_else(|| line.to_string())
+        })
+        .collect()
+}
+
+/// Color on stderr: `--color`, else on when stderr is a TTY, `NO_COLOR` is
+/// not set or empty (no-color.org), and `TERM` is not `dumb`.
+#[must_use]
+pub fn color_on(choice: Option<bool>, stderr_is_tty: bool, env: &crate::expand::Env) -> bool {
+    choice.unwrap_or_else(|| {
+        stderr_is_tty
+            && env.get("NO_COLOR").is_none_or(String::is_empty)
+            && env.get("TERM").is_none_or(|term| term != "dumb")
+    })
 }
 
 fn stderr(text: &str) {
@@ -339,6 +387,31 @@ mod tests {
     #[test]
     fn printable_text_keeps_crlf_line_ends() {
         assert_eq!(printable("a\r\nb\rc"), "a\nb\\u{d}c");
+    }
+
+    #[test]
+    fn labels_get_color_at_the_start_of_a_line_only() {
+        assert_eq!(
+            painted("error: x\nhint: y error: z\n"),
+            "\u{1b}[1;31merror:\u{1b}[0m x\n\u{1b}[1;36mhint:\u{1b}[0m y error: z\n"
+        );
+    }
+
+    #[test]
+    fn color_follows_the_option_then_the_tty_no_color_and_term() {
+        let env = |pairs: &[(&str, &str)]| -> crate::expand::Env {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        assert!(color_on(None, true, &env(&[])));
+        assert!(!color_on(None, false, &env(&[])));
+        assert!(!color_on(None, true, &env(&[("NO_COLOR", "1")])));
+        assert!(color_on(None, true, &env(&[("NO_COLOR", "")])));
+        assert!(!color_on(None, true, &env(&[("TERM", "dumb")])));
+        assert!(color_on(Some(true), false, &env(&[("NO_COLOR", "1")])));
+        assert!(!color_on(Some(false), true, &env(&[])));
     }
 
     #[test]

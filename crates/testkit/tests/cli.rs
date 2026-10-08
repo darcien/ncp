@@ -2018,3 +2018,19 @@ fn raw_read_of_several_contents_is_a_usage_error_with_empty_stdout() {
         "{stderr}"
     );
 }
+
+#[test]
+fn color_marks_only_the_labels_of_text_output_on_request() {
+    let home = Home::new("color");
+    let text = ["--output-format", "text", "server", "list"];
+    let plain = home.run(&text);
+    assert!(!plain.0.stderr.contains(&0x1b), "{}", plain.describe());
+    let colored = home.run(&[&["--color", "always"][..], &text[..]].concat());
+    let stderr = String::from_utf8_lossy(&colored.0.stderr).to_string();
+    assert!(
+        stderr.starts_with("\u{1b}[1;36mhint:\u{1b}[0m"),
+        "{stderr:?}"
+    );
+    let json = home.run(&["--color", "always", "server", "list"]);
+    assert!(!json.0.stderr.contains(&0x1b), "{}", json.describe());
+}

@@ -62,6 +62,14 @@ pub struct GlobalOptions {
     /// Show no hints and no warnings on stderr. Errors stay.
     #[arg(short, long, global = true, conflicts_with = "verbose", action = clap::ArgAction::Count)]
     pub quiet: u8,
+    /// Color in the labels on stderr. Default: auto, which is on for a
+    /// TTY unless NO_COLOR is set.
+    #[allow(
+        clippy::doc_markdown,
+        reason = "clap shows this text as help, where backticks show"
+    )]
+    #[arg(long, global = true, value_enum, value_name = "WHEN", default_value_t = ColorChoice::Auto)]
+    pub color: ColorChoice,
     /// The output format. Default: text on a TTY, else JSON.
     #[arg(long, global = true, value_enum, value_name = "FORMAT")]
     pub output_format: Option<OutputFormat>,
@@ -69,6 +77,19 @@ pub struct GlobalOptions {
     /// ncp folder of the XDG configuration folder. It must exist.
     #[arg(long, global = true, value_name = "PATH")]
     pub config_file: Option<std::path::PathBuf>,
+}
+
+/// When to use color.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ColorChoice {
+    /// On for a TTY, unless NO_COLOR is set
+    #[allow(
+        clippy::doc_markdown,
+        reason = "clap shows this text as help, where backticks show"
+    )]
+    Auto,
+    Always,
+    Never,
 }
 
 /// The output format.
