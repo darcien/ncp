@@ -68,9 +68,40 @@ pub enum Command {
     /// Tools of a server
     #[command(subcommand)]
     Tool(ToolCommand),
+    /// OAuth login of HTTP servers
+    #[command(subcommand)]
+    Auth(AuthCommand),
     /// Named values for ${NAME} in the configuration
     #[command(subcommand)]
     Secret(SecretCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AuthCommand {
+    /// Log in to an HTTP server with OAuth and keep the tokens.
+    Login {
+        /// The server name from the configuration
+        server: String,
+        /// Do not open a browser: print the URL, and read the redirect URL
+        /// from stdin.
+        #[arg(long)]
+        no_browser: bool,
+        /// The place for the tokens.
+        #[arg(long, value_enum, default_value_t = CredentialPlace::Native)]
+        credential_store: CredentialPlace,
+    },
+    /// Remove the OAuth tokens of a server from all places. The client
+    /// registration stays.
+    Logout {
+        /// The server name from the configuration
+        server: String,
+    },
+    /// Show the OAuth login of each server, or of one server. Shows no
+    /// token.
+    Status {
+        /// The server name from the configuration
+        server: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

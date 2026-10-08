@@ -1,13 +1,26 @@
 //! The `ncp` command line, built in the test kit. Cargo gives the tests of
 //! a package only the paths of the binaries of that package. This binary
-//! runs the same code as `ncp`, with one change: the native store is the
-//! fake `security` program at the path in `NCP_TEST_SECURITY_PROGRAM`, or
-//! no store when that variable is not set. Thus a test never uses the real
-//! Keychain or Secret Service.
+//! runs the same code as `ncp`, with two changes, so that a test never uses
+//! the real Keychain, the real Secret Service, or a real browser:
+//!
+//! - The native store is the fake `security` program at the path in
+//!   `NCP_TEST_SECURITY_PROGRAM`, or no store when that variable is not set.
+//! - The browser is a fake. With `NCP_TEST_BROWSER=follow`, it sends a GET
+//!   to the URL, and then a GET to the `Location` of the answer, as a
+//!   browser does after a login that the user approves. With no value, no
+//!   browser is available.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    io::{BufRead, BufReader, Write},
+    net::TcpStream,
+    sync::Arc,
+    time::Duration,
+};
 
-use ncp::store::{CredentialStore, SecurityStore, StoreError};
+use ncp::{
+    cli::Platform,
+    store::{CredentialStore, SecurityStore, StoreError},
+};
 
 fn fake_native(limit: Duration) -> Result<Arc<dyn CredentialStore>, StoreError> {
     match std::env::var_os("NCP_TEST_SECURITY_PROGRAM") {
@@ -20,6 +33,47 @@ fn fake_native(limit: Duration) -> Result<Arc<dyn CredentialStore>, StoreError> 
     }
 }
 
+/// One plain HTTP GET. Returns the `Location` header of the answer.
+fn get(url: &str) -> std::io::Result<Option<String>> {
+    let url = url::Url::parse(url).map_err(std::io::Error::other)?;
+    let host = url.host_str().unwrap_or_default();
+    let port = url.port_or_known_default().unwrap_or(80);
+    let mut stream = TcpStream::connect((host, port))?;
+    let target = &url[url::Position::BeforePath..];
+    write!(
+        stream,
+        "GET {target} HTTP/1.1\r\nhost: {host}:{port}\r\nconnection: close\r\n\r\n"
+    )?;
+    let location = BufReader::new(stream)
+        .lines()
+        .map_while(Result::ok)
+        .take_while(|line| !line.is_empty())
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("location")
+                .then(|| value.trim().to_string())
+        });
+    Ok(location)
+}
+
+fn fake_browser(url: &str) -> std::io::Result<()> {
+    match std::env::var("NCP_TEST_BROWSER").as_deref() {
+        Ok("follow") => {
+            let url = url.to_string();
+            std::thread::spawn(move || {
+                if let Ok(Some(location)) = get(&url) {
+                    let _ = get(&location);
+                }
+            });
+            Ok(())
+        }
+        _ => Err(std::io::Error::other("the test has no browser")),
+    }
+}
+
 fn main() -> std::process::ExitCode {
-    ncp::cli::main_with(fake_native)
+    ncp::cli::main_with(Platform {
+        open_native: fake_native,
+        open_browser: fake_browser,
+    })
 }

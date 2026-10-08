@@ -12,7 +12,7 @@ use std::{
     process::{Command, Output, Stdio},
 };
 
-use ncp_testkit::{Mode, serve_http, serve_http_with};
+use ncp_testkit::{Mode, auth_server::AuthSettings, serve_http, serve_http_with};
 use serde_json::{Value, json};
 
 const NCP: &str = env!("CARGO_BIN_EXE_ncp-cli");
@@ -1058,4 +1058,205 @@ async fn timings_show_cpu_and_network_steps_after_the_run() {
     let failed = home.run(&["--timings", "tool", "list", "nothing"]);
     assert_eq!(failed.code(), 2);
     assert!(failed.stderr().last().unwrap()["timings"]["totalMs"].is_number());
+}
+
+async fn oauth_fixture(
+    settings: AuthSettings,
+) -> (
+    ncp_testkit::auth_server::AuthServer,
+    ncp_testkit::HttpFixture,
+) {
+    let auth = ncp_testkit::auth_server::serve_auth(settings)
+        .await
+        .unwrap();
+    let fixture = ncp_testkit::serve_http_with_oauth(Mode::Modern, &auth, None)
+        .await
+        .unwrap();
+    (auth, fixture)
+}
+
+fn oauth_home(test: &str, url: &str) -> Home {
+    let home = Home::new(test).set("NCP_TEST_BROWSER", "follow");
+    home.configure(&json!({"web": {"type": "http", "url": url}}));
+    home
+}
+
+const LOGIN_TO_FILE: [&str; 5] = ["auth", "login", "web", "--credential-store", "file"];
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_with_browser_registers_a_client_and_keeps_tokens_and_client() {
+    let (auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    let home = oauth_home("login", &fixture.url);
+    let run = home.run(&LOGIN_TO_FILE);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let out = run.stdout();
+    assert_eq!(out["server"], "web");
+    assert_eq!(out["issuer"], auth.issuer());
+    assert_eq!(out["place"], "file");
+    let record = auth.record();
+    assert_eq!(
+        (record.register_calls, record.code_grants),
+        (1, 1),
+        "{record:?}"
+    );
+    assert_eq!(
+        record.authorize_resource.as_deref(),
+        Some(fixture.url.as_str())
+    );
+    assert_eq!(record.token_resource.as_deref(), Some(fixture.url.as_str()));
+    let login = run
+        .stderr()
+        .into_iter()
+        .find_map(|line| line.get("login").cloned())
+        .unwrap();
+    assert!(
+        login["url"]
+            .as_str()
+            .unwrap()
+            .contains("code_challenge_method=S256")
+    );
+    let file = std::fs::read_to_string(home.root.join("state/ncp/credentials.json")).unwrap();
+    assert!(
+        file.contains("oauth/web/tokens") && file.contains("oauth/web/client"),
+        "{file}"
+    );
+    let again = home.run(&LOGIN_TO_FILE);
+    assert_eq!(again.code(), 0, "{}", again.describe());
+    assert_eq!(
+        auth.record().register_calls,
+        1,
+        "the stored client is used again"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_uses_the_configured_client_id_and_registers_nothing() {
+    let (auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    auth.add_client("pre-1", None);
+    let home = oauth_home("login-pre", &fixture.url);
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url,
+        "oauth": {"clientId": "pre-1"}}}));
+    let run = home.run(&LOGIN_TO_FILE);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let record = auth.record();
+    assert_eq!(record.register_calls, 0);
+    assert_eq!(record.token_client_id.as_deref(), Some("pre-1"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_registers_again_when_the_issuer_changes() {
+    let (auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    let home = oauth_home("login-issuer", &fixture.url);
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    auth.settings(|settings| settings.issuer_path = "/b".into());
+    let run = home.run(&LOGIN_TO_FILE);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(auth.record().register_calls, 2);
+    assert_eq!(run.stdout()["issuer"], auth.issuer());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_rejects_a_redirect_with_a_wrong_issuer() {
+    let (auth, fixture) = oauth_fixture(AuthSettings {
+        callback_iss: ncp_testkit::auth_server::CallbackIss::Wrong,
+        ..AuthSettings::default()
+    })
+    .await;
+    let home = oauth_home("login-iss", &fixture.url);
+    let run = home.run(&LOGIN_TO_FILE);
+    assert_eq!(run.code(), 4, "{}", run.describe());
+    assert_eq!(auth.record().code_grants, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_reports_a_refusal_of_the_authorization_server() {
+    let (_auth, fixture) = oauth_fixture(AuthSettings {
+        decision: ncp_testkit::auth_server::Decision::Deny,
+        ..AuthSettings::default()
+    })
+    .await;
+    let home = oauth_home("login-deny", &fixture.url);
+    let run = home.run(&LOGIN_TO_FILE);
+    assert_eq!(run.code(), 4, "{}", run.describe());
+    assert!(
+        run.error()["message"]
+            .as_str()
+            .unwrap()
+            .contains("access_denied"),
+        "{}",
+        run.describe()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_with_no_browser_reads_the_pasted_redirect_url() {
+    use std::io::{BufRead as _, Write as _};
+    let (auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    let home = Home::new("login-paste");
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
+    let mut child = Command::new(NCP)
+        .args([
+            "auth",
+            "login",
+            "web",
+            "--no-browser",
+            "--credential-store",
+            "file",
+        ])
+        .env_clear()
+        .envs(home.env.iter().cloned())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stderr = std::io::BufReader::new(child.stderr.take().unwrap());
+    let url = loop {
+        let mut line = String::new();
+        assert_ne!(stderr.read_line(&mut line).unwrap(), 0, "no login URL");
+        let value: Value = serde_json::from_str(&line).unwrap();
+        if let Some(url) = value["login"]["url"].as_str() {
+            break url.to_string();
+        }
+    };
+    let browser = ncp::client::http::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let answer = browser.get(&url).send().await.unwrap();
+    let location = answer.headers()["location"].to_str().unwrap().to_string();
+    let mut stdin = child.stdin.take().unwrap();
+    writeln!(stdin, "{location}").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(auth.record().code_grants, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn status_shows_the_login_with_no_token_and_logout_removes_the_tokens() {
+    let (auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    let home = oauth_home("logout", &fixture.url);
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    let run = home.run(&["auth", "status"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let row = &run.stdout()["servers"][0];
+    assert_eq!(row["name"], "web");
+    assert_eq!(row["loggedIn"], true);
+    assert_eq!(row["issuer"], auth.issuer());
+    assert!(row["expiresAt"].as_str().unwrap().ends_with('Z'), "{row}");
+    assert!(
+        !run.0.stdout.windows(3).any(|w| w == b"at-"),
+        "a token shows"
+    );
+    let run = home.run(&["auth", "logout", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(run.stdout(), json!({"server": "web", "places": ["file"]}));
+    let row = &home.run(&["auth", "status", "web"]).stdout()["servers"][0];
+    assert_eq!(row["loggedIn"], false);
+    let file = std::fs::read_to_string(home.root.join("state/ncp/credentials.json")).unwrap();
+    assert!(
+        file.contains("oauth/web/client"),
+        "logout keeps the client: {file}"
+    );
 }

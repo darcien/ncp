@@ -16,7 +16,9 @@ use crate::{
 
 const SERVERS_KEY: &str = "mcpServers";
 const STDIO_KEYS: [&str; 5] = ["type", "command", "args", "env", "cwd"];
-const REMOTE_KEYS: [&str; 3] = ["type", "url", "headers"];
+const REMOTE_KEYS: [&str; 4] = ["type", "url", "headers", "oauth"];
+/// The MVP reads only `clientId` of the `oauth` object (design C4).
+const OAUTH_KEYS: [&str; 1] = ["clientId"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Server {
@@ -160,6 +162,9 @@ pub struct RemoteServer {
     pub url: ServerUrl,
     /// Not expanded: a value can come from a credential store.
     pub headers: BTreeMap<String, Template>,
+    /// `oauth.clientId`: a client that the user registered with the
+    /// authorization server. With it, `ncp` does no registration.
+    pub oauth_client_id: Option<String>,
 }
 
 /// An unknown key. `server` is `None` for a key at the top level.
@@ -385,12 +390,22 @@ fn unknown_keys(server: &str, object: &Map<String, Value>, kind: Kind) -> Vec<Wa
         Kind::Stdio => &STDIO_KEYS,
         Kind::Http | Kind::Sse => &REMOTE_KEYS,
     };
+    let oauth_keys = object
+        .get("oauth")
+        .and_then(Value::as_object)
+        .filter(|_| !matches!(kind, Kind::Stdio))
+        .into_iter()
+        .flat_map(|oauth| oauth.keys())
+        .filter(|key| !OAUTH_KEYS.contains(&key.as_str()))
+        .map(|key| format!("oauth.{key}"));
     object
         .keys()
         .filter(|key| !known.contains(&key.as_str()))
+        .cloned()
+        .chain(oauth_keys)
         .map(|key| Warning {
             server: Some(server.to_string()),
-            key: key.clone(),
+            key,
         })
         .collect()
 }
@@ -448,7 +463,24 @@ fn remote(object: &Map<String, Value>, env: &Env) -> Result<RemoteServer, EntryE
     Ok(RemoteServer {
         url: ServerUrl::parse(&url)?,
         headers: template_map(object, "headers")?,
+        oauth_client_id: oauth_client_id(object)?,
     })
+}
+
+/// `oauth.clientId`, as the file writes it. A client ID is not a secret,
+/// so it has no `${NAME}`.
+fn oauth_client_id(object: &Map<String, Value>) -> Result<Option<String>, EntryError> {
+    let Some(oauth) = object.get("oauth") else {
+        return Ok(None);
+    };
+    let oauth = oauth
+        .as_object()
+        .ok_or_else(|| wrong_type("oauth", "an object"))?;
+    match oauth.get("clientId") {
+        None => Ok(None),
+        Some(Value::String(id)) if !id.is_empty() => Ok(Some(id.clone())),
+        Some(_) => Err(wrong_type("oauth.clientId", "a string that is not empty")),
+    }
 }
 
 fn string(
@@ -555,6 +587,7 @@ mod tests {
             Transport::Http(RemoteServer {
                 url: ServerUrl::parse("https://example.com/mcp").unwrap(),
                 headers: BTreeMap::from([("X-Org".into(), Template::parse("o").unwrap())]),
+                oauth_client_id: None,
             })
         );
         assert_eq!(config.warnings(), &[]);
@@ -603,6 +636,27 @@ mod tests {
         assert_eq!(config.servers().count(), 1);
         let invalid: Vec<&str> = config.invalid().map(|(name, _)| name).collect();
         assert_eq!(invalid, ["bad.name", "no-type"]);
+    }
+
+    #[test]
+    fn reads_oauth_client_id_and_warns_about_other_oauth_keys() {
+        let config = load(
+            r#"{"mcpServers": {
+                "r": {"type": "http", "url": "https://x/mcp",
+                      "oauth": {"clientId": "c1", "callbackPort": 1}},
+                "bad": {"type": "http", "url": "https://x/mcp", "oauth": {"clientId": 1}}
+            }}"#,
+        );
+        let Transport::Http(remote) = &config.server("r").unwrap().transport else {
+            panic!("not http")
+        };
+        assert_eq!(remote.oauth_client_id.as_deref(), Some("c1"));
+        let text: Vec<String> = config.warnings().iter().map(ToString::to_string).collect();
+        assert_eq!(
+            text,
+            ["server r: unknown key \"oauth.callbackPort\" ignored"]
+        );
+        assert!(config.server("bad").is_err());
     }
 
     #[test]

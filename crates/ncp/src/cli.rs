@@ -1,6 +1,7 @@
 //! The command line: the imperative shell around the client core.
 
 pub mod args;
+pub mod auth;
 mod commands;
 mod diagnostics;
 mod outcome;
@@ -35,16 +36,27 @@ use crate::{expand::Env, paths::Paths};
 /// call that passed its limit can stay on its blocking thread.
 const SHUTDOWN_LIMIT: Duration = Duration::from_secs(2);
 
+/// The parts of `ncp` that reach outside the process with no network: the
+/// native store and the browser. Tests give fakes, so that a test never
+/// uses the real Keychain, the real Secret Service, or a real browser.
+#[derive(Clone, Copy)]
+pub struct Platform {
+    pub open_native: secrets::OpenNative,
+    pub open_browser: auth::OpenBrowser,
+}
+
 /// Runs `ncp` and gives its exit code.
 #[must_use]
 pub fn main() -> ExitCode {
-    main_with(secrets::open_native)
+    main_with(Platform {
+        open_native: secrets::open_native,
+        open_browser: auth::open_browser,
+    })
 }
 
-/// Runs `ncp` with another native store. The test kit gives a fake, so that
-/// tests never use the real Keychain or Secret Service.
+/// Runs `ncp` with another platform.
 #[must_use]
-pub fn main_with(open_native: secrets::OpenNative) -> ExitCode {
+pub fn main_with(platform: Platform) -> ExitCode {
     let started = Instant::now();
     let ui = Ui {
         format: Format::detect(),
@@ -68,7 +80,7 @@ pub fn main_with(open_native: secrets::OpenNative) -> ExitCode {
             return failure.exit.into();
         }
     };
-    let exit = runtime.block_on(run(cli, &env, ui, timings.clone(), open_native));
+    let exit = runtime.block_on(run(cli, &env, ui, timings.clone(), platform));
     shut_down(runtime);
     if let Some(timings) = timings {
         ui.diagnostic(&timings.report(ui.format));
@@ -107,7 +119,7 @@ async fn run(
     env: &Env,
     ui: Ui,
     timings: Option<Arc<Timings>>,
-    open_native: secrets::OpenNative,
+    platform: Platform,
 ) -> Exit {
     let result = async {
         let paths = Paths::from_env(env).map_err(|error| Failure::protocol(error.to_string()))?;
@@ -117,12 +129,14 @@ async fn run(
             paths,
             request_limit: Duration::from_secs(cli.options.timeout),
             cancel: interrupt_token(),
-            open_native,
+            open_native: platform.open_native,
+            open_browser: platform.open_browser,
             timings,
         };
         match cli.command {
             Command::Server(command) => commands::server(&context, command).await,
             Command::Tool(command) => commands::tool(&context, command).await,
+            Command::Auth(command) => auth::command(&context, command).await,
             Command::Secret(command) => secrets::command(&context, command).await,
         }
     }

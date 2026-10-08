@@ -38,11 +38,11 @@ pub fn open_native(limit: Duration) -> Result<Arc<dyn CredentialStore>, StoreErr
     store::NativeStore::open(limit).map(|store| Arc::new(store) as Arc<dyn CredentialStore>)
 }
 
-type Opened = Result<Arc<dyn CredentialStore>, StoreError>;
+pub(super) type Opened = Result<Arc<dyn CredentialStore>, StoreError>;
 
 /// Opens the native store on a blocking thread. A store program stops
 /// before the limit of the call, so no program stays after `ncp`.
-async fn native(context: &Context<'_>) -> Opened {
+pub(super) async fn native(context: &Context<'_>) -> Opened {
     open_within(context, store::CALL_LIMIT).await
 }
 
@@ -59,13 +59,13 @@ async fn open_within(context: &Context<'_>, limit: Duration) -> Opened {
 /// The time between the end of a store program and the limit of its call.
 const PROGRAM_MARGIN: Duration = Duration::from_secs(1);
 
-fn file(context: &Context<'_>) -> Arc<dyn CredentialStore> {
+pub(super) fn file(context: &Context<'_>) -> Arc<dyn CredentialStore> {
     Arc::new(FileStore::new(context.paths.credential_file.clone()))
 }
 
 /// Ends the call at Ctrl-C. A store program in the process group of `ncp`
 /// gets the same SIGINT and stops, so its error is the interrupt too.
-async fn interruptible<T>(
+pub(super) async fn interruptible<T>(
     context: &Context<'_>,
     call: impl Future<Output = Result<T, StoreError>>,
 ) -> Result<T, StoreError> {
@@ -79,7 +79,7 @@ async fn interruptible<T>(
     }
 }
 
-async fn call<T: Send + 'static>(
+pub(super) async fn call<T: Send + 'static>(
     context: &Context<'_>,
     store: &Arc<dyn CredentialStore>,
     action: impl FnOnce(&dyn CredentialStore) -> Result<T, StoreError> + Send + 'static,
@@ -200,7 +200,7 @@ fn clone_error(error: &StoreError) -> StoreError {
 /// A store error. The native store and its time limit are authorization
 /// errors (exit 4). A credential file that `ncp` cannot read or write is a
 /// local error (exit 3).
-fn store_failure(error: &StoreError) -> Failure {
+pub(super) fn store_failure(error: &StoreError) -> Failure {
     let exit = match error {
         StoreError::Interrupted => return session::interrupted(),
         StoreError::Io { .. } | StoreError::OpenPermissions(_) | StoreError::Corrupt(_) => {
@@ -225,14 +225,14 @@ pub(super) async fn command(context: &Context<'_>, command: SecretCommand) -> Re
     }
 }
 
-fn place_name(place: CredentialPlace) -> &'static str {
+pub(super) fn place_name(place: CredentialPlace) -> &'static str {
     match place {
         CredentialPlace::Native => "native",
         CredentialPlace::File => "file",
     }
 }
 
-fn place_text(place: CredentialPlace) -> &'static str {
+pub(super) fn place_text(place: CredentialPlace) -> &'static str {
     match place {
         CredentialPlace::Native => "the native store",
         CredentialPlace::File => "the credential file",

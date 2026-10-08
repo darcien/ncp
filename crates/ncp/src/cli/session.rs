@@ -35,6 +35,7 @@ pub struct Context<'a> {
     /// Fires on Ctrl-C.
     pub cancel: CancellationToken,
     pub open_native: super::secrets::OpenNative,
+    pub open_browser: super::auth::OpenBrowser,
     /// Present with `--timings`.
     pub timings: Option<Arc<Timings>>,
 }
