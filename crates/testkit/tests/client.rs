@@ -10,13 +10,11 @@ use std::{
 };
 
 use ncp::{
-    client::{self, ConnectError, Connection, Launch, Phase, RequestError, RequestLimits, Secrets},
-    config::{RemoteServer, Server, StdioServer, Transport},
-    credential::{CredentialKey, EnvName, HeaderName, Secret, SecretKind},
+    client::{self, ConnectError, Connection, Launch, Phase, RequestError, RequestLimits},
+    config::{Expanded, RemoteServer, Server, StdioServer, Transport, Values},
     era::{Era, ProtocolVersion},
-    expand::Env,
+    expand::{Env, Template},
     server::{ServerName, ServerUrl},
-    store::{CredentialStore, MemoryStore},
 };
 use ncp_testkit::{Mode, serve_http};
 use rmcp::model::{CallToolResponse, JsonObject};
@@ -36,7 +34,7 @@ fn stdio(args: &[&str], env: &[(&str, &str)]) -> Server {
             args: args.iter().map(ToString::to_string).collect(),
             env: env
                 .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .map(|(k, v)| (k.to_string(), Template::parse(v).unwrap()))
                 .collect(),
             cwd: None,
         }),
@@ -50,7 +48,7 @@ fn http_server(url: &str, headers: &[(&str, &str)]) -> Server {
             url: ServerUrl::parse(url).unwrap(),
             headers: headers
                 .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .map(|(k, v)| (k.to_string(), Template::parse(v).unwrap()))
                 .collect(),
         }),
     )
@@ -66,7 +64,7 @@ struct Setup {
     server: Server,
     cached: Option<Era>,
     base_env: Env,
-    secrets: Secrets,
+    values: Values,
     probe_timeout: Duration,
     connect_limit: Duration,
     cancel: CancellationToken,
@@ -78,7 +76,7 @@ impl Setup {
             server,
             cached: None,
             base_env: Env::new(),
-            secrets: Secrets::default(),
+            values: Values::default(),
             probe_timeout: Duration::from_secs(5),
             connect_limit: client::CONNECT_LIMIT,
             cancel: CancellationToken::new(),
@@ -91,7 +89,7 @@ impl Setup {
             server: &self.server,
             cached_era: self.cached.as_ref(),
             base_env: &self.base_env,
-            secrets: &self.secrets,
+            values: &self.values,
             http: &http,
             probe_timeout: self.probe_timeout,
             connect_limit: self.connect_limit,
@@ -495,17 +493,22 @@ async fn cancel_during_the_handshake_stops_the_server_with_the_stop_steps() {
     assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
 }
 
+fn expanded(pairs: &[(&str, &str)]) -> std::collections::BTreeMap<String, Expanded> {
+    pairs
+        .iter()
+        .map(|(k, v)| {
+            let value = Expanded {
+                value: v.to_string(),
+                from_variable: true,
+            };
+            (k.to_string(), value)
+        })
+        .collect()
+}
+
 #[tokio::test]
-async fn gives_stdio_server_proxy_variables_entry_env_and_stored_secrets() {
-    let store = MemoryStore::default();
-    let api_key = EnvName::parse("API_KEY").unwrap();
-    store
-        .save(
-            &CredentialKey::new(name(), SecretKind::Env(api_key.clone())),
-            &Secret::new("from-store".into()),
-        )
-        .unwrap();
-    let mut setup = Setup::new(stdio(&["modern"], &[("MODE", "from-entry")]));
+async fn gives_stdio_server_proxy_variables_and_expanded_entry_env() {
+    let mut setup = Setup::new(stdio(&["modern"], &[]));
     setup.base_env = Env::from([
         (
             "HTTPS_PROXY".to_string(),
@@ -513,7 +516,7 @@ async fn gives_stdio_server_proxy_variables_entry_env_and_stored_secrets() {
         ),
         ("no_proxy".to_string(), "localhost".to_string()),
     ]);
-    setup.secrets = Secrets::load(&store, &name(), &[api_key], &[]).unwrap();
+    setup.values.env = expanded(&[("MODE", "from-entry"), ("API_KEY", "from-store")]);
     let connection = setup.connect().await.unwrap();
     for (variable, expected) in [
         ("HTTPS_PROXY", "http://proxy.test:3128"),
@@ -529,31 +532,16 @@ async fn gives_stdio_server_proxy_variables_entry_env_and_stored_secrets() {
 }
 
 #[tokio::test]
-async fn sends_entry_headers_and_stored_header_secrets_to_http_server() {
+async fn sends_expanded_entry_headers_to_http_server() {
     let fixture = serve_http(Mode::Modern).await.unwrap();
-    let store = MemoryStore::default();
-    let authorization = HeaderName::parse("Authorization").unwrap();
-    store
-        .save(
-            &CredentialKey::new(name(), SecretKind::Header(authorization.clone())),
-            &Secret::new("Bearer from-store".into()),
-        )
-        .unwrap();
-    let mut setup = Setup::new(http_server(&fixture.url, &[("X-Org", "acme")]));
-    setup.secrets = Secrets::load(&store, &name(), &[], &[authorization]).unwrap();
+    let mut setup = Setup::new(http_server(&fixture.url, &[]));
+    setup.values.headers = expanded(&[("Authorization", "Bearer from-store"), ("X-Org", "acme")]);
     let connection = setup.connect().await.unwrap();
     let header =
         |name: &'static str| call_text(&connection, "header", serde_json::json!({"name": name}));
     assert_eq!(header("authorization").await, "Bearer from-store");
     assert_eq!(header("x-org").await, "acme");
     connection.close().await;
-}
-
-#[tokio::test]
-async fn leaves_out_secret_names_with_no_stored_value() {
-    let store = MemoryStore::default();
-    let secrets = Secrets::load(&store, &name(), &[EnvName::parse("NONE").unwrap()], &[]).unwrap();
-    assert!(secrets.env.is_empty());
 }
 
 #[tokio::test]

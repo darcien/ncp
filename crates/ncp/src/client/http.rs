@@ -12,10 +12,7 @@ use rmcp::transport::{
     streamable_http_client::{StreamableHttpClientTransportConfig, StreamableHttpError},
 };
 
-use crate::{
-    config::RemoteServer,
-    credential::{self, Secret},
-};
+use crate::config::{Expanded, RemoteServer};
 
 #[derive(Debug, thiserror::Error)]
 pub enum HttpError {
@@ -43,19 +40,15 @@ pub fn client() -> Result<reqwest::Client, HttpError> {
     Ok(builder().build()?)
 }
 
-/// The headers of the entry, then the header secrets from the credential
-/// store. A secret value is marked sensitive, so debug output hides it.
+/// The expanded headers of the entry. A value from `${NAME}` is marked
+/// sensitive, so debug output hides it.
 fn headers(
-    config: &BTreeMap<String, String>,
-    secrets: &BTreeMap<credential::HeaderName, Secret>,
+    config: &BTreeMap<String, Expanded>,
 ) -> Result<HashMap<HeaderName, HeaderValue>, HttpError> {
-    let plain = config
+    config
         .iter()
-        .map(|(name, value)| header(name, value, false));
-    let secret = secrets
-        .iter()
-        .map(|(name, secret)| header(name.as_str(), secret.expose(), true));
-    plain.chain(secret).collect()
+        .map(|(name, expanded)| header(name, &expanded.value, expanded.from_variable))
+        .collect()
 }
 
 fn header(
@@ -71,8 +64,8 @@ fn header(
     Ok((header_name, header_value))
 }
 
-/// Makes the transport for one connection. The headers are the headers of
-/// the entry and the header secrets.
+/// Makes the transport for one connection, with the expanded headers of the
+/// entry.
 ///
 /// # Errors
 ///
@@ -80,10 +73,10 @@ fn header(
 pub fn transport(
     http: &reqwest::Client,
     server: &RemoteServer,
-    secrets: &BTreeMap<credential::HeaderName, Secret>,
+    expanded: &BTreeMap<String, Expanded>,
 ) -> Result<StreamableHttpClientTransport<reqwest::Client>, HttpError> {
     let config = StreamableHttpClientTransportConfig::with_uri(server.url.as_str())
-        .custom_headers(headers(&server.headers, secrets)?);
+        .custom_headers(headers(expanded)?);
     Ok(StreamableHttpClientTransport::with_client(
         http.clone(),
         config,
@@ -106,17 +99,20 @@ pub fn needs_authorization(error: &DynamicTransportError) -> bool {
 mod tests {
     use super::*;
 
+    fn expanded(value: &str, from_variable: bool) -> Expanded {
+        Expanded {
+            value: value.into(),
+            from_variable,
+        }
+    }
+
     #[test]
-    fn secret_header_replaces_entry_header_and_is_hidden_in_debug_output() {
+    fn header_from_a_variable_is_hidden_in_debug_output() {
         let config = BTreeMap::from([
-            ("X-Org".to_string(), "o".to_string()),
-            ("Authorization".to_string(), "none".to_string()),
+            ("X-Org".to_string(), expanded("o", false)),
+            ("Authorization".to_string(), expanded("Bearer t0ken", true)),
         ]);
-        let secrets = BTreeMap::from([(
-            credential::HeaderName::parse("Authorization").unwrap(),
-            Secret::new("Bearer t0ken".into()),
-        )]);
-        let headers = headers(&config, &secrets).unwrap();
+        let headers = headers(&config).unwrap();
         let authorization = &headers[&HeaderName::from_static("authorization")];
         assert_eq!(authorization, "Bearer t0ken");
         assert!(authorization.is_sensitive());
@@ -126,10 +122,7 @@ mod tests {
 
     #[test]
     fn rejects_header_value_with_line_break() {
-        let config = BTreeMap::from([("X".to_string(), "a\r\nB: c".to_string())]);
-        assert!(matches!(
-            headers(&config, &BTreeMap::new()),
-            Err(HttpError::HeaderValue(_))
-        ));
+        let config = BTreeMap::from([("X".to_string(), expanded("a\r\nB: c", false))]);
+        assert!(matches!(headers(&config), Err(HttpError::HeaderValue(_))));
     }
 }

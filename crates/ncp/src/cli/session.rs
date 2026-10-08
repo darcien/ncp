@@ -15,7 +15,7 @@ use super::{
     ui::Ui,
 };
 use crate::{
-    client::{self, ConnectError, Connection, Launch, RequestError, RequestLimits, Secrets},
+    client::{self, ConnectError, Connection, Launch, RequestError, RequestLimits},
     config::{self, Config, EntryError, LookupError, Server, Target, Transport},
     era::EraCache,
     era_file,
@@ -166,13 +166,23 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
     });
     let target = server.target.clone();
     let cached = cache.lookup(&server.name, &target).cloned();
+    let values = server.expand_values(context.env).map_err(|error| {
+        let failure = Failure::usage(error.to_string()).server(name);
+        match error {
+            EntryError::Variable {
+                error: ExpandError::Unset(variable),
+                ..
+            } => failure.hint(format!("export {variable}=<value>")),
+            _ => failure,
+        }
+    })?;
     let http = client::http::client()
         .map_err(|error| Failure::protocol(error.to_string()).server(name))?;
     let launch = Launch {
         server,
         cached_era: cached.as_ref(),
         base_env: context.env,
-        secrets: &Secrets::default(),
+        values: &values,
         http: &http,
         probe_timeout: client::PROBE_TIMEOUT,
         connect_limit: client::CONNECT_LIMIT,

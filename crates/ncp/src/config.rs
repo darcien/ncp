@@ -4,13 +4,13 @@
 //! Unknown keys give warnings and not errors. An invalid entry does not stop
 //! the other entries: its error shows when the user selects that server.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::{
-    expand::{Env, ExpandError, expand},
+    expand::{self, Env, ExpandError, Template, expand},
     server::{NameError, ServerName, ServerUrl, UrlError},
 };
 
@@ -51,6 +51,77 @@ impl Server {
     }
 }
 
+/// One `env` or `headers` value after expansion. A value from `${NAME}` can
+/// be a secret, so `Debug` hides it, and HTTP marks it sensitive.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Expanded {
+    pub value: String,
+    pub from_variable: bool,
+}
+
+impl std::fmt::Debug for Expanded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.from_variable {
+            f.write_str("Expanded(<hidden>)")
+        } else {
+            write!(f, "Expanded({:?})", self.value)
+        }
+    }
+}
+
+/// The `env` values of a stdio server or the `headers` of an HTTP server,
+/// after expansion.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Values {
+    pub env: BTreeMap<String, Expanded>,
+    pub headers: BTreeMap<String, Expanded>,
+}
+
+impl Server {
+    /// The names in the `env` or `headers` values, in order. Their values
+    /// can come from a credential store.
+    #[must_use]
+    pub fn value_names(&self) -> BTreeSet<&str> {
+        self.templates()
+            .flat_map(|(_, _, template)| template.names())
+            .collect()
+    }
+
+    /// Expands the `env` or `headers` values with `values`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error that names the field when a name has no value.
+    pub fn expand_values(&self, values: &Env) -> Result<Values, EntryError> {
+        let mut expanded = Values::default();
+        for (field, key, template) in self.templates() {
+            let value = Expanded {
+                value: template
+                    .expand(values)
+                    .map_err(|error| EntryError::Variable {
+                        field: format!("{field}.{key}"),
+                        error,
+                    })?,
+                from_variable: template.has_variables(),
+            };
+            match field {
+                "env" => expanded.env.insert(key.clone(), value),
+                _ => expanded.headers.insert(key.clone(), value),
+            };
+        }
+        Ok(expanded)
+    }
+
+    fn templates(&self) -> impl Iterator<Item = (&'static str, &String, &Template)> {
+        let (field, map) = match &self.transport {
+            Transport::Stdio(stdio) => ("env", &stdio.env),
+            Transport::Http(remote) | Transport::Sse(remote) => ("headers", &remote.headers),
+        };
+        map.iter()
+            .map(move |(key, template)| (field, key, template))
+    }
+}
+
 /// The parts of a server configuration that identify the server process or
 /// origin. Environment values and headers are not part of it: they can hold
 /// secrets, and they do not change the server program.
@@ -79,14 +150,16 @@ pub enum Transport {
 pub struct StdioServer {
     pub command: String,
     pub args: Vec<String>,
-    pub env: BTreeMap<String, String>,
+    /// Not expanded: a value can come from a credential store.
+    pub env: BTreeMap<String, Template>,
     pub cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteServer {
     pub url: ServerUrl,
-    pub headers: BTreeMap<String, String>,
+    /// Not expanded: a value can come from a credential store.
+    pub headers: BTreeMap<String, Template>,
 }
 
 /// An unknown key. `server` is `None` for a key at the top level.
@@ -154,6 +227,7 @@ pub enum LookupError {
 pub struct Config {
     entries: BTreeMap<String, Result<Server, EntryError>>,
     warnings: Vec<Warning>,
+    variables: BTreeSet<String>,
 }
 
 impl Config {
@@ -187,6 +261,24 @@ impl Config {
     #[must_use]
     pub fn warnings(&self) -> &[Warning] {
         &self.warnings
+    }
+
+    /// The names of all `${NAME}` in `env` and `headers` values, also in
+    /// invalid entries. Only these values can come from a store.
+    #[must_use]
+    pub fn variables(&self) -> &BTreeSet<String> {
+        &self.variables
+    }
+}
+
+/// The names of the variables in each string value of a JSON value. Keys
+/// do not expand, so their names do not count.
+fn variables_in(value: &Value, found: &mut BTreeSet<String>) {
+    match value {
+        Value::String(text) => found.extend(expand::names(text).into_iter().map(str::to_string)),
+        Value::Array(items) => items.iter().for_each(|item| variables_in(item, found)),
+        Value::Object(map) => map.values().for_each(|item| variables_in(item, found)),
+        _ => {}
     }
 }
 
@@ -224,7 +316,25 @@ pub fn parse(text: &str, env: &Env) -> Result<Config, ConfigError> {
         .into_iter()
         .map(|(name, entry, _)| (name, entry))
         .collect();
-    Ok(Config { entries, warnings })
+    let mut variables = BTreeSet::new();
+    // Only the field of the transport expands: `headers` in a stdio entry
+    // is an unknown key.
+    servers
+        .values()
+        .filter_map(Value::as_object)
+        .filter_map(|entry| {
+            let field = match kind_of(entry).ok()? {
+                Kind::Stdio => "env",
+                Kind::Http | Kind::Sse => "headers",
+            };
+            entry.get(field)
+        })
+        .for_each(|values| variables_in(values, &mut variables));
+    Ok(Config {
+        entries,
+        warnings,
+        variables,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -328,7 +438,7 @@ fn stdio(object: &Map<String, Value>, env: &Env) -> Result<StdioServer, EntryErr
     Ok(StdioServer {
         command,
         args: strings(object, "args", env)?,
-        env: string_map(object, "env", env)?,
+        env: template_map(object, "env")?,
         cwd: string(object, "cwd", env)?,
     })
 }
@@ -337,7 +447,7 @@ fn remote(object: &Map<String, Value>, env: &Env) -> Result<RemoteServer, EntryE
     let url = string(object, "url", env)?.ok_or(EntryError::Missing("url"))?;
     Ok(RemoteServer {
         url: ServerUrl::parse(&url)?,
-        headers: string_map(object, "headers", env)?,
+        headers: template_map(object, "headers")?,
     })
 }
 
@@ -370,22 +480,24 @@ fn strings(object: &Map<String, Value>, field: &str, env: &Env) -> Result<Vec<St
     }
 }
 
-fn string_map(
+/// A map of values that expand only when the server starts. The syntax of
+/// each value is checked now.
+fn template_map(
     object: &Map<String, Value>,
     field: &str,
-    env: &Env,
-) -> Result<BTreeMap<String, String>, EntryError> {
+) -> Result<BTreeMap<String, Template>, EntryError> {
     match object.get(field) {
         None => Ok(BTreeMap::new()),
         Some(Value::Object(map)) => map
             .iter()
             .map(|(key, value)| {
                 let field = format!("{field}.{key}");
-                value
+                let text = value
                     .as_str()
-                    .ok_or_else(|| wrong_type(&field, "a string"))
-                    .and_then(|text| expand_field(&field, text, env))
-                    .map(|text| (key.clone(), text))
+                    .ok_or_else(|| wrong_type(&field, "a string"))?;
+                Template::parse(text)
+                    .map(|template| (key.clone(), template))
+                    .map_err(|error| EntryError::Variable { field, error })
             })
             .collect(),
         Some(_) => Err(wrong_type(field, "an object of strings")),
@@ -434,7 +546,7 @@ mod tests {
             Transport::Stdio(StdioServer {
                 command: "srv".into(),
                 args: vec!["-v".into()],
-                env: BTreeMap::from([("A".into(), "1".into())]),
+                env: BTreeMap::from([("A".into(), Template::parse("1").unwrap())]),
                 cwd: Some(".".into()),
             })
         );
@@ -442,7 +554,7 @@ mod tests {
             config.server("remote").unwrap().transport,
             Transport::Http(RemoteServer {
                 url: ServerUrl::parse("https://example.com/mcp").unwrap(),
-                headers: BTreeMap::from([("X-Org".into(), "o".into())]),
+                headers: BTreeMap::from([("X-Org".into(), Template::parse("o").unwrap())]),
             })
         );
         assert_eq!(config.warnings(), &[]);
@@ -513,7 +625,7 @@ mod tests {
     }
 
     #[test]
-    fn expands_variables_in_values_but_not_in_keys() {
+    fn expands_command_args_cwd_and_url_but_keeps_env_and_headers_for_later() {
         let config = load(
             r#"{"mcpServers": {
                 "s": {"command": "${HOME}/bin/srv", "args": ["--port=${PORT}"],
@@ -526,13 +638,19 @@ mod tests {
         };
         assert_eq!(stdio.command, "/home/u/bin/srv");
         assert_eq!(stdio.args, ["--port=8080"]);
-        assert_eq!(stdio.env.get("${HOME}").map(String::as_str), Some("8080"));
+        assert_eq!(
+            stdio.env.get("${HOME}").map(Template::as_str),
+            Some("${PORT}")
+        );
         assert_eq!(stdio.cwd.as_deref(), Some("/home/u"));
         let Transport::Http(remote) = &config.server("r").unwrap().transport else {
             panic!("not http")
         };
         assert_eq!(remote.url.as_str(), "http://localhost:8080/mcp");
-        assert_eq!(remote.headers.get("X").map(String::as_str), Some("/home/u"));
+        assert_eq!(
+            remote.headers.get("X").map(Template::as_str),
+            Some("${HOME}")
+        );
     }
 
     #[test]
@@ -560,21 +678,81 @@ mod tests {
     }
 
     #[test]
-    fn unset_variable_is_an_error_for_that_server_only() {
+    fn unset_variable_in_args_is_an_error_for_that_server_only() {
         let config = load(
-            r#"{"mcpServers": {"s": {"command": "srv", "env": {"T": "${MISSING}"}}, "t": {"command": "x"}}}"#,
+            r#"{"mcpServers": {"s": {"command": "srv", "args": ["${MISSING}"]}, "t": {"command": "x"}}}"#,
         );
         assert_eq!(
             config.server("s"),
             Err(LookupError::Invalid {
                 name: "s".into(),
                 error: EntryError::Variable {
-                    field: "env.T".into(),
+                    field: "args[0]".into(),
                     error: ExpandError::Unset("MISSING".into())
                 }
             })
         );
         assert!(config.server("t").is_ok());
+    }
+
+    #[test]
+    fn unset_variable_in_env_or_headers_is_not_an_error_yet() {
+        let config = load(
+            r#"{"mcpServers": {
+                "s": {"command": "srv", "env": {"T": "${MISSING}"}},
+                "r": {"type": "http", "url": "https://x/mcp", "headers": {"A": "Bearer ${KEY}"}},
+                "bad": {"command": "srv", "env": {"T": "${A-B}"}}
+            }}"#,
+        );
+        assert!(config.server("s").is_ok());
+        assert!(config.server("r").is_ok());
+        assert!(matches!(
+            config.server("bad"),
+            Err(LookupError::Invalid {
+                error: EntryError::Variable { .. },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn expands_env_values_and_marks_the_values_from_variables() {
+        let config = load(
+            r#"{"mcpServers": {"s": {"command": "srv", "env": {"A": "plain", "T": "x-${TOKEN}"}}}}"#,
+        );
+        let server = config.server("s").unwrap();
+        assert_eq!(
+            server.value_names().into_iter().collect::<Vec<_>>(),
+            ["TOKEN"]
+        );
+        let values = server
+            .expand_values(&Env::from([("TOKEN".to_string(), "s3cret".to_string())]))
+            .unwrap();
+        assert_eq!(values.env["A"].value, "plain");
+        assert!(!values.env["A"].from_variable);
+        assert_eq!(values.env["T"].value, "x-s3cret");
+        assert!(values.env["T"].from_variable);
+        assert!(!format!("{values:?}").contains("s3cret"));
+        assert_eq!(
+            server.expand_values(&Env::new()),
+            Err(EntryError::Variable {
+                field: "env.T".into(),
+                error: ExpandError::Unset("TOKEN".into())
+            })
+        );
+    }
+
+    #[test]
+    fn collects_the_variable_names_of_env_and_headers_values() {
+        let config = load(
+            r#"{"mcpServers": {
+                "s": {"command": "srv", "args": ["${PORT}"], "env": {"${KEY_NAME}": "${env:TOKEN}"}},
+                "bad": {"type": "http", "url": "https://x/${HOST}", "headers": {"A": "Bearer ${KEY}"}},
+                "other": {"command": "srv", "headers": {"A": "${NOT_READ}"}}
+            }}"#,
+        );
+        let names: Vec<&str> = config.variables().iter().map(String::as_str).collect();
+        assert_eq!(names, ["KEY", "TOKEN"]);
     }
 
     #[test]

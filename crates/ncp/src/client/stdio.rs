@@ -15,8 +15,7 @@ use tokio::{
 };
 
 use crate::{
-    config::StdioServer,
-    credential::{EnvName, Secret},
+    config::{Expanded, StdioServer},
     expand::Env,
 };
 
@@ -30,21 +29,15 @@ const MAX_LOG_LINE: u64 = 64 * 1024;
 const SIGTERM: i32 = 15;
 
 /// The environment of the server process. The server gets the environment
-/// of `ncp` (with the proxy variables), then the `env` of its entry, then
-/// its secrets from the credential store.
+/// of `ncp` (with the proxy variables), then the expanded `env` of its
+/// entry. A later value replaces an earlier value with the same name.
 #[must_use]
-pub fn child_env(
-    base: &Env,
-    config: &BTreeMap<String, String>,
-    secrets: &BTreeMap<EnvName, Secret>,
-) -> BTreeMap<String, String> {
+pub fn child_env(base: &Env, env: &BTreeMap<String, Expanded>) -> BTreeMap<String, String> {
     base.iter()
-        .chain(config.iter())
         .map(|(name, value)| (name.clone(), value.clone()))
         .chain(
-            secrets
-                .iter()
-                .map(|(name, secret)| (name.as_str().to_string(), secret.expose().to_string())),
+            env.iter()
+                .map(|(name, expanded)| (name.clone(), expanded.value.clone())),
         )
         .collect()
 }
@@ -191,21 +184,20 @@ mod tests {
     }
 
     #[test]
-    fn child_env_puts_secrets_over_entry_env_over_base_env() {
+    fn child_env_puts_entry_env_over_base_env() {
         let base = Env::from([
             ("HTTPS_PROXY".to_string(), "http://proxy:3128".to_string()),
             ("A".to_string(), "base".to_string()),
-            ("B".to_string(), "base".to_string()),
         ]);
-        let config = BTreeMap::from([
-            ("A".to_string(), "entry".to_string()),
-            ("B".to_string(), "entry".to_string()),
-        ]);
-        let secrets =
-            BTreeMap::from([(EnvName::parse("B").unwrap(), Secret::new("secret".into()))]);
-        let env = child_env(&base, &config, &secrets);
-        assert_eq!(env["HTTPS_PROXY"], "http://proxy:3128");
-        assert_eq!(env["A"], "entry");
-        assert_eq!(env["B"], "secret");
+        let env = BTreeMap::from([(
+            "A".to_string(),
+            Expanded {
+                value: "entry".into(),
+                from_variable: true,
+            },
+        )]);
+        let child = child_env(&base, &env);
+        assert_eq!(child["HTTPS_PROXY"], "http://proxy:3128");
+        assert_eq!(child["A"], "entry");
     }
 }

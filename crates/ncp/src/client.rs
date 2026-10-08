@@ -14,7 +14,7 @@
 pub mod http;
 pub mod stdio;
 
-use std::{collections::BTreeMap, fmt, time::Duration};
+use std::{fmt, time::Duration};
 
 use rmcp::{
     ClientLifecycleMode, ClientServiceExt, RoleClient,
@@ -29,12 +29,10 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    config::{Server, Target, Transport},
-    credential::{CredentialKey, EnvName, HeaderName, Secret, SecretKind},
+    config::{Server, Target, Transport, Values},
     era::{self, Era, ProtocolVersion, Startup},
     expand::Env,
     server::ServerName,
-    store::{CredentialStore, StoreError},
 };
 
 /// The time that `server/discover` gets before the fallback to
@@ -52,53 +50,14 @@ pub const REQUEST_LIMIT: Duration = Duration::from_secs(300);
 /// that does not read them must not keep `ncp` from its exit.
 const CANCEL_LIMIT: Duration = Duration::from_secs(2);
 
-/// The secrets of one server, read from the credential store.
-#[derive(Debug, Default)]
-pub struct Secrets {
-    pub env: BTreeMap<EnvName, Secret>,
-    pub headers: BTreeMap<HeaderName, Secret>,
-}
-
-impl Secrets {
-    /// Reads the named secrets. A name with no stored value is left out.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the store cannot be read.
-    pub fn load(
-        store: &dyn CredentialStore,
-        server: &ServerName,
-        env: &[EnvName],
-        headers: &[HeaderName],
-    ) -> Result<Self, StoreError> {
-        let read = |kind: SecretKind| store.load(&CredentialKey::new(server.clone(), kind));
-        let env = load_each(env, |name| read(SecretKind::Env(name)))?;
-        let headers = load_each(headers, |name| read(SecretKind::Header(name)))?;
-        Ok(Self { env, headers })
-    }
-}
-
-fn load_each<N: Clone + Ord>(
-    names: &[N],
-    read: impl Fn(N) -> Result<Option<Secret>, StoreError>,
-) -> Result<BTreeMap<N, Secret>, StoreError> {
-    names
-        .iter()
-        .filter_map(|name| {
-            read(name.clone())
-                .map(|secret| secret.map(|secret| (name.clone(), secret)))
-                .transpose()
-        })
-        .collect()
-}
-
 /// All inputs to connect to one server.
 pub struct Launch<'a> {
     pub server: &'a Server,
     pub cached_era: Option<&'a Era>,
     /// The environment for a stdio server, normally the environment of `ncp`.
     pub base_env: &'a Env,
-    pub secrets: &'a Secrets,
+    /// The `env` or `headers` values of the entry, after expansion.
+    pub values: &'a Values,
     pub http: &'a reqwest::Client,
     /// Normally [`PROBE_TIMEOUT`].
     pub probe_timeout: Duration,
@@ -300,7 +259,7 @@ async fn handshake(
     let timeout = ConnectError::Timeout(launch.connect_limit);
     let (service, process) = match &launch.server.transport {
         Transport::Stdio(server) => {
-            let env = stdio::child_env(launch.base_env, &server.env, &launch.secrets.env);
+            let env = stdio::child_env(launch.base_env, &launch.values.env);
             let (process, stdout, stdin) =
                 stdio::spawn(server, &env, launch.server_log).map_err(|source| {
                     ConnectError::Spawn {
@@ -329,7 +288,7 @@ async fn handshake(
             }
         }
         Transport::Http(server) => {
-            let transport = http::transport(launch.http, server, &launch.secrets.headers)?;
+            let transport = http::transport(launch.http, server, &launch.values.headers)?;
             let serve = info.serve_with_lifecycle(transport, lifecycle);
             match race(serve, deadline, launch.cancel).await {
                 Ended::Done(service) => (service.map_err(failed)?, None),
