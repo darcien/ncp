@@ -13,6 +13,11 @@ use serde_json::Value;
 
 use crate::credential::Secret;
 
+/// The field of the tokens item that keeps the scopes of a `403
+/// insufficient_scope` answer until the next login (design B52). rmcp
+/// ignores it.
+pub const REQUIRED_SCOPES: &str = "ncp_required_scopes";
+
 /// The client credentials that an authorization server gave to `ncp`.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

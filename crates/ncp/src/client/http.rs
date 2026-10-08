@@ -200,6 +200,21 @@ pub fn challenge(error: &DynamicTransportError) -> Option<String> {
     }
 }
 
+/// The error of the credential store of the OAuth tokens, for example a
+/// refresh whose new tokens the store cannot keep.
+#[must_use]
+pub fn token_store_error(error: &DynamicTransportError) -> Option<String> {
+    match error
+        .error
+        .downcast_ref::<StreamableHttpError<reqwest::Error>>()
+    {
+        Some(StreamableHttpError::Auth(
+            rmcp::transport::auth::AuthError::CredentialStoreError(text),
+        )) => Some(text.clone()),
+        _ => None,
+    }
+}
+
 /// The challenge of a `401` answer: the server needs a login.
 #[must_use]
 pub fn login_challenge(error: &DynamicTransportError) -> Option<String> {

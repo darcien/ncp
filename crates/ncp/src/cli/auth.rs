@@ -3,7 +3,7 @@
 //! rmcp does the protocol steps. This module chooses the client, runs the
 //! redirect, and keeps the items in the place that the user chose.
 
-use std::{io::IsTerminal, sync::Arc};
+use std::{io::IsTerminal, sync::Arc, time::Duration};
 
 use rmcp::transport::auth::{
     AuthClient, AuthError, AuthorizationManager, AuthorizationMetadata, AuthorizationRequest,
@@ -11,7 +11,7 @@ use rmcp::transport::auth::{
 };
 use serde_json::{Value, json};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncReadExt as _, AsyncWriteExt, BufReader},
     net::TcpListener,
 };
 
@@ -30,7 +30,7 @@ use crate::{
         callback::{self, RedirectUri},
         http::OAuthHttp,
         items::{self, ClientItem},
-        store::{TokenStore, parse_tokens},
+        store::{TokenStore, parse_item},
     },
     store::CredentialStore,
 };
@@ -69,9 +69,39 @@ pub(super) async fn command(context: &Context<'_>, command: AuthCommand) -> Resu
             server,
             no_browser,
             credential_store,
-        } => login(context, &server, no_browser, credential_store).await,
+        } => {
+            let limit = context.request_limit;
+            let timeout = Failure::new(
+                Exit::Auth,
+                format!("the login did not complete in {} s", limit.as_secs()),
+            )
+            .hint("give a longer limit with --timeout <SECONDS>");
+            limited(
+                context,
+                limit,
+                timeout,
+                Box::pin(login(context, &server, no_browser, credential_store)),
+            )
+            .await
+        }
         AuthCommand::Logout { server } => logout(context, &server).await,
         AuthCommand::Status { server } => status(context, server.as_deref()).await,
+    }
+}
+
+/// Runs the OAuth steps until they end, the limit passes, or Ctrl-C. Each
+/// step of rmcp has its own limit of 30 s, and discovery tries up to eight
+/// URLs, so the steps together need one limit (design C7).
+pub(super) async fn limited<T>(
+    context: &Context<'_>,
+    limit: Duration,
+    timeout: Failure,
+    work: impl Future<Output = Result<T, Failure>>,
+) -> Result<T, Failure> {
+    tokio::select! {
+        result = work => result,
+        () = context.cancel.cancelled() => Err(session::interrupted()),
+        () = tokio::time::sleep(limit) => Err(timeout),
     }
 }
 
@@ -99,6 +129,27 @@ fn auth_failure(step: &str, error: &AuthError) -> Failure {
         _ => Exit::Protocol,
     };
     Failure::new(exit, format!("{step}: {error}"))
+}
+
+/// The metadata of the authorization server, from the challenge or the
+/// well-known URLs. rmcp falls back to endpoints that it makes from the
+/// server URL; the spec has that fallback only for 2025-03-26, and it
+/// registers a client at a server that names no authorization server.
+async fn discover(
+    manager: &AuthorizationManager,
+    challenge: Option<&str>,
+) -> Result<AuthorizationMetadata, Failure> {
+    let resolution = manager
+        .resolve_metadata_from_challenge(challenge)
+        .await
+        .map_err(|error| auth_failure("OAuth discovery", &error))?;
+    if !resolution.source.is_discovered() {
+        return Err(Failure::protocol(
+            "the server names no authorization server: it has no protected resource metadata and no authorization server metadata",
+        ));
+    }
+    check_https(&resolution.metadata)?;
+    Ok(resolution.metadata)
 }
 
 /// The endpoints of the authorization server must use HTTPS, except on a
@@ -182,18 +233,15 @@ async fn login(
             .await
             .map_err(|error| auth_failure("OAuth setup", &error).server(name))?;
     let challenge = session::challenge(context, server).await?;
-    let metadata = manager
-        .resolve_metadata_from_challenge(challenge.as_deref())
+    let metadata = discover(&manager, challenge.as_deref())
         .await
-        .map_err(|error| auth_failure("OAuth discovery", &error).server(name))?
-        .metadata;
-    check_https(&metadata).map_err(|failure| failure.server(name))?;
+        .map_err(|failure| failure.server(name))?;
     let issuer = issuer_of(&metadata);
     context
         .ui
         .debug(Some(name), &format!("authorization server: {issuer}"));
     manager.set_metadata(metadata);
-    manager.set_credential_store(TokenStore::new(server.name.clone(), store.clone()));
+    manager.set_credential_store(TokenStore::new(server.name.clone(), store.clone()).fresh());
     let listener = TcpListener::bind(("127.0.0.1", 0))
         .await
         .map_err(|error| Failure::protocol(format!("cannot listen for the redirect: {error}")))?;
@@ -227,7 +275,7 @@ async fn login(
             .ui
             .warning(Some(name), &format!("cannot open a browser: {error}"));
     }
-    let callback = wait_for_redirect(context, listener, &redirect, &state, read_stdin)
+    let callback = wait_for_redirect(listener, &redirect, &state, read_stdin)
         .await
         .map_err(|failure| failure.server(name))?;
     session
@@ -243,6 +291,7 @@ async fn login(
             }
             error => auth_failure("OAuth token request", &error).server(name),
         })?;
+    remove_old_tokens(context, server, place).await;
     let granted = session.auth_manager.get_current_scopes().await;
     context.ui.result(
         || {
@@ -289,26 +338,18 @@ pub(super) async fn stored_login(
         challenge,
     } = *login;
     let name = server.name.as_str();
-    let key = CredentialKey::OAuthTokens(server.name.clone());
-    let native = secrets::native(context).await.ok();
-    let file = secrets::file(context);
-    let mut found = None;
-    for store in native.into_iter().chain([file]) {
-        let wanted = key.clone();
-        let secret = secrets::call(context, &store, move |store| store.load(&wanted))
-            .await
-            .map_err(|error| secrets::store_failure(&error).server(name))?;
-        if let Some(secret) = secret {
-            found = Some((store, secret));
-            break;
-        }
-    }
-    let Some((store, secret)) = found else {
+    let places = token_places(context)
+        .await
+        .map_err(|failure| failure.server(name))?;
+    let Some((store, secret)) = find_tokens(context, &places, server)
+        .await
+        .map_err(|failure| failure.server(name))?
+    else {
         return Ok(None);
     };
-    let tokens =
-        parse_tokens(&secret).map_err(|error| Failure::protocol(error.to_string()).server(name))?;
-    let client_id = tokens.client_id.clone();
+    let item =
+        parse_item(&secret).map_err(|error| Failure::protocol(error.to_string()).server(name))?;
+    let client_id = item.tokens.client_id.clone();
     context.ui.debug(Some(name), "read the stored OAuth tokens");
     let oauth_http = OAuthHttp::new(context.env, observer)
         .map_err(|error| Failure::protocol(error.to_string()).server(name))?;
@@ -316,17 +357,13 @@ pub(super) async fn stored_login(
         AuthorizationManager::new_with_oauth_http_client(remote.url.as_str(), Arc::new(oauth_http))
             .await
             .map_err(|error| auth_failure("OAuth setup", &error).server(name))?;
-    manager.set_credential_store(
-        TokenStore::new(server.name.clone(), store.clone()).with_tokens(tokens),
-    );
+    manager
+        .set_credential_store(TokenStore::new(server.name.clone(), store.clone()).with_item(item));
     // The challenge can name the protected resource metadata (RFC 9728
     // §5.1). With metadata in place, rmcp does no discovery of its own.
-    let metadata = manager
-        .resolve_metadata_from_challenge(challenge)
+    let metadata = discover(&manager, challenge)
         .await
-        .map_err(|error| auth_failure("OAuth discovery", &error).server(name))?
-        .metadata;
-    check_https(&metadata).map_err(|failure| failure.server(name))?;
+        .map_err(|failure| failure.server(name))?;
     manager.set_metadata(metadata);
     let usable = manager
         .initialize_from_store()
@@ -361,10 +398,6 @@ pub(super) async fn stored_login(
     )))
 }
 
-/// The field of the tokens item that keeps the scopes of a `403
-/// insufficient_scope` answer until the next login. rmcp ignores it.
-const REQUIRED_SCOPES: &str = "ncp_required_scopes";
-
 /// Keeps the scopes that the server asked for in a `403` answer in the
 /// tokens item, so that the next `auth login` asks for them with the
 /// scopes that the user has (requirement A9). A failure gives a warning:
@@ -391,21 +424,13 @@ async fn add_required_scopes(
     scopes: &[String],
 ) -> Result<(), Failure> {
     let key = CredentialKey::OAuthTokens(server.name.clone());
-    let native = secrets::native(context).await.ok();
-    let file = secrets::file(context);
-    for store in native.into_iter().chain([file]) {
-        let wanted = key.clone();
-        let Some(secret) = secrets::call(context, &store, move |store| store.load(&wanted))
-            .await
-            .map_err(|error| secrets::store_failure(&error))?
-        else {
-            continue;
-        };
+    let places = token_places(context).await?;
+    if let Some((store, secret)) = find_tokens(context, &places, server).await? {
         let mut tokens: Value = serde_json::from_str(secret.expose()).map_err(|error| {
             Failure::protocol(format!("the stored tokens are not JSON: {error}"))
         })?;
-        let required = union(&scope_list(&tokens[REQUIRED_SCOPES]), scopes);
-        tokens[REQUIRED_SCOPES] = json!(required);
+        let required = union(&scope_list(&tokens[items::REQUIRED_SCOPES]), scopes);
+        tokens[items::REQUIRED_SCOPES] = json!(required);
         let secret = items::to_secret("tokens", &tokens)
             .map_err(|error| Failure::protocol(error.to_string()))?;
         let saved = key.clone();
@@ -416,9 +441,47 @@ async fn add_required_scopes(
             Some(server.name.as_str()),
             &format!("kept the scopes {} for the next login", required.join(" ")),
         );
-        return Ok(());
     }
     Ok(())
+}
+
+/// The places of the tokens, in the order of the search: the native store,
+/// then the file. A host with no native store has only the file. A native
+/// store that cannot answer, for example a locked keyring, is an error that
+/// says why (design 2.4): the tokens can be there.
+async fn token_places(context: &Context<'_>) -> Result<Vec<Arc<dyn CredentialStore>>, Failure> {
+    let native = match secrets::native(context).await {
+        Ok(native) => Some(native),
+        Err(crate::store::StoreError::Unavailable(_)) => None,
+        Err(error) => return Err(secrets::store_failure(&error)),
+    };
+    Ok(native.into_iter().chain([secrets::file(context)]).collect())
+}
+
+/// The tokens item of the server from the first place that has it, with
+/// that place. The time goes to the credentials of `--timings`.
+async fn find_tokens(
+    context: &Context<'_>,
+    places: &[Arc<dyn CredentialStore>],
+    server: &Server,
+) -> Result<Option<(Arc<dyn CredentialStore>, crate::credential::Secret)>, Failure> {
+    let started = std::time::Instant::now();
+    let key = CredentialKey::OAuthTokens(server.name.clone());
+    let mut found = None;
+    for store in places {
+        let wanted = key.clone();
+        let secret = secrets::call(context, store, move |store| store.load(&wanted))
+            .await
+            .map_err(|error| secrets::store_failure(&error))?;
+        if let Some(secret) = secret {
+            found = Some((store.clone(), secret));
+            break;
+        }
+    }
+    if let Some(timings) = &context.timings {
+        timings.update(|record| super::timings::add(&mut record.credentials, started.elapsed()));
+    }
+    Ok(found)
 }
 
 fn scope_list(value: &Value) -> Vec<String> {
@@ -464,9 +527,36 @@ async fn login_scopes(
         .unwrap_or(Value::Null);
     let held = union(
         &scope_list(&stored["granted_scopes"]),
-        &scope_list(&stored[REQUIRED_SCOPES]),
+        &scope_list(&stored[items::REQUIRED_SCOPES]),
     );
     union(selected, &held)
+}
+
+/// Removes the tokens of the other place after a login. Calls read the
+/// native store first, so an old item there would hide the new tokens in
+/// the file. A failure gives a warning: the login worked.
+async fn remove_old_tokens(context: &Context<'_>, server: &Server, place: CredentialPlace) {
+    let name = server.name.as_str();
+    let other = match place {
+        CredentialPlace::Native => Ok(secrets::file(context)),
+        CredentialPlace::File => secrets::native(context).await,
+    };
+    let key = CredentialKey::OAuthTokens(server.name.clone());
+    let removed = match other {
+        Ok(store) => secrets::call(context, &store, move |store| store.delete(&key)).await,
+        Err(crate::store::StoreError::Unavailable(_)) => Ok(false),
+        Err(error) => Err(error),
+    };
+    match removed {
+        Ok(true) => context
+            .ui
+            .debug(Some(name), "removed the old tokens of the other place"),
+        Ok(false) => {}
+        Err(error) => context.ui.warning(
+            Some(name),
+            &format!("cannot remove the old tokens of the other place: {error}"),
+        ),
+    }
 }
 
 /// The client for the login, in the order of the spec (requirement A6):
@@ -570,85 +660,132 @@ fn show_url(context: &Context<'_>, server: &str, url: &str, read_stdin: bool) {
 }
 
 /// The page that the browser shows after the redirect.
-fn page(message: &str) -> String {
+fn page(status: &str, message: &str) -> String {
     let body = format!(
         "<!doctype html><title>ncp</title><p>{}</p>",
         message.replace('&', "&amp;").replace('<', "&lt;")
     );
     format!(
-        "HTTP/1.1 200 OK\r\ncontent-type: text/html; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {status}\r\ncontent-type: text/html; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
         body.len()
     )
 }
 
-/// One redirect on the listener: the URL, or `None` for another request
-/// (for example the icon of the page).
-async fn accept_redirect(
-    listener: &TcpListener,
-    port: u16,
-) -> Option<(String, tokio::net::TcpStream)> {
-    let (mut stream, _) = listener.accept().await.ok()?;
+/// The time that one connection on the listener gets to send its request
+/// line, and the longest line. A connection that sends nothing must not
+/// block the real redirect.
+const REQUEST_LINE_LIMIT: Duration = Duration::from_secs(5);
+const MAX_REQUEST_LINE: u64 = 16 * 1024;
+
+/// Reads the request line of one connection, and answers it. Gives the
+/// result only for a redirect of this login; another request gets `404`
+/// or `400`, and the wait continues.
+async fn redirect_of(
+    mut stream: tokio::net::TcpStream,
+    redirect: &RedirectUri,
+    state: &str,
+) -> Option<Result<callback::Callback, callback::CallbackError>> {
     let mut line = String::new();
-    BufReader::new(&mut stream)
-        .read_line(&mut line)
+    let mut reader = BufReader::new(&mut stream).take(MAX_REQUEST_LINE);
+    tokio::time::timeout(REQUEST_LINE_LIMIT, reader.read_line(&mut line))
         .await
+        .ok()?
         .ok()?;
     let target = line.split_whitespace().nth(1)?.to_string();
     if !target.starts_with("/callback") {
-        let _ = stream
-            .write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
-            .await;
+        let _ = stream.write_all(NOT_FOUND).await;
         return None;
     }
-    Some((format!("http://127.0.0.1:{port}{target}"), stream))
+    let url = format!("http://127.0.0.1:{}{target}", redirect.port());
+    let result = callback::parse(&url, redirect, state);
+    match &result {
+        Ok(_) => {
+            let message = "The login is complete. You can close this tab.";
+            let _ = stream.write_all(page("200 OK", message).as_bytes()).await;
+        }
+        Err(error) if error.is_for_this_login() => {
+            let message = format!("The login failed: {error}.");
+            let _ = stream.write_all(page("200 OK", &message).as_bytes()).await;
+        }
+        Err(error) => {
+            let message = format!("This redirect is not for the login that waits: {error}.");
+            let _ = stream
+                .write_all(page("400 Bad Request", &message).as_bytes())
+                .await;
+            return None;
+        }
+    }
+    Some(result)
 }
 
-/// Waits for the redirect: on the listener, or pasted on stdin. Ends at
-/// Ctrl-C and at the time limit, so that nothing waits forever.
+const NOT_FOUND: &[u8] =
+    b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
+
+/// The first redirect of this login on the listener. Each connection gets
+/// its own task, so that a slow connection cannot block another one.
+async fn from_listener(
+    listener: TcpListener,
+    redirect: &RedirectUri,
+    state: &str,
+) -> Result<callback::Callback, callback::CallbackError> {
+    let (sender, mut found) = tokio::sync::mpsc::channel(1);
+    let mut tasks = tokio::task::JoinSet::new();
+    loop {
+        tokio::select! {
+            accepted = listener.accept() => {
+                let Ok((stream, _)) = accepted else {
+                    // For example too many open files: wait, then go on.
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                };
+                let (sender, redirect, state) = (sender.clone(), redirect.clone(), state.to_string());
+                tasks.spawn(async move {
+                    if let Some(result) = redirect_of(stream, &redirect, &state).await {
+                        let _ = sender.send(result).await;
+                    }
+                });
+            }
+            Some(result) = found.recv() => return result,
+        }
+    }
+}
+
+/// The first non-empty line of stdin, read on its own thread. A blocking
+/// read on the runtime would delay the exit of `ncp` by the shutdown limit.
+async fn pasted_line() -> Option<String> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        let line = std::io::stdin()
+            .lines()
+            .map_while(Result::ok)
+            .find(|line| !line.trim().is_empty());
+        let _ = sender.send(line);
+    });
+    receiver.await.ok().flatten()
+}
+
+/// Waits for the redirect: on the listener, or pasted on stdin. A pasted
+/// URL is for this login, so each error of it ends the login.
 async fn wait_for_redirect(
-    context: &Context<'_>,
     listener: TcpListener,
     redirect: &RedirectUri,
     state: &str,
     read_stdin: bool,
 ) -> Result<callback::Callback, Failure> {
-    let port = redirect.port();
-    let from_listener = async {
-        loop {
-            if let Some((url, mut stream)) = accept_redirect(&listener, port).await {
-                let result = callback::parse(&url, redirect, state);
-                let message = match &result {
-                    Ok(_) => "The login is complete. You can close this tab.".to_string(),
-                    Err(error) => format!("The login failed: {error}."),
-                };
-                let _ = stream.write_all(page(&message).as_bytes()).await;
-                return result;
-            }
-        }
-    };
     let from_stdin = async {
         if !read_stdin {
             return std::future::pending().await;
         }
-        let mut lines = BufReader::new(tokio::io::stdin()).lines();
-        loop {
-            match lines.next_line().await {
-                Ok(Some(line)) if line.trim().is_empty() => {}
-                Ok(Some(line)) => return callback::parse(&line, redirect, state),
-                // The end of stdin: only the listener can answer now.
-                _ => return std::future::pending().await,
-            }
+        match pasted_line().await {
+            Some(line) => callback::parse(&line, redirect, state),
+            // The end of stdin: only the listener can answer now.
+            None => std::future::pending().await,
         }
     };
-    let limit = context.request_limit;
+    // The limit and Ctrl-C of the whole login apply.
     let result = tokio::select! {
-        result = from_listener => result,
+        result = from_listener(listener, redirect, state) => result,
         result = from_stdin => result,
-        () = context.cancel.cancelled() => return Err(session::interrupted()),
-        () = tokio::time::sleep(limit) => return Err(Failure::new(
-            Exit::Auth,
-            format!("the login did not complete in {} s", limit.as_secs()),
-        ).hint("give a longer limit with --timeout <SECONDS>")),
     };
     result.map_err(|error| Failure::new(Exit::Auth, error.to_string()))
 }
@@ -727,16 +864,19 @@ async fn status(context: &Context<'_>, word: Option<&str>) -> Result<(), Failure
             .filter(|server| matches!(server.transport, Transport::Http(_)))
             .collect(),
     };
-    let native = if servers.is_empty() {
-        None
+    let places = if servers.is_empty() {
+        Vec::new()
     } else {
-        secrets::native(context).await.ok()
+        token_places(context).await?
     };
-    let file = secrets::file(context);
     let mut rows = Vec::new();
     for server in servers {
-        let key = CredentialKey::OAuthTokens(server.name.clone());
-        let tokens = read_tokens(context, native.as_ref(), &file, &key).await?;
+        let tokens = match find_tokens(context, &places, server).await? {
+            Some((_, secret)) => Some(serde_json::from_str::<Value>(secret.expose()).map_err(
+                |error| Failure::protocol(format!("the stored tokens are not JSON: {error}")),
+            )?),
+            None => None,
+        };
         rows.push((server.name.to_string(), items::status(tokens.as_ref())));
     }
     context.ui.result(
@@ -751,28 +891,6 @@ async fn status(context: &Context<'_>, word: Option<&str>) -> Result<(), Failure
             })).collect::<Vec<Value>>()})
         },
     )
-}
-
-/// The tokens of the first place that has them, as JSON. No value leaves
-/// this function except through the status view.
-async fn read_tokens(
-    context: &Context<'_>,
-    native: Option<&Arc<dyn CredentialStore>>,
-    file: &Arc<dyn CredentialStore>,
-    key: &CredentialKey,
-) -> Result<Option<Value>, Failure> {
-    for store in native.into_iter().chain([file]) {
-        let wanted = key.clone();
-        let found = secrets::call(context, store, move |store| store.load(&wanted))
-            .await
-            .map_err(|error| secrets::store_failure(&error))?;
-        if let Some(secret) = found {
-            let tokens =
-                parse_tokens(&secret).map_err(|error| Failure::protocol(error.to_string()))?;
-            return Ok(serde_json::to_value(tokens).ok());
-        }
-    }
-    Ok(None)
 }
 
 fn status_text(rows: &[(String, items::Status)]) -> String {

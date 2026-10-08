@@ -80,6 +80,11 @@ impl CredentialStore for FileStore {
     }
 
     fn delete(&self, key: &CredentialKey) -> Result<bool, StoreError> {
+        // The file is opt-in (S2): a delete of a name that it does not have
+        // must not make the file.
+        if !self.read()?.secrets.contains_key(&key.account()) {
+            return Ok(false);
+        }
         let mut removed = false;
         self.change(|secrets| removed = secrets.remove(&key.account()).is_some())?;
         Ok(removed)

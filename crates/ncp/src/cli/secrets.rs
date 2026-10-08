@@ -121,7 +121,8 @@ pub(super) async fn resolve(context: &Context<'_>, server: &Server) -> Result<Va
         let started = std::time::Instant::now();
         let found = read_stored(context, &missing).await;
         if let Some(timings) = &context.timings {
-            timings.update(|record| record.credentials = Some(started.elapsed()));
+            timings
+                .update(|record| super::timings::add(&mut record.credentials, started.elapsed()));
         }
         for (name, secret, place) in found.map_err(|failure| failure.server(name_of_server))? {
             context

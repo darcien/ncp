@@ -144,6 +144,20 @@ pub enum RequestError {
 }
 
 impl ConnectError {
+    /// The error of the store of the OAuth tokens.
+    #[must_use]
+    pub fn token_store_error(&self) -> Option<String> {
+        match self {
+            Self::Handshake { source, .. } => match source.as_ref() {
+                ClientInitializeError::TransportError { error, .. } => {
+                    http::token_store_error(error)
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// The `WWW-Authenticate` challenge of a server that needs a login.
     #[must_use]
     pub fn challenge(&self) -> Option<String> {
@@ -183,6 +197,15 @@ impl RequestError {
     pub fn challenge(&self) -> Option<String> {
         match self {
             Self::Service(ServiceError::TransportSend(error)) => http::challenge(error),
+            _ => None,
+        }
+    }
+
+    /// The error of the store of the OAuth tokens.
+    #[must_use]
+    pub fn token_store_error(&self) -> Option<String> {
+        match self {
+            Self::Service(ServiceError::TransportSend(error)) => http::token_store_error(error),
             _ => None,
         }
     }
@@ -263,7 +286,7 @@ async fn probe(
     };
     let latest_legacy = ProtocolVersion::latest_legacy();
     match answer {
-        Some(Err(ConnectError::Handshake { source, .. })) if is_json_rpc_error(&source) => {
+        Some(Err(ConnectError::Handshake { source, .. })) if is_legacy_answer(&source) => {
             initialize(launch, latest_legacy, Phase::Initialize, deadline).await
         }
         Some(result) => result,
@@ -436,9 +459,14 @@ fn era_of(service: &Service) -> Result<Era, ConnectError> {
     })
 }
 
-/// A correlated JSON-RPC error to the probe means a legacy server.
-fn is_json_rpc_error(error: &ClientInitializeError) -> bool {
-    matches!(error, ClientInitializeError::JsonRpcError(_))
+/// A correlated JSON-RPC error to the probe means a legacy server. So does
+/// an answer that is not a discover result: a legacy server can answer an
+/// unknown method with an empty result.
+fn is_legacy_answer(error: &ClientInitializeError) -> bool {
+    matches!(
+        error,
+        ClientInitializeError::JsonRpcError(_) | ClientInitializeError::ExpectedInitResult(_)
+    )
 }
 
 fn to_rmcp(version: &ProtocolVersion) -> rmcp::model::ProtocolVersion {

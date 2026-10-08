@@ -45,6 +45,16 @@ pub struct Callback {
     pub iss: Option<String>,
 }
 
+impl CallbackError {
+    /// True when the redirect is for this login: it has the state of the
+    /// login. The listener ignores a redirect that is not, because any
+    /// local program or web page can send one.
+    #[must_use]
+    pub fn is_for_this_login(&self) -> bool {
+        matches!(self, Self::Refused { .. } | Self::Missing("code"))
+    }
+}
+
 impl fmt::Debug for Callback {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Callback")
@@ -100,15 +110,17 @@ pub fn parse(text: &str, redirect: &RedirectUri, state: &str) -> Result<Callback
             .find(|(key, _)| key == name)
             .map(|(_, value)| value.into_owned())
     };
+    // The state comes first: an error response has the state too (RFC 6749
+    // §4.1.2.1), and a redirect of another login must not end this one.
+    let found_state = find("state").ok_or(CallbackError::Missing("state"))?;
+    if found_state != state {
+        return Err(CallbackError::WrongState);
+    }
     if let Some(error) = find("error") {
         return Err(CallbackError::Refused {
             error,
             description: find("error_description"),
         });
-    }
-    let found_state = find("state").ok_or(CallbackError::Missing("state"))?;
-    if found_state != state {
-        return Err(CallbackError::WrongState);
     }
     Ok(Callback {
         code: find("code").ok_or(CallbackError::Missing("code"))?,
@@ -189,6 +201,24 @@ mod tests {
             error.to_string(),
             "the authorization server refused the login: access_denied (no consent)"
         );
+    }
+
+    #[test]
+    fn error_of_another_login_is_not_for_this_login() {
+        let forged = parse(
+            "http://127.0.0.1:4711/callback?error=access_denied",
+            &redirect(),
+            "s1",
+        )
+        .unwrap_err();
+        assert!(!forged.is_for_this_login(), "{forged:?}");
+        let refused = parse(
+            "http://127.0.0.1:4711/callback?error=access_denied&state=s1",
+            &redirect(),
+            "s1",
+        )
+        .unwrap_err();
+        assert!(refused.is_for_this_login(), "{refused:?}");
     }
 
     #[test]

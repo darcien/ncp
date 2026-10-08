@@ -1438,3 +1438,107 @@ async fn request_that_needs_a_login_after_an_open_handshake_uses_the_stored_logi
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert_eq!(text_of(&run.stdout()), "hi");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_ignores_idle_connections_and_redirects_of_another_login() {
+    use std::io::{BufRead as _, Write as _};
+    let (auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    let home = Home::new("login-forged");
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
+    let mut child = Command::new(NCP)
+        .args(LOGIN_TO_FILE)
+        .env_clear()
+        .envs(home.env.iter().cloned())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stderr = std::io::BufReader::new(child.stderr.take().unwrap());
+    let url = loop {
+        let mut line = String::new();
+        assert_ne!(stderr.read_line(&mut line).unwrap(), 0, "no login URL");
+        let value: Value = serde_json::from_str(&line).unwrap();
+        if let Some(url) = value["login"]["url"].as_str() {
+            break url.to_string();
+        }
+    };
+    let browser = ncp::client::http::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let answer = browser.get(&url).send().await.unwrap();
+    let location = answer.headers()["location"].to_str().unwrap().to_string();
+    let callback = url::Url::parse(&location).unwrap();
+    let origin = format!("127.0.0.1:{}", callback.port().unwrap());
+    // A connection that sends nothing, and a redirect of another login.
+    let _idle = std::net::TcpStream::connect(&origin).unwrap();
+    let mut forged = std::net::TcpStream::connect(&origin).unwrap();
+    write!(
+        forged,
+        "GET /callback?error=access_denied&state=other HTTP/1.1\r\n\r\n"
+    )
+    .unwrap();
+    let mut answer = String::new();
+    std::io::BufReader::new(forged)
+        .read_line(&mut answer)
+        .unwrap();
+    assert!(answer.contains("400"), "{answer}");
+    let real = browser.get(&location).send().await.unwrap();
+    assert_eq!(real.status(), 200);
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(auth.record().code_grants, 1);
+}
+
+fn keychain_calls(home: &Home) -> String {
+    std::fs::read_to_string(home.root.join("keychain/calls.log")).unwrap_or_default()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn server_with_no_login_never_opens_the_native_store() {
+    let fixture = serve_http(Mode::Modern).await.unwrap();
+    let home = Home::new("no-store-open").with_fake_keychain();
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(keychain_calls(&home), "");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_to_the_native_store_and_refresh_write_back_there() {
+    let (auth, fixture) = oauth_fixture(AuthSettings {
+        expires_in: 5,
+        ..AuthSettings::default()
+    })
+    .await;
+    let home = oauth_home("native-login", &fixture.url).with_fake_keychain();
+    let run = home.run(&["auth", "login", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(run.stdout()["place"], "native");
+    let items = || std::fs::read_to_string(home.root.join("keychain/items.json")).unwrap();
+    let before = items();
+    assert!(before.contains("oauth/web/tokens") && before.contains("oauth/web/client"));
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(auth.record().refresh_grants >= 1);
+    assert_ne!(items(), before, "the refresh writes the native item");
+    assert!(!home.root.join("state/ncp/credentials.json").exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn native_store_that_cannot_answer_gives_its_reason_and_not_a_login_hint() {
+    let (_auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    let home = oauth_home("native-locked", &fixture.url).with_fake_keychain();
+    assert_eq!(home.run(&["auth", "login", "web"]).code(), 0);
+    std::fs::write(home.root.join("keychain/fail"), "36").unwrap();
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 4, "{}", run.describe());
+    let error = run.error();
+    assert_ne!(error["hint"], "ncp auth login web", "{error}");
+    assert!(
+        !error["message"].as_str().unwrap().contains("needs a login"),
+        "{error}"
+    );
+}

@@ -206,7 +206,7 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
                 observer: &prepared.observer,
                 challenge: challenge.as_deref(),
             };
-            let Some(authorized) = super::auth::stored_login(context, &login).await? else {
+            let Some(authorized) = stored_login(context, &login).await? else {
                 return Err(connect_failure(context.env, server, &error));
             };
             let launch = Launch {
@@ -220,6 +220,27 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
     .map_err(|error| connect_failure(context.env, server, &error))?;
     prepared.save_era(context, server, connection.era());
     Ok(connection)
+}
+
+/// The stored login, within the connect limit and Ctrl-C: the OAuth steps
+/// (discovery, a refresh) have the limit of the connect (design C7).
+async fn stored_login(
+    context: &Context<'_>,
+    login: &super::auth::StoredLogin<'_>,
+) -> Result<Option<client::http::Authorized>, Failure> {
+    let limit = client::CONNECT_LIMIT;
+    let timeout = Failure::protocol(format!(
+        "the OAuth discovery did not complete in {} s",
+        limit.as_secs()
+    ))
+    .server(login.server.name.as_str());
+    super::auth::limited(
+        context,
+        limit,
+        timeout,
+        Box::pin(super::auth::stored_login(context, login)),
+    )
+    .await
 }
 
 /// Connects with the stored login of an http server. A server that let a
@@ -250,7 +271,7 @@ pub async fn open_with_login(
         observer: &prepared.observer,
         challenge,
     };
-    let Some(authorized) = super::auth::stored_login(context, &login).await? else {
+    let Some(authorized) = stored_login(context, &login).await? else {
         return Err(needs_login());
     };
     let launch = Launch {
@@ -309,8 +330,10 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
     ui.debug(Some(name), &cached_era_text(cached.as_ref()));
     let values = super::secrets::resolve(context, server).await?;
     let shown = server.clone();
+    // The server URL shows as the file writes it; each other URL, for
+    // example of OAuth, with its secrets hidden.
     let observer = diagnostics::observer(ui, name, context.timings.clone(), move |url| {
-        hide_expanded_url(&shown, url.to_string())
+        crate::redact::url(&hide_expanded_url(&shown, url.to_string()))
     });
     // Only an http server needs the HTTP client. Thus a bad SSL_CERT_FILE
     // does not stop a stdio server.
@@ -398,6 +421,9 @@ fn route_text(env: &Env, server: &Server, remote: &config::RemoteServer) -> Stri
 }
 
 fn connect_failure(env: &Env, server: &Server, error: &ConnectError) -> Failure {
+    if let Some(text) = error.token_store_error() {
+        return token_store_failure(server, &text);
+    }
     let exit = match error {
         ConnectError::Cancelled => return interrupted().server(server.name.as_str()),
         _ if error.needs_authorization() => Exit::Auth,
@@ -494,7 +520,19 @@ pub fn interrupted() -> Failure {
 
 /// The failure of a request after the connect.
 #[must_use]
+/// The store of the OAuth tokens failed, for example at the save of a
+/// refresh: a locked keyring, or a token set longer than the line of
+/// `security` (design B51). The file can keep the tokens.
+fn token_store_failure(server: &Server, text: &str) -> Failure {
+    Failure::new(Exit::Auth, format!("cannot keep the OAuth tokens: {text}"))
+        .server(server.name.as_str())
+        .hint(format!("{} --credential-store file", login_hint(server)))
+}
+
 pub fn request_failure(server: &Server, method: &str, error: &RequestError) -> Failure {
+    if let Some(text) = error.token_store_error() {
+        return token_store_failure(server, &text);
+    }
     let failure = match error {
         RequestError::Cancelled => interrupted(),
         RequestError::Timeout(_) => Failure::protocol(format!("{method}: {error}"))
