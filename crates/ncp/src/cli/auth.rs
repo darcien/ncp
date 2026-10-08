@@ -235,10 +235,12 @@ async fn login(
     );
     let http = OAuthHttp::new(context.env, &observer)
         .map_err(|error| Failure::protocol(error.to_string()).server(name))?;
-    let mut manager =
-        AuthorizationManager::new_with_oauth_http_client(remote.url.as_str(), Arc::new(http))
-            .await
-            .map_err(|error| auth_failure("OAuth setup", &error).server(name))?;
+    let mut manager = AuthorizationManager::new_with_oauth_http_client(
+        remote.url.without_query(),
+        Arc::new(http),
+    )
+    .await
+    .map_err(|error| auth_failure("OAuth setup", &error).server(name))?;
     let challenge = session::challenge(context, server).await?;
     let metadata = discover(&manager, challenge.as_deref())
         .await
@@ -291,6 +293,12 @@ async fn login(
         .map_err(|error| match error {
             // For example a token set that is too long for the Keychain
             // through `security`.
+            AuthError::CredentialStoreError(text)
+                if crate::oauth::store::file_failure(&text).is_some() =>
+            {
+                let text = crate::oauth::store::file_failure(&text).unwrap_or_default();
+                Failure::protocol(format!("cannot keep the tokens: {text}")).server(name)
+            }
             AuthError::CredentialStoreError(_) if place == CredentialPlace::Native => {
                 Failure::new(Exit::Auth, format!("cannot keep the tokens: {error}"))
                     .hint(format!("ncp auth login {name} --credential-store file"))
@@ -312,6 +320,15 @@ async fn login(
         },
     )?;
     Ok(server.name.clone())
+}
+
+/// The lock file of the refresh of one server, next to the credential
+/// file. It is empty; the lock is the only content.
+fn refresh_lock(context: &Context<'_>, server: &ServerName) -> std::path::PathBuf {
+    context
+        .paths
+        .credential_file
+        .with_file_name(format!("oauth-{}.lock", server.as_str()))
 }
 
 /// The inputs of [`stored_login`].
@@ -353,12 +370,17 @@ pub(super) async fn stored_login(
     context.ui.debug(Some(name), "read the stored OAuth tokens");
     let oauth_http = OAuthHttp::new(context.env, observer)
         .map_err(|error| Failure::protocol(error.to_string()).server(name))?;
-    let mut manager =
-        AuthorizationManager::new_with_oauth_http_client(remote.url.as_str(), Arc::new(oauth_http))
-            .await
-            .map_err(|error| auth_failure("OAuth setup", &error).server(name))?;
-    manager
-        .set_credential_store(TokenStore::new(server.name.clone(), store.clone()).with_item(item));
+    let mut manager = AuthorizationManager::new_with_oauth_http_client(
+        remote.url.without_query(),
+        Arc::new(oauth_http),
+    )
+    .await
+    .map_err(|error| auth_failure("OAuth setup", &error).server(name))?;
+    manager.set_credential_store(
+        TokenStore::new(server.name.clone(), store.clone())
+            .with_item(item)
+            .with_refresh_lock(refresh_lock(context, &server.name)),
+    );
     // The challenge can name the protected resource metadata (RFC 9728
     // §5.1). With metadata in place, rmcp does no discovery of its own.
     let metadata = discover(&manager, challenge)
@@ -463,40 +485,78 @@ pub(super) async fn find_tokens(
     context: &Context<'_>,
     server: &Server,
 ) -> Result<Option<FoundTokens>, Failure> {
-    let started = std::time::Instant::now();
-    let found = search_tokens(context, server).await;
-    if let Some(timings) = &context.timings {
-        timings.update(|record| super::timings::add(&mut record.credentials, started.elapsed()));
-    }
-    found.map_err(|failure| failure.server(server.name.as_str()))
+    TokenPlaces::open(context).await.find(context, server).await
 }
 
-async fn search_tokens(
-    context: &Context<'_>,
-    server: &Server,
-) -> Result<Option<FoundTokens>, Failure> {
-    let key = CredentialKey::OAuthTokens(server.name.clone());
-    let (native, mut down) = match secrets::native(context).await {
-        Ok(native) => (Some(native), None),
-        Err(crate::store::StoreError::Unavailable(_)) => (None, None),
-        Err(error) => (None, Some(error)),
-    };
-    for store in native.into_iter().chain([secrets::file(context)]) {
-        let wanted = key.clone();
-        match secrets::call(context, &store, move |store| store.load(&wanted)).await {
-            Ok(Some(secret)) => return Ok(Some((store, secret))),
-            Ok(None) => {}
-            Err(crate::store::StoreError::Interrupted) => return Err(session::interrupted()),
-            Err(error) if down.is_none() && secrets::store_is_down(&error) => down = Some(error),
-            Err(error) => return Err(secrets::store_failure(&error)),
+/// The places of the tokens for one command. A native store that cannot
+/// answer is kept as such, so that the search for the next server does
+/// not wait for the store limit again.
+pub(super) struct TokenPlaces {
+    native: Option<Arc<dyn CredentialStore>>,
+    down: Option<crate::store::StoreError>,
+    file: Arc<dyn CredentialStore>,
+}
+
+impl TokenPlaces {
+    pub(super) async fn open(context: &Context<'_>) -> Self {
+        let (native, down) = match secrets::native(context).await {
+            Ok(native) => (Some(native), None),
+            Err(crate::store::StoreError::Unavailable(_)) => (None, None),
+            Err(error) => (None, Some(error)),
+        };
+        Self {
+            native,
+            down,
+            file: secrets::file(context),
         }
     }
-    match down {
-        Some(error) => Err(secrets::store_failure(&error).hint(format!(
-            "ncp auth login {} --credential-store file",
-            super::render::shell_word(server.name.as_str())
-        ))),
-        None => Ok(None),
+
+    /// The tokens of the server, timed for the credentials of `--timings`.
+    pub(super) async fn find(
+        &mut self,
+        context: &Context<'_>,
+        server: &Server,
+    ) -> Result<Option<FoundTokens>, Failure> {
+        let started = std::time::Instant::now();
+        let found = self.search(context, server).await;
+        if let Some(timings) = &context.timings {
+            timings
+                .update(|record| super::timings::add(&mut record.credentials, started.elapsed()));
+        }
+        found.map_err(|failure| failure.server(server.name.as_str()))
+    }
+
+    async fn search(
+        &mut self,
+        context: &Context<'_>,
+        server: &Server,
+    ) -> Result<Option<FoundTokens>, Failure> {
+        let key = CredentialKey::OAuthTokens(server.name.clone());
+        if let Some(native) = self.native.clone() {
+            let wanted = key.clone();
+            match secrets::call(context, &native, move |store| store.load(&wanted)).await {
+                Ok(Some(secret)) => return Ok(Some((native, secret))),
+                Ok(None) => {}
+                Err(crate::store::StoreError::Interrupted) => return Err(session::interrupted()),
+                Err(error) if secrets::store_is_down(&error) => {
+                    self.native = None;
+                    self.down = Some(error);
+                }
+                Err(error) => return Err(secrets::store_failure(&error)),
+            }
+        }
+        let file = self.file.clone();
+        let found = secrets::call(context, &file, move |store| store.load(&key))
+            .await
+            .map_err(|error| secrets::store_failure(&error))?;
+        match (found, &self.down) {
+            (Some(secret), _) => Ok(Some((file, secret))),
+            (None, Some(error)) => Err(secrets::store_failure(error).hint(format!(
+                "ncp auth login {} --credential-store file",
+                super::render::shell_word(server.name.as_str())
+            ))),
+            (None, None) => Ok(None),
+        }
     }
 }
 
@@ -918,9 +978,10 @@ async fn status(context: &Context<'_>, word: Option<&str>) -> Result<(), Failure
             .filter(|server| matches!(server.transport, Transport::Http(_)))
             .collect(),
     };
+    let mut places = TokenPlaces::open(context).await;
     let mut rows = Vec::new();
     for server in servers {
-        let tokens = match find_tokens(context, server).await? {
+        let tokens = match places.find(context, server).await? {
             Some((_, secret)) => Some(serde_json::from_str::<Value>(secret.expose()).map_err(
                 |error| Failure::protocol(format!("the stored tokens are not JSON: {error}")),
             )?),

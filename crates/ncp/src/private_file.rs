@@ -63,3 +63,73 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 }
+
+/// An exclusive lock on a lock file. The lock ends when the value is
+/// dropped, also when the process stops.
+#[derive(Debug)]
+pub struct Lock {
+    _file: fs::File,
+}
+
+/// The time between two tries to get a lock.
+const LOCK_STEP: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// Gets an exclusive lock on the lock file, and waits for it at most the
+/// limit. The lock file is empty, with mode `0600`, in a directory with mode
+/// `0700`. The call blocks: an async caller runs it on a blocking thread.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be opened, or when another
+/// process holds the lock for longer than the limit.
+pub fn lock(path: &Path, limit: std::time::Duration) -> std::io::Result<Lock> {
+    let parent = path.parent().unwrap_or(Path::new("."));
+    DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(parent)?;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)?;
+    let deadline = std::time::Instant::now() + limit;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(Lock { _file: file }),
+            Err(fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(LOCK_STEP);
+            }
+            Err(fs::TryLockError::WouldBlock) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "another ncp process holds {} for more than {} s",
+                        path.display(),
+                        limit.as_secs()
+                    ),
+                ));
+            }
+            Err(fs::TryLockError::Error(error)) => return Err(error),
+        }
+    }
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::*;
+
+    #[test]
+    fn a_second_lock_waits_and_then_fails_at_its_limit() {
+        let dir = std::env::temp_dir().join(format!("ncp-lock-{}", std::process::id()));
+        let path = dir.join("test.lock");
+        let held = lock(&path, std::time::Duration::from_secs(1)).unwrap();
+        let error = lock(&path, std::time::Duration::from_millis(100)).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        drop(held);
+        assert!(lock(&path, std::time::Duration::from_millis(100)).is_ok());
+        let _ = fs::remove_dir_all(dir);
+    }
+}

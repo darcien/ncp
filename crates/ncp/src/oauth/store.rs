@@ -6,15 +6,18 @@
 //! A refresh writes the new tokens back to the place that they came from
 //! (design 2.4).
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use rmcp::transport::auth::{AuthError, CredentialStore as RmcpStore, StoredCredentials};
+use rmcp::transport::auth::{
+    AuthError, CredentialRefreshGuard, CredentialStore as RmcpStore, StoredCredentials,
+};
 use serde_json::Value;
 use tokio::sync::Mutex;
 
 use super::items;
 use crate::{
     credential::{CredentialKey, Secret},
+    private_file,
     server::ServerName,
     store::{self, CredentialStore, StoreError},
 };
@@ -34,7 +37,13 @@ pub struct TokenStore {
     /// The scopes of a `403` since the last login (design B52). rmcp does
     /// not know the field, so a refresh writes it back from here.
     required_scopes: Mutex<Option<Value>>,
+    /// The lock file that one refresh at a time holds, across processes.
+    refresh_lock: Option<PathBuf>,
 }
+
+/// The longest wait for a refresh of another process. A refresh is one
+/// token request with a limit of 30 s.
+const REFRESH_LOCK_LIMIT: Duration = Duration::from_secs(45);
 
 impl TokenStore {
     #[must_use]
@@ -44,6 +53,19 @@ impl TokenStore {
             store,
             copy: Mutex::new(Cached::Unread),
             required_scopes: Mutex::new(None),
+            refresh_lock: None,
+        }
+    }
+
+    /// The adapter with a lock for each refresh. Two processes that refresh
+    /// the same tokens at the same time would use one refresh token twice;
+    /// with rotation, the second refresh then fails, and the user must log
+    /// in again.
+    #[must_use]
+    pub fn with_refresh_lock(self, path: PathBuf) -> Self {
+        Self {
+            refresh_lock: Some(path),
+            ..self
         }
     }
 
@@ -98,7 +120,7 @@ pub fn parse_item(secret: &Secret) -> Result<TokensItem, items::ItemError> {
 /// error. rmcp keeps only a text, and the caller needs the kind: a file
 /// that fails is a local error, and a native store that fails is an
 /// authorization error with the file as the fix.
-const FILE_FAILED: &str = "the credential file failed: ";
+const FILE_FAILED: &str = "local: ";
 
 fn store_error(error: &StoreError) -> AuthError {
     let text = match error {
@@ -110,10 +132,11 @@ fn store_error(error: &StoreError) -> AuthError {
     AuthError::CredentialStoreError(text)
 }
 
-/// True when the text of a token store error is a failure of the file.
+/// The text of a failure of the file with no mark, or `None` for a failure
+/// of the native store.
 #[must_use]
-pub fn is_file_failure(text: &str) -> bool {
-    text.starts_with(FILE_FAILED)
+pub fn file_failure(text: &str) -> Option<&str> {
+    text.strip_prefix(FILE_FAILED)
 }
 
 #[async_trait::async_trait]
@@ -155,6 +178,25 @@ impl RmcpStore for TokenStore {
             .map_err(|error| store_error(&error))?;
         *self.copy.lock().await = Cached::Read(Box::new(Some(credentials)));
         Ok(())
+    }
+
+    /// Holds the lock of the tokens through the refresh and its save. The
+    /// copy in memory can be old after the wait, so the next load reads the
+    /// store: another process can have refreshed the tokens.
+    async fn acquire_refresh_guard(&self) -> Result<Option<CredentialRefreshGuard>, AuthError> {
+        let Some(path) = self.refresh_lock.clone() else {
+            return Ok(None);
+        };
+        let lock = store::run_blocking(store::CALL_LIMIT, move || {
+            private_file::lock(&path, REFRESH_LOCK_LIMIT).map_err(|source| StoreError::Io {
+                path: path.clone(),
+                source,
+            })
+        })
+        .await
+        .map_err(|error| store_error(&error))?;
+        *self.copy.lock().await = Cached::Unread;
+        Ok(Some(CredentialRefreshGuard::new(lock)))
     }
 
     async fn clear(&self) -> Result<(), AuthError> {

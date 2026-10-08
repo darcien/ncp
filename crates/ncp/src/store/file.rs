@@ -16,6 +16,10 @@ use crate::{
 
 const FORMAT_VERSION: u32 = 1;
 
+/// The longest wait for another process that writes the file. A write
+/// takes milliseconds.
+const LOCK_LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Mode bits for group and other users.
 const OPEN_BITS: u32 = 0o077;
 
@@ -53,7 +57,11 @@ impl FileStore {
             .map_err(|source| self.io(source))
     }
 
+    /// Reads, changes and writes the file under a lock, so that two
+    /// processes that write at the same time do not lose a change.
     fn change(&self, edit: impl FnOnce(&mut BTreeMap<String, String>)) -> Result<(), StoreError> {
+        let _lock = private_file::lock(&self.path.with_extension("lock"), LOCK_LIMIT)
+            .map_err(|source| self.io(source))?;
         let mut content = self.read()?;
         edit(&mut content.secrets);
         content.version = FORMAT_VERSION;
@@ -188,11 +196,13 @@ mod tests {
         let store = FileStore::new(dir.join("credentials.json"));
         store.save(&key(), &Secret::new("x".into())).unwrap();
         store.delete(&key()).unwrap();
-        let names: Vec<_> = fs::read_dir(&dir)
+        let mut names: Vec<_> = fs::read_dir(&dir)
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect();
-        assert_eq!(names, ["credentials.json"]);
+        names.sort();
+        // The empty lock file stays, so that each process locks one file.
+        assert_eq!(names, ["credentials.json", "credentials.lock"]);
         fs::remove_dir_all(dir).unwrap();
     }
 }

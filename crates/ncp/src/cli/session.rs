@@ -532,11 +532,11 @@ pub fn interrupted() -> Failure {
 /// (a locked keyring, or a token set longer than the line of `security`,
 /// design B51) is an authorization error: the file can keep the tokens.
 fn token_store_failure(server: &Server, text: &str) -> Failure {
-    let message = format!("cannot keep the OAuth tokens: {text}");
-    if crate::oauth::store::is_file_failure(text) {
-        return Failure::protocol(message).server(server.name.as_str());
+    if let Some(text) = crate::oauth::store::file_failure(text) {
+        return Failure::protocol(format!("cannot keep the OAuth tokens: {text}"))
+            .server(server.name.as_str());
     }
-    Failure::new(Exit::Auth, message)
+    Failure::new(Exit::Auth, format!("cannot keep the OAuth tokens: {text}"))
         .server(server.name.as_str())
         .hint(format!("{} --credential-store file", login_hint(server)))
 }

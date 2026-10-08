@@ -114,6 +114,16 @@ impl ServerUrl {
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
+
+    /// The URL with no query and no fragment. An OAuth resource SHOULD NOT
+    /// have a query (RFC 8707 §2), and a query can hold a key.
+    #[must_use]
+    pub fn without_query(&self) -> String {
+        let mut url = self.0.clone();
+        url.set_query(None);
+        url.set_fragment(None);
+        url.to_string()
+    }
 }
 
 impl fmt::Display for ServerUrl {
@@ -133,6 +143,12 @@ fn is_loopback(host: &Host<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn url_without_query_keeps_the_path() {
+        let url = ServerUrl::parse("https://a.test/mcp/x?api_key=k#f").unwrap();
+        assert_eq!(url.without_query(), "https://a.test/mcp/x");
+    }
 
     #[test]
     fn accepts_letters_digits_dash_and_underscore_in_name() {

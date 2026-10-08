@@ -1609,3 +1609,65 @@ async fn login_to_a_server_that_names_no_authorization_server_is_an_error() {
     );
     assert!(!home.root.join("state/ncp/credentials.json").exists());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn parallel_calls_refresh_the_tokens_one_at_a_time() {
+    let (auth, fixture) = oauth_fixture(AuthSettings {
+        expires_in: 5,
+        ..AuthSettings::default()
+    })
+    .await;
+    let home = oauth_home("parallel-refresh", &fixture.url);
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    let runs: Vec<Run> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..4)
+            .map(|_| scope.spawn(|| home.run(&["tool", "list", "web"])))
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect()
+    });
+    for run in &runs {
+        assert_eq!(run.code(), 0, "{}", run.describe());
+    }
+    assert!(auth.record().refresh_grants >= 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn refresh_that_cannot_write_the_credential_file_is_a_local_error() {
+    let (_auth, fixture) = oauth_fixture(AuthSettings {
+        expires_in: 5,
+        ..AuthSettings::default()
+    })
+    .await;
+    let home = oauth_home("refresh-file-fails", &fixture.url);
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    let dir = home.root.join("state/ncp");
+    let mode =
+        |bits| std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(bits)).unwrap();
+    mode(0o500);
+    let run = home.run(&["tool", "list", "web"]);
+    mode(0o700);
+    assert_eq!(run.code(), 3, "{}", run.describe());
+    let error = run.error();
+    assert!(error.get("hint").is_none(), "{error}");
+    assert!(
+        !error["message"].as_str().unwrap().contains("local:"),
+        "{error}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn trace_of_a_login_hides_a_value_in_the_server_url() {
+    let (_auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    let home = Home::new("login-url-value")
+        .set("NCP_TEST_BROWSER", "follow")
+        .set("URL_KEY", "s3cret-key");
+    home.configure(&json!({"web": {"type": "http",
+        "url": format!("{}?k=${{URL_KEY}}", fixture.url)}}));
+    let run = home.run(&["-vv", "auth", "login", "web", "--credential-store", "file"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
+    assert!(!stderr.contains("s3cret-key"), "{stderr}");
+}
