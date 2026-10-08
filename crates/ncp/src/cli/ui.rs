@@ -44,12 +44,12 @@ pub enum Verbosity {
 }
 
 impl Verbosity {
-    /// The level for `-q` and the count of `-v` flags. clap does not permit
-    /// both.
+    /// The level for the counts of `-q` and `-v` flags. clap does not
+    /// permit both. `-qq` is the same as `-q` for now, as uv accepts it.
     #[must_use]
-    pub fn from_flags(quiet: bool, count: u8) -> Self {
+    pub fn from_flags(quiet: u8, count: u8) -> Self {
         match count {
-            0 if quiet => Self::Quiet,
+            0 if quiet > 0 => Self::Quiet,
             0 => Self::Normal,
             1 => Self::Verbose,
             _ => Self::Trace,
@@ -61,9 +61,6 @@ impl Verbosity {
 pub struct Ui {
     pub format: Format,
     pub verbosity: Verbosity,
-    /// True when `--output-format` names the format. `resource read`
-    /// writes raw contents unless the user asks for JSON.
-    pub format_named: bool,
 }
 
 impl Ui {
@@ -79,6 +76,11 @@ impl Ui {
     ) -> Result<(), Failure> {
         match self.format {
             Format::Text => write_stdout(&printable(&text())),
+            // JSON on a TTY comes only from `--output-format json`; a
+            // person reads it, so it is pretty (section 4).
+            Format::Json if std::io::stdout().is_terminal() => {
+                write_stdout(&format!("{}\n", printable(&pretty_json(&json()))))
+            }
             Format::Json => write_stdout(&json_line(&json())),
         }
     }
@@ -200,6 +202,10 @@ pub fn printable(text: &str) -> Cow<'_, str> {
 
 fn stderr(text: &str) {
     let _ = std::io::stderr().lock().write_all(text.as_bytes());
+}
+
+fn pretty_json(value: &Value) -> String {
+    serde_json::to_string_pretty(value).unwrap_or_default()
 }
 
 /// One JSON value on one line. `serde_json` leaves DEL and the C1 control

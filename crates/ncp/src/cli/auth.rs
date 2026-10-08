@@ -287,6 +287,9 @@ async fn login(
     let callback = wait_for_redirect(listener, &redirect, &state, read_stdin)
         .await
         .map_err(|failure| failure.server(name))?;
+    // A refresh of the old tokens in another process must not save over
+    // the new tokens.
+    let _lock = hold_tokens_lock(context, &server.name).await;
     session
         .handle_callback_with_issuer(&callback.code, &callback.state, callback.iss.as_deref())
         .await
@@ -329,6 +332,21 @@ fn refresh_lock(context: &Context<'_>, server: &ServerName) -> std::path::PathBu
         .paths
         .credential_file
         .with_file_name(format!("oauth-{}.lock", server.as_str()))
+}
+
+/// The lock of the tokens of the server, or `None` when the lock file
+/// cannot be made: the lock only orders a refresh, a login and a logout.
+async fn hold_tokens_lock(
+    context: &Context<'_>,
+    server: &ServerName,
+) -> Option<crate::private_file::Lock> {
+    let path = refresh_lock(context, server);
+    crate::store::run_blocking(crate::store::CALL_LIMIT, move || {
+        Ok(crate::oauth::store::lock_tokens(&path).ok())
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// The inputs of [`stored_login`].
@@ -910,6 +928,8 @@ async fn logout(context: &Context<'_>, word: &str) -> Result<(), Failure> {
     let name = server.name.as_str();
     remote(server)?;
     let key = CredentialKey::OAuthTokens(server.name.clone());
+    // A refresh in another process must not bring the tokens back.
+    let _lock = hold_tokens_lock(context, &server.name).await;
     let removed = remove_everywhere(context, name, &key).await?;
     let places: Vec<&str> = removed
         .iter()

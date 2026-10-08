@@ -366,6 +366,33 @@ pub fn resource_list(resources: &[Value], templates: &[Value]) -> String {
     )
 }
 
+/// `resource read` on a TTY: text as it is (the caller escapes control
+/// characters), and a summary line for each blob, because binary data can
+/// change a terminal.
+#[must_use]
+pub fn resource_contents(result: &Value) -> String {
+    let contents = result
+        .get("contents")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    contents.iter().fold(String::new(), |mut text, content| {
+        match (content.get("text").and_then(Value::as_str), content.get("blob").and_then(Value::as_str)) {
+            (Some(body), _) => text.push_str(body),
+            (None, Some(blob)) => {
+                let mime = content.get("mimeType").and_then(Value::as_str).unwrap_or("binary data");
+                let _ = writeln!(
+                    text,
+                    "[{mime}, {} bytes as base64; use --output-format text and send stdout to a file]",
+                    blob.len()
+                );
+            }
+            (None, None) => {}
+        }
+        text
+    })
+}
+
 /// `prompt list`: the name, the first line of the description, and the
 /// arguments, with the required ones marked.
 #[must_use]

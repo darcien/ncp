@@ -139,6 +139,18 @@ pub fn file_failure(text: &str) -> Option<&str> {
     text.strip_prefix(FILE_FAILED)
 }
 
+/// The lock of the tokens of one server: a refresh, a login and a logout
+/// hold it, so that one of them cannot undo another. It blocks; an async
+/// caller runs it on a blocking thread.
+///
+/// # Errors
+///
+/// Returns an error when the lock file cannot be opened, or when another
+/// process holds the lock past the limit.
+pub fn lock_tokens(path: &std::path::Path) -> std::io::Result<private_file::Lock> {
+    private_file::lock(path, REFRESH_LOCK_LIMIT)
+}
+
 #[async_trait::async_trait]
 impl RmcpStore for TokenStore {
     async fn load(&self) -> Result<Option<StoredCredentials>, AuthError> {
@@ -187,14 +199,22 @@ impl RmcpStore for TokenStore {
         let Some(path) = self.refresh_lock.clone() else {
             return Ok(None);
         };
-        let lock = store::run_blocking(store::CALL_LIMIT, move || {
-            private_file::lock(&path, REFRESH_LOCK_LIMIT).map_err(|source| StoreError::Io {
+        // A lock file that cannot be made (for example a home that is read
+        // only) must not stop a refresh of tokens in the native store: the
+        // lock only orders refreshes. A wait past the limit is an error.
+        let lock = store::run_blocking(store::CALL_LIMIT, move || match lock_tokens(&path) {
+            Ok(lock) => Ok(Some(lock)),
+            Err(error) if error.kind() == std::io::ErrorKind::TimedOut => Err(StoreError::Io {
                 path: path.clone(),
-                source,
-            })
+                source: error,
+            }),
+            Err(_) => Ok(None),
         })
         .await
         .map_err(|error| store_error(&error))?;
+        let Some(lock) = lock else {
+            return Ok(None);
+        };
         *self.copy.lock().await = Cached::Unread;
         Ok(Some(CredentialRefreshGuard::new(lock)))
     }

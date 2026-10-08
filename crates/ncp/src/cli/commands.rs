@@ -17,7 +17,7 @@ use super::{
     render,
     schema_check::{self, Outcome},
     session::{self, Context, Loaded},
-    tool_args::{self, Given, Input},
+    tool_args::{self, Argument, Given, Input, Resolved},
     ui,
 };
 use crate::{
@@ -330,13 +330,11 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
     let loaded = load(context)?;
     let server = session::select(&loaded, word, context.ui)?;
     let input = match input {
-        Input::Stdin => Input::Object(read_stdin_object(context).await?),
-        Input::Pairs(pairs) => Input::Pairs(read_files(pairs)?),
-        Input::Object(object) => Input::Object(object),
+        Input::Stdin => Resolved::Object(read_stdin_object(context).await?),
+        Input::Pairs(pairs) => Resolved::Pairs(read_files(pairs)?),
+        Input::Object(object) => Resolved::Object(object),
     };
-    let needs_tool = call.help
-        || !call.no_validate
-        || matches!(&input, Input::Pairs(pairs) if tool_args::needs_schema(pairs));
+    let needs_tool = call.help || !call.no_validate || tool_args::needs_schema(&input);
     let name = server.name.as_str();
     with_connection(context, server, async |connection| {
         let tools = if needs_tool || mirrors_parameters(server, connection) {
@@ -351,11 +349,9 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
         if let (true, Some(tool)) = (call.help, &tool) {
             return show_tool(context, name, tool);
         }
-        let arguments = match (&input, &tool) {
-            (Input::Pairs(pairs), Some(tool)) => tool_args::coerce(pairs, &tool.input_schema),
-            (Input::Pairs(pairs), None) => tool_args::coerce(pairs, &JsonObject::new()),
-            (Input::Object(object), _) => object.clone(),
-            _ => JsonObject::new(),
+        let arguments = match &tool {
+            Some(tool) => tool_args::coerce(&input, &tool.input_schema),
+            None => tool_args::coerce(&input, &JsonObject::new()),
         };
         if let (false, Some(tool)) = (call.no_validate, &tool) {
             check_arguments(context, name, tool, &arguments)?;
@@ -479,52 +475,44 @@ async fn resource_read(context: &Context<'_>, word: &str, uri: &str) -> Result<(
         }
     };
     let value = serde_json::to_value(&result).unwrap_or(Value::Null);
-    if context.ui.format_named && context.ui.format == ui::Format::Json {
-        return ui::write_stdout(&ui::json_line(&value));
+    // A pipe gets JSON, as from each command. `--output-format text` in a
+    // pipe gives the contents as they are, for example into a file.
+    if context.ui.format == ui::Format::Text && !std::io::stdout().is_terminal() {
+        return ui::write_stdout_bytes(&raw_contents(&value)?);
     }
-    write_contents(&value)
+    context
+        .ui
+        .result(|| render::resource_contents(&value), || value.clone())
 }
 
-/// The contents as they are: text, and the bytes of a blob. On a TTY, a
-/// blob shows as a summary, and text gets the escapes of all text output.
-fn write_contents(result: &Value) -> Result<(), Failure> {
-    let terminal = std::io::stdout().is_terminal();
+/// The one content of a resource as bytes: the text, or the decoded blob.
+/// Several contents have no raw form: their borders and types would be
+/// lost.
+fn raw_contents(result: &Value) -> Result<Vec<u8>, Failure> {
     let contents = result
         .get("contents")
         .and_then(Value::as_array)
-        .cloned()
+        .map(Vec::as_slice)
         .unwrap_or_default();
-    for content in contents {
-        if let Some(text) = content.get("text").and_then(Value::as_str) {
-            if terminal {
-                ui::write_stdout(&ui::printable(text))?;
-            } else {
-                ui::write_stdout(text)?;
-            }
-        } else if let Some(blob) = content.get("blob").and_then(Value::as_str) {
-            use base64::Engine as _;
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(blob)
-                .map_err(|error| {
-                    Failure::protocol(format!(
-                        "the server sent a blob that is not base64: {error}"
-                    ))
-                })?;
-            if terminal {
-                let mime = content
-                    .get("mimeType")
-                    .and_then(Value::as_str)
-                    .unwrap_or("binary data");
-                ui::write_stdout(&format!(
-                    "[{} bytes of {mime}; send stdout to a file to get them]\n",
-                    bytes.len()
-                ))?;
-            } else {
-                ui::write_stdout_bytes(&bytes)?;
-            }
-        }
+    let [content] = contents else {
+        return Err(Failure::usage(format!(
+            "the resource has {} contents, and text output gives one",
+            contents.len()
+        ))
+        .hint("use --output-format json"));
+    };
+    if let Some(text) = content.get("text").and_then(Value::as_str) {
+        return Ok(text.as_bytes().to_vec());
     }
-    Ok(())
+    let blob = content
+        .get("blob")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, blob).map_err(|error| {
+        Failure::protocol(format!(
+            "the server sent a blob that is not base64: {error}"
+        ))
+    })
 }
 
 /// An `input_required` result: on stdout, with exit 5, as for a tool call.
@@ -586,9 +574,9 @@ fn prompt_arguments(words: &[String]) -> Result<JsonObject, Failure> {
     };
     pairs
         .into_iter()
-        .map(|(key, given)| match given {
-            Given::Text(text) => Ok((key, Value::String(text))),
-            _ => Err(Failure::usage(format!(
+        .map(|(key, argument)| match argument {
+            Argument::Text(text) => Ok((key, Value::String(text))),
+            Argument::Json(_) => Err(Failure::usage(format!(
                 "prompt argument {key:?} must be text: use {key}=value"
             ))),
         })
@@ -663,20 +651,44 @@ fn call_failure(server: &Server, tool: &str, listed: bool, error: &RequestError)
     }
 }
 
+/// The largest file of a `key=@path` pair. An argument is a message to a
+/// server, not a bulk transfer, and a device such as `/dev/zero` has no end.
+const MAX_ARGUMENT_FILE: u64 = 1024 * 1024;
+
 /// Reads the file of each `key=@path` pair. Its text is the value, as for
 /// `key=value`.
-fn read_files(pairs: Vec<(String, Given)>) -> Result<Vec<(String, Given)>, Failure> {
+fn read_files(pairs: Vec<(String, Given)>) -> Result<Vec<(String, Argument)>, Failure> {
     pairs
         .into_iter()
         .map(|(key, given)| match given {
-            Given::File(path) => std::fs::read_to_string(&path)
-                .map(|text| (key.clone(), Given::Text(text)))
-                .map_err(|error| {
-                    Failure::usage(format!("{key}=@{path}: cannot read the file: {error}"))
-                }),
-            other => Ok((key, other)),
+            Given::Text(text) => Ok((key, Argument::Text(text))),
+            Given::Json(value) => Ok((key, Argument::Json(value))),
+            Given::File(path) => {
+                read_argument_file(&key, &path).map(|text| (key, Argument::Text(text)))
+            }
         })
         .collect()
+}
+
+/// A regular file of at most the limit: a pipe or a device can block or
+/// have no end.
+fn read_argument_file(key: &str, path: &str) -> Result<String, Failure> {
+    let failed = |reason: String| Failure::usage(format!("{key}=@{path}: {reason}"));
+    if path.is_empty() {
+        return Err(Failure::usage(format!("{key}=@ names no file"))
+            .hint(format!("{key}=@PATH, or {key}=@@ for a literal @")));
+    }
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| failed(format!("cannot read the file: {error}")))?;
+    if !metadata.is_file() {
+        return Err(failed("is not a regular file".to_string()));
+    }
+    if metadata.len() > MAX_ARGUMENT_FILE {
+        return Err(failed(format!(
+            "the file is larger than {MAX_ARGUMENT_FILE} bytes"
+        )));
+    }
+    std::fs::read_to_string(path).map_err(|error| failed(format!("cannot read the file: {error}")))
 }
 
 async fn read_stdin_object(context: &Context<'_>) -> Result<JsonObject, Failure> {

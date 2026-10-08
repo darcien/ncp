@@ -637,7 +637,6 @@ mod tests {
             Ui {
                 format: super::super::ui::Format::Json,
                 verbosity: super::super::ui::Verbosity::Normal,
-                format_named: false,
             },
         )
         .unwrap_err();

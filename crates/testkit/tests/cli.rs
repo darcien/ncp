@@ -1770,26 +1770,50 @@ fn resource_list_gives_resources_and_templates() {
 }
 
 #[test]
-fn resource_read_writes_the_contents_as_they_are_and_json_on_request() {
+fn resource_read_gives_json_in_a_pipe_and_raw_contents_on_request() {
     let home = Home::new("resource-read");
     home.configure(&json!({"fx": stdio("modern")}));
-    let run = home.run(&["resource", "read", "fx", "fixture://greeting"]);
+    let run = home.run(&["resource", "read", "fx", "fixture://echo/x"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
-    assert_eq!(run.0.stdout, b"hello\n");
-    let run = home.run(&["resource", "read", "fx", "fixture://logo"]);
-    assert_eq!(run.0.stdout, b"\x89PNG\r\n\x1a\n");
-    let run = home.run(&[
-        "--output-format",
-        "json",
-        "resource",
-        "read",
-        "fx",
-        "fixture://echo/x",
-    ]);
     assert_eq!(run.stdout()["contents"][0]["text"], "x");
+    let raw = ["--output-format", "text", "resource", "read", "fx"];
+    let run = home.run(&[&raw[..], &["fixture://greeting"]].concat());
+    assert_eq!(run.0.stdout, b"hello\n");
+    let run = home.run(&[&raw[..], &["fixture://logo"]].concat());
+    assert_eq!(run.0.stdout, b"\x89PNG\r\n\x1a\n");
     let run = home.run(&["resource", "read", "fx", "fixture://none"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert_eq!(run.error()["hint"], "ncp resource list fx");
+}
+
+#[test]
+fn file_argument_must_name_a_regular_file() {
+    let home = Home::new("file-arg-checks");
+    home.configure(&json!({"fx": stdio("modern")}));
+    for arg in ["text=@", "text=@/dev/null", "text=@/"] {
+        let run = home.run(&["tool", "call", "fx", "echo", arg]);
+        assert_eq!(run.code(), 2, "{arg}: {}", run.describe());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn refresh_of_native_tokens_works_when_the_state_folder_is_read_only() {
+    let (auth, fixture) = oauth_fixture(AuthSettings {
+        expires_in: 5,
+        ..AuthSettings::default()
+    })
+    .await;
+    let home = oauth_home("native-read-only-state", &fixture.url).with_fake_keychain();
+    assert_eq!(home.run(&["auth", "login", "web"]).code(), 0);
+    let dir = home.root.join("state/ncp");
+    let _ = std::fs::remove_file(dir.join("oauth-web.lock"));
+    let mode =
+        |bits| std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(bits)).unwrap();
+    mode(0o500);
+    let run = home.run(&["tool", "list", "web"]);
+    mode(0o700);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(auth.record().refresh_grants >= 1);
 }
 
 #[test]

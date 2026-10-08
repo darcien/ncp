@@ -19,6 +19,23 @@ pub enum Given {
     File(String),
 }
 
+/// The value of one pair after `ncp` read its file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Argument {
+    /// Text. The schema decides the type.
+    Text(String),
+    /// JSON, with no schema rule.
+    Json(Value),
+}
+
+/// The arguments after `ncp` read stdin and the files: the input of the
+/// schema rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Resolved {
+    Pairs(Vec<(String, Argument)>),
+    Object(JsonObject),
+}
+
 /// The arguments as the user wrote them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
@@ -120,12 +137,15 @@ fn pair(word: &str) -> Result<(String, Given), ArgumentError> {
     Ok((key.to_string(), given))
 }
 
-/// True when a pair needs the input schema for its type.
+/// True when the arguments need the input schema for their types.
 #[must_use]
-pub fn needs_schema(pairs: &[(String, Given)]) -> bool {
-    pairs
-        .iter()
-        .any(|(_, given)| !matches!(given, Given::Json(_)))
+pub fn needs_schema(resolved: &Resolved) -> bool {
+    match resolved {
+        Resolved::Pairs(pairs) => pairs
+            .iter()
+            .any(|(_, argument)| matches!(argument, Argument::Text(_))),
+        Resolved::Object(_) => false,
+    }
 }
 
 /// Makes the arguments object from the pairs. A value is text, except when
@@ -133,22 +153,23 @@ pub fn needs_schema(pairs: &[(String, Given)]) -> bool {
 /// the value is read as JSON. A value that is not valid JSON stays text, so
 /// that the schema check names the problem.
 #[must_use]
-pub fn coerce(pairs: &[(String, Given)], schema: &JsonObject) -> JsonObject {
-    pairs
-        .iter()
-        .map(|(key, given)| {
-            let value = match given {
-                Given::Json(value) => value.clone(),
-                // The caller reads each file first; a path that is left is
-                // text.
-                Given::Text(text) | Given::File(text) if reads_as_json(schema, key) => {
-                    serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.clone()))
-                }
-                Given::Text(text) | Given::File(text) => Value::String(text.clone()),
-            };
-            (key.clone(), value)
-        })
-        .collect()
+pub fn coerce(resolved: &Resolved, schema: &JsonObject) -> JsonObject {
+    match resolved {
+        Resolved::Object(object) => object.clone(),
+        Resolved::Pairs(pairs) => pairs
+            .iter()
+            .map(|(key, argument)| {
+                let value = match argument {
+                    Argument::Json(value) => value.clone(),
+                    Argument::Text(text) if reads_as_json(schema, key) => {
+                        serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.clone()))
+                    }
+                    Argument::Text(text) => Value::String(text.clone()),
+                };
+                (key.clone(), value)
+            })
+            .collect(),
+    }
 }
 
 /// True when the property has a JSON type and no `string` type.
@@ -325,7 +346,7 @@ mod tests {
 
     #[test]
     fn json_values_keep_their_type_and_need_no_schema() {
-        let pairs = vec![("s".to_string(), Given::Json(json!(5)))];
+        let pairs = Resolved::Pairs(vec![("s".to_string(), Argument::Json(json!(5)))]);
         assert!(!needs_schema(&pairs));
         let schema = schema(json!({"properties": {"s": {"type": "string"}}}));
         assert_eq!(coerce(&pairs, &schema)["s"], json!(5));
@@ -379,7 +400,7 @@ mod tests {
             "either": {"type": ["string", "number"]},
             "maybe": {"type": ["integer", "null"]},
         }}));
-        let pairs: Vec<(String, Given)> = [
+        let pairs: Vec<(String, Argument)> = [
             ("n", "12"),
             ("f", "true"),
             ("list", "[1,2]"),
@@ -390,10 +411,10 @@ mod tests {
             ("bad", "x"),
         ]
         .iter()
-        .map(|(k, v)| text(k, v))
+        .map(|(k, v)| (k.to_string(), Argument::Text(v.to_string())))
         .collect();
         assert_eq!(
-            Value::Object(coerce(&pairs, &schema)),
+            Value::Object(coerce(&Resolved::Pairs(pairs), &schema)),
             json!({"n": 12, "f": true, "list": [1, 2], "s": "123", "either": "5",
                    "maybe": 7, "unknown": "1", "bad": "x"})
         );
@@ -423,17 +444,17 @@ mod tests {
         assert_eq!(types_of("loop"), Vec::<&str>::new());
         assert_eq!(types_of("level"), ["integer"]);
         assert_eq!(types_of("fixed"), ["number"]);
-        let pairs: Vec<(String, Given)> = [
+        let pairs: Vec<(String, Argument)> = [
             ("optional", "5"),
             ("either", "true"),
             ("nested", "{}"),
             ("level", "2"),
         ]
         .iter()
-        .map(|(k, v)| text(k, v))
+        .map(|(k, v)| (k.to_string(), Argument::Text(v.to_string())))
         .collect();
         assert_eq!(
-            Value::Object(coerce(&pairs, &schema)),
+            Value::Object(coerce(&Resolved::Pairs(pairs), &schema)),
             json!({"optional": 5, "either": "true", "nested": {}, "level": 2})
         );
     }
@@ -451,7 +472,7 @@ mod tests {
     #[test]
     fn keeps_value_that_is_not_json_as_text_for_the_schema_check() {
         let schema = schema(json!({"properties": {"n": {"type": "integer"}}}));
-        let pairs = vec![text("n", "twelve")];
+        let pairs = Resolved::Pairs(vec![("n".into(), Argument::Text("twelve".into()))]);
         assert_eq!(
             Value::Object(coerce(&pairs, &schema)),
             json!({"n": "twelve"})

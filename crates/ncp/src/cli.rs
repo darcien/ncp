@@ -70,7 +70,6 @@ pub fn main_with(platform: Platform) -> ExitCode {
     let ui = Ui {
         format: Format::detect(),
         verbosity: Verbosity::Normal,
-        format_named: false,
     };
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -83,7 +82,6 @@ pub fn main_with(platform: Platform) -> ExitCode {
             None => ui.format,
         },
         verbosity: Verbosity::from_flags(cli.options.quiet, cli.options.verbose),
-        format_named: cli.options.output_format.is_some(),
     };
     let timings = cli.options.timings.then(|| Arc::new(Timings::new(started)));
     let env = process_env();

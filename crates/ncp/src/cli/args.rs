@@ -60,8 +60,8 @@ pub struct GlobalOptions {
     #[arg(long, global = true)]
     pub timings: bool,
     /// Show no hints and no warnings on stderr. Errors stay.
-    #[arg(short, long, global = true, conflicts_with = "verbose")]
-    pub quiet: bool,
+    #[arg(short, long, global = true, conflicts_with = "verbose", action = clap::ArgAction::Count)]
+    pub quiet: u8,
     /// The output format. Default: text on a TTY, else JSON.
     #[arg(long, global = true, value_enum, value_name = "FORMAT")]
     pub output_format: Option<OutputFormat>,

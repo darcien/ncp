@@ -146,6 +146,8 @@ pub enum RequestError {
     Timeout(Duration),
     #[error("server sent a result of the wrong type")]
     UnexpectedResult,
+    #[error("server sent a page cursor again, so the list has no end")]
+    RepeatedCursor,
 }
 
 impl ConnectError {
@@ -676,14 +678,19 @@ impl Connection {
     ) -> Result<Vec<T>, RequestError> {
         let mut items = Vec::new();
         let mut cursor = None;
+        // A server that gives a cursor again would make the loop endless.
+        let mut seen = std::collections::HashSet::new();
         loop {
             let params = PaginatedRequestParams::default().with_cursor(cursor);
             let result = self.request(request(params), limits).await?;
             let (found, next) = page(result).ok_or(RequestError::UnexpectedResult)?;
             items.extend(found);
-            cursor = next;
-            if cursor.is_none() {
-                return Ok(items);
+            match next {
+                None => return Ok(items),
+                Some(next) if !seen.insert(next.clone()) => {
+                    return Err(RequestError::RepeatedCursor);
+                }
+                Some(next) => cursor = Some(next),
             }
         }
     }
