@@ -89,12 +89,10 @@ impl Home {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(stdin.as_bytes())
-            .unwrap();
+        // A command can exit before it reads stdin, for example after a
+        // usage error. The write then fails with a broken pipe, which is
+        // not a test failure.
+        let _ = child.stdin.take().unwrap().write_all(stdin.as_bytes());
         Run(child.wait_with_output().unwrap())
     }
 }
