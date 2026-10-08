@@ -298,6 +298,25 @@ pub async fn serve_http_with_oauth(
     let access = Access::OAuth(Arc::new(OAuthAccess {
         auth: auth.state.clone(),
         step_up,
+        open_handshake: false,
+    }));
+    serve(mode, access, None).await
+}
+
+/// The OAuth fixture with an open handshake: only the requests after the
+/// handshake need a token, and get `401` with no token.
+///
+/// # Errors
+///
+/// Returns an error when no loopback port is free.
+pub async fn serve_http_with_oauth_after_handshake(
+    mode: Mode,
+    auth: &auth_server::AuthServer,
+) -> std::io::Result<HttpFixture> {
+    let access = Access::OAuth(Arc::new(OAuthAccess {
+        auth: auth.state.clone(),
+        step_up: None,
+        open_handshake: true,
     }));
     serve(mode, access, None).await
 }
@@ -314,7 +333,13 @@ enum Access {
 struct OAuthAccess {
     auth: auth_server::AuthState,
     step_up: Option<StepUp>,
+    /// The handshake and the stream requests need no token; the other
+    /// requests do. Some servers work so.
+    open_handshake: bool,
 }
+
+/// The methods that a server with an open handshake answers with no token.
+const HANDSHAKE_METHODS: [&str; 3] = ["initialize", "server/discover", "notifications/initialized"];
 
 /// The URL of the protected resource metadata of the MCP URL, with the path
 /// of the resource after the well-known part (RFC 9728 §3.1).
@@ -495,7 +520,30 @@ async fn oauth_handle(
         );
     }
     let token = sent.and_then(|value| value.strip_prefix("Bearer "));
-    let Some(scopes) = token.and_then(|token| oauth.auth.token_scopes(token)) else {
+    let scopes = token.and_then(|token| oauth.auth.token_scopes(token));
+    if scopes.is_none() && oauth.open_handshake {
+        let (parts, body) = request.into_parts();
+        let body = body
+            .collect()
+            .await
+            .map(http_body_util::Collected::to_bytes)
+            .unwrap_or_default();
+        let method = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|message| message["method"].as_str().map(str::to_string));
+        let open = parts.method != http::Method::POST
+            || method.is_some_and(|method| HANDSHAKE_METHODS.contains(&method.as_str()));
+        if open {
+            return service
+                .handle(http::Request::from_parts(parts, Full::new(body)))
+                .await;
+        }
+        return challenge(
+            http::StatusCode::UNAUTHORIZED,
+            &format!("Bearer resource_metadata=\"{metadata}\""),
+        );
+    }
+    let Some(scopes) = scopes else {
         let error = if token.is_some() {
             "error=\"invalid_token\", "
         } else {

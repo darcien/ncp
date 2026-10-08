@@ -1419,3 +1419,22 @@ async fn oauth_discovery_goes_through_the_proxy() {
         "{lines:?}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn request_that_needs_a_login_after_an_open_handshake_uses_the_stored_login() {
+    let auth = ncp_testkit::auth_server::serve_auth(AuthSettings::default())
+        .await
+        .unwrap();
+    let fixture = ncp_testkit::serve_http_with_oauth_after_handshake(Mode::Legacy, &auth)
+        .await
+        .unwrap();
+    let home = oauth_home("open-handshake", &fixture.url);
+    let call = ["tool", "call", "web", "echo", "text=hi"];
+    let run = home.run(&call);
+    assert_eq!(run.code(), 4, "{}", run.describe());
+    assert_eq!(run.error()["hint"], "ncp auth login web");
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    let run = home.run(&call);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(text_of(&run.stdout()), "hi");
+}
