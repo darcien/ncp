@@ -7,6 +7,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+clap = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "suggestions"] }
+jsonschema = { version = "0.58.6", default-features = false }
 keyring-core = "=1.0.0"
 process-wrap = { version = "10", default-features = false, features = ["tokio1", "process-group", "kill-on-drop"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2"] }
@@ -15,7 +17,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 thiserror = "2.0.21"
-tokio = { version = "1", features = ["rt", "macros", "time", "sync", "process", "io-util", "net", "signal"] }
+tokio = { version = "1", features = ["rt", "macros", "time", "sync", "process", "io-util", "io-std", "net", "signal"] }
 tokio-util = "0.7"
 url = "2.5.8"
 
