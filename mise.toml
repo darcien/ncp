@@ -42,10 +42,14 @@ description = "Lint with clippy for the Linux musl target in a container"
 depends = ["linux:image"]
 run = "harness/linux/run.sh cargo clippy --workspace --all-targets --locked -- -D warnings"
 
+# The tests run with no network. The fetch step before them is online.
 [tasks."linux:test"]
-description = "Run all tests for the Linux musl target in a container"
+description = "Run all tests for the Linux musl target in a container, with no network"
 depends = ["linux:image"]
-run = "harness/linux/run.sh cargo test --workspace --locked"
+run = [
+  "harness/linux/run.sh cargo fetch --locked",
+  "harness/linux/run.sh offline cargo test --workspace --locked",
+]
 
 # Format first, so that the checks see the formatted code.
 [tasks.precommit]
