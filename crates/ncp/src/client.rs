@@ -48,8 +48,8 @@ pub const CONNECT_LIMIT: Duration = Duration::from_secs(30);
 /// The default limit of one request after the connect.
 pub const REQUEST_LIMIT: Duration = Duration::from_secs(300);
 
-/// The limit to send a cancel request. A server that does not read it must
-/// not keep `ncp` from its exit.
+/// The limit to send a cancel request, and to close a session. A server
+/// that does not read them must not keep `ncp` from its exit.
 const CANCEL_LIMIT: Duration = Duration::from_secs(2);
 
 /// The secrets of one server, read from the credential store.
@@ -106,6 +106,8 @@ pub struct Launch<'a> {
     pub connect_limit: Duration,
     /// Where the stderr of a stdio server goes.
     pub server_log: &'a stdio::ServerLog,
+    /// Fires on Ctrl-C. The connect then stops with no cancel request.
+    pub cancel: &'a CancellationToken,
 }
 
 /// The handshake step that failed.
@@ -156,6 +158,8 @@ pub enum ConnectError {
     BadVersion(String),
     #[error("the server did not complete the connection in {} s", .0.as_secs())]
     Timeout(Duration),
+    #[error("the connect was interrupted")]
+    Cancelled,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -314,20 +318,23 @@ async fn handshake(
                     }
                 })?;
             let serve = info.serve_with_lifecycle((stdout, stdin), lifecycle);
-            // The handshake future owns stdin. When it ends, stdin closes.
-            let Ok(service) = tokio::time::timeout_at(deadline, serve).await else {
-                process.stop().await;
-                return Err(timeout);
-            };
-            (service.map_err(failed)?, Some(process))
+            // The handshake future owns stdin. It ends with the race, so
+            // stdin is closed before the stop steps.
+            match race(serve, deadline, launch.cancel).await {
+                Ended::Done(service) => (service.map_err(failed)?, Some(process)),
+                ended => {
+                    process.stop().await;
+                    return Err(ended.into_error(timeout));
+                }
+            }
         }
         Transport::Http(server) => {
             let transport = http::transport(launch.http, server, &launch.secrets.headers)?;
             let serve = info.serve_with_lifecycle(transport, lifecycle);
-            let service = tokio::time::timeout_at(deadline, serve)
-                .await
-                .map_err(|_| timeout)?;
-            (service.map_err(failed)?, None)
+            match race(serve, deadline, launch.cancel).await {
+                Ended::Done(service) => (service.map_err(failed)?, None),
+                ended => return Err(ended.into_error(timeout)),
+            }
         }
         Transport::Sse(_) => return Err(ConnectError::SseNotSupported(launch.server.name.clone())),
     };
@@ -337,6 +344,36 @@ async fn handshake(
         era,
         process,
     })
+}
+
+/// How a handshake ended.
+enum Ended<T> {
+    Done(T),
+    TimedOut,
+    Cancelled,
+}
+
+impl<T> Ended<T> {
+    fn into_error(self, timeout: ConnectError) -> ConnectError {
+        match self {
+            Self::Cancelled => ConnectError::Cancelled,
+            Self::Done(_) | Self::TimedOut => timeout,
+        }
+    }
+}
+
+/// Runs the handshake until it ends, the deadline passes, or Ctrl-C.
+async fn race<T>(
+    handshake: impl Future<Output = T>,
+    deadline: Instant,
+    cancel: &CancellationToken,
+) -> Ended<T> {
+    tokio::select! {
+        result = tokio::time::timeout_at(deadline, handshake) => {
+            result.map_or(Ended::TimedOut, Ended::Done)
+        }
+        () = cancel.cancelled() => Ended::Cancelled,
+    }
 }
 
 fn client_info() -> ClientConfig {
@@ -476,8 +513,10 @@ impl Connection {
     }
 
     /// Closes the connection. A stdio server gets the stop steps of the spec.
+    /// The close of the session has a time limit, so that a server that
+    /// does not answer cannot keep `ncp` from its exit.
     pub async fn close(self) {
-        let _ = self.service.cancel().await;
+        let _ = tokio::time::timeout(CANCEL_LIMIT, self.service.cancel()).await;
         if let Some(process) = self.process {
             process.stop().await;
         }

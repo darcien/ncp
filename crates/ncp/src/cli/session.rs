@@ -177,6 +177,7 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
         probe_timeout: client::PROBE_TIMEOUT,
         connect_limit: client::CONNECT_LIMIT,
         server_log: &context.ui.server_log(name),
+        cancel: &context.cancel,
     };
     let connection = client::connect(&launch)
         .await
@@ -191,10 +192,10 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
 }
 
 fn connect_failure(server: &Server, error: &ConnectError) -> Failure {
-    let exit = if error.needs_authorization() {
-        Exit::Auth
-    } else {
-        Exit::Protocol
+    let exit = match error {
+        ConnectError::Cancelled => return interrupted().server(server.name.as_str()),
+        _ if error.needs_authorization() => Exit::Auth,
+        _ => Exit::Protocol,
     };
     let message = match error {
         _ if error.needs_authorization() => "the server needs a login or more scopes".to_string(),
@@ -236,11 +237,17 @@ fn causes(error: &(dyn std::error::Error + 'static)) -> String {
         .join(": ")
 }
 
+/// Ctrl-C. `ncp` sent the cancel request or stopped the server first.
+#[must_use]
+pub fn interrupted() -> Failure {
+    Failure::new(Exit::Interrupted, "interrupted")
+}
+
 /// The failure of a request after the connect.
 #[must_use]
 pub fn request_failure(server: &Server, method: &str, error: &RequestError) -> Failure {
     let failure = match error {
-        RequestError::Cancelled => Failure::new(Exit::Interrupted, "interrupted"),
+        RequestError::Cancelled => interrupted(),
         RequestError::Timeout(_) => Failure::protocol(format!("{method}: {error}"))
             .hint("give a longer limit with --timeout <SECONDS>"),
         _ if error.needs_authorization() => Failure::new(

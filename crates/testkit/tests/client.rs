@@ -69,6 +69,7 @@ struct Setup {
     secrets: Secrets,
     probe_timeout: Duration,
     connect_limit: Duration,
+    cancel: CancellationToken,
 }
 
 impl Setup {
@@ -80,6 +81,7 @@ impl Setup {
             secrets: Secrets::default(),
             probe_timeout: Duration::from_secs(5),
             connect_limit: client::CONNECT_LIMIT,
+            cancel: CancellationToken::new(),
         }
     }
 
@@ -94,6 +96,7 @@ impl Setup {
             probe_timeout: self.probe_timeout,
             connect_limit: self.connect_limit,
             server_log: &client::stdio::ServerLog::Inherit,
+            cancel: &self.cancel,
         })
         .await
     }
@@ -473,6 +476,23 @@ async fn stops_http_connect_that_passes_its_limit_during_the_probe() {
         "{:?}",
         start.elapsed()
     );
+}
+
+#[tokio::test]
+async fn cancel_during_the_handshake_stops_the_server_with_the_stop_steps() {
+    let setup = Setup::new(stdio(&["slow-30000", "linger"], &[]));
+    let trigger = setup.cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        trigger.cancel();
+    });
+    let start = Instant::now();
+    let error = setup.connect().await.err().unwrap();
+    let elapsed = start.elapsed();
+    assert!(matches!(error, ConnectError::Cancelled), "{error}");
+    // The server ignores closed stdin, so the stop steps wait for SIGTERM.
+    assert!(elapsed >= Duration::from_secs(2), "{elapsed:?}");
+    assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
 }
 
 #[tokio::test]
