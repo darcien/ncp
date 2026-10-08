@@ -130,7 +130,15 @@ pub fn select<'a>(loaded: &'a Loaded, name: &str, ui: Ui) -> Result<&'a Server, 
             } else {
                 format!("because {} does not exist", loaded.path.display())
             };
-            Failure::usage(format!("no server {name:?} is configured {place}"))
+            let names = loaded
+                .config
+                .servers()
+                .map(|server| server.name.as_str())
+                .chain(loaded.config.invalid().map(|(name, _)| name));
+            let near = super::near::nearest(name, names)
+                .map(|near| format!("; did you mean {near:?}?"))
+                .unwrap_or_default();
+            Failure::usage(format!("no server {name:?} is configured {place}{near}"))
                 .hint("ncp server list")
         }
         LookupError::Invalid { error, .. } => entry_failure(name, &error, &loaded.path),

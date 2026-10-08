@@ -34,6 +34,8 @@ impl Format {
 /// How much diagnostic output goes to stderr.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Verbosity {
+    /// `-q`: no hints and no warnings. Errors stay.
+    Quiet,
     Normal,
     /// `-v`: where each value comes from, the proxy route, the era.
     Verbose,
@@ -42,10 +44,12 @@ pub enum Verbosity {
 }
 
 impl Verbosity {
-    /// The level for the count of `-v` flags.
+    /// The level for `-q` and the count of `-v` flags. clap does not permit
+    /// both.
     #[must_use]
-    pub fn from_count(count: u8) -> Self {
+    pub fn from_flags(quiet: bool, count: u8) -> Self {
         match count {
+            0 if quiet => Self::Quiet,
             0 => Self::Normal,
             1 => Self::Verbose,
             _ => Self::Trace,
@@ -77,11 +81,15 @@ impl Ui {
     }
 
     pub fn warning(self, server: Option<&str>, message: &str) {
-        self.stderr(&note("warning", self.format, server, message));
+        if self.verbosity > Verbosity::Quiet {
+            self.stderr(&note("warning", self.format, server, message));
+        }
     }
 
     pub fn hint(self, server: Option<&str>, message: &str) {
-        self.stderr(&note("hint", self.format, server, message));
+        if self.verbosity > Verbosity::Quiet {
+            self.stderr(&note("hint", self.format, server, message));
+        }
     }
 
     /// A `-v` diagnostic. It never holds a secret value.

@@ -105,9 +105,11 @@ pipe.
   `_`, `-` and `.` ([tool names][spec-tool-names]). It is not a MUST, so `ncp` accepts any tool name. A name
   with spaces needs shell quotes. A name that starts with `-` needs `--`
   before it.
-- An unknown server or tool name gives a usage error. The MVP points to
-  `ncp server list` or `ncp tool list SERVER`. Later: the near names, for
-  example "no tool `search_issue`; did you mean `search_issues`?".
+- An unknown server or tool name gives a usage error that points to
+  `ncp server list` or `ncp tool list SERVER`, and names the nearest known
+  name, for example "no tool `search_issue`; did you mean
+  `search_issues`?". A name is near with at most one edit for each three
+  characters (at least one), or with a case difference only.
 - `tool list` prints names that the user can copy into `tool call`.
 
 ### 2.2 Tool arguments (I4)
@@ -115,8 +117,8 @@ pipe.
 | Form | Meaning |
 |---|---|
 | `key=value` | The value is text. When the input schema gives the property type `number`, `integer`, `boolean`, `array` or `object`, `ncp` reads the value as JSON. A schema type `string` keeps the text, also for `123`. |
-| `key:=json` | Later. The value is JSON, with no schema rule. |
-| `key=@path` | Later. The value is the text of the file. `@@` at the start is a literal `@`. |
+| `key:=json` | The value is JSON, with no schema rule. |
+| `key=@path` | The value is the text of the file. `@@` at the start is a literal `@`. |
 | `{...}` as the only argument | The arguments object as JSON. |
 | `-` as the only argument | Read the arguments object as JSON from stdin. |
 
@@ -130,12 +132,12 @@ and the error says "missing tool name".
 
 | Option | Meaning |
 |---|---|
-| `--output-format <text\|json>` | Later. Output format. Default: `text` on a TTY, else `json`. |
+| `--output-format <text\|json>` | Output format. Default: `text` on a TTY, else `json`. |
 | `--color <auto\|always\|never>` | Later, with color. Color in text output. Default `auto`. `NO_COLOR` also turns color off (I7). The MVP has no color. |
-| `-q`, `--quiet` | Later. No hints and no warnings on stderr. Errors stay. |
+| `-q`, `--quiet` | No hints and no warnings on stderr. Errors stay. |
 | `-v`, `--verbose` | Diagnostics on stderr: the source of each variable (environment, native store, file; never the value), the proxy route and its source, the cached era. `-vv` adds the JSON-RPC messages and the HTTP requests, with secrets hidden (I6). |
 | `--timings` | Timings on stderr (F2): process start, configuration, credential read, server start, DNS, connect, server response, CPU time. |
-| `--config-file <path>` | Later. Configuration file, as uv names the flag. A missing file named here is a usage error. Default in section 6. |
+| `--config-file <path>` | Configuration file, as uv names the flag. A missing file named here is a usage error. Default in section 6. |
 | `--timeout <seconds>` | The time limit for one request, in whole seconds. Default 300 s (decision C7). A timeout sends a cancel request and exits with code 3. Progress notifications do not reset the clock. |
 | `--credential-store <native\|file>` | Only on `secret set` and `auth login`: the place for the new value. Default `native` (decision C2). |
 | `--no-browser` | Only on `auth login`: print the URL and read the redirect URL from stdin (A10). |
@@ -368,6 +370,9 @@ user reviews them.
 | B52 | After `403 insufficient_scope`, a call gives exit 4 that names the scopes, with the hint `ncp auth login SERVER`. `ncp` keeps the scopes in the tokens item (field `ncp_required_scopes`, which rmcp ignores) until the next login. `auth login` asks for the scopes that rmcp selects, the scopes that the user has, and the kept scopes. There is no automatic retry. | Requirement A9: the old and the new scopes. A new authorization needs the browser, and a call never waits for input that it did not ask for. Each step-up is one login by the user, so it cannot loop. |
 | B53 | After a login, `ncp` removes the tokens item of the other place, with a limit of 5 s; a failure gives a warning. The search for tokens reads the native store and then the file, as for `${NAME}`: a native store that cannot answer does not stop the search, and its error (exit 4, with the reason) is the result only when the file has no tokens. The OAuth steps of a login have the limit of `--timeout`, with exit 3 at the limit; the steps after a `401` (discovery, refresh) have the connect limit of 30 s, after the store read with its own limit. Ctrl-C gives 130. The listener answers each connection in its own task with a limit of 5 s; a redirect with another state gets `400`, and the wait goes on. Discovery that finds no metadata is an error. | Design 2.4: calls read the native store first, so an old copy there would hide new tokens in the file, and a locked keyring must not hide tokens in the file or look like a missing login. Section 3: a timeout is exit 3. C7: nothing waits forever. Any local program or web page can send a request to the listener. The fallback endpoints of rmcp are for 2025-03-26 only. |
 | B54 | When the answer to `server/discover` is a result that is not a discover result (for example an empty result), `ncp` treats the server as legacy and sends `initialize`, as for a JSON-RPC error. | Good ergonomics: the official conformance server answers an unknown method so, and the server works with `initialize`. A modern server gives a discover result. |
+| B55 | Lock files: `$XDG_STATE_HOME/ncp/credentials.lock` for each change of the credential file, and `$XDG_STATE_HOME/ncp/oauth-<server>.lock` for each refresh of the tokens of a server, in the native store or the file. They are empty, mode 0600. A refresh waits at most 45 s for another process, then reads the tokens again. | Two processes that refresh at the same time use one refresh token twice; with rotation the second refresh fails, and the user must log in again. Agents start calls in parallel. The file lock of `std` needs no new dependency. |
+| B56 | `-q` and `-v` together are a usage error. `-q` keeps the server log of a stdio server and the result. `--config-file` takes a path that is relative to the working directory, and the file must exist (exit 2). `--output-format` changes only the format, not the TTY checks (for example the hidden input of `secret set`). | A quiet run with diagnostics has no meaning. The server log is the only view of a server failure. A typing error in a named path must not look like an empty configuration. |
+| B57 | The text of a `key=@path` file follows the schema rule of `key=value`: a property of type `number` reads the text as JSON. A relative path is relative to the working directory. `ncp` reads each file before it connects; a file that it cannot read is a usage error (exit 2). The first `=` splits a word; a `:` just before it makes the value JSON (`key:=json`). | The file is a long `key=value`, so the same rule applies. A typing error in a path must not start a server. |
 | B50 | When `SSL_CERT_FILE` is set, `ncp` trusts the PEM roots in the file in addition to the system store. A file that `ncp` cannot read, or that has no certificate, gives exit 3 with the path and the variable name, and so does an empty value. Only an http server reads the file, so a stdio server works with a bad value. On Linux the system store reads `SSL_CERT_FILE` (and `SSL_CERT_DIR`) in place of the system roots, so there the file replaces the system roots, as in OpenSSL; an empty value there loads no root. `ncp` cannot change this, because it does not change its own environment. | N4, with the variable name of curl, OpenSSL and uv. A silent fallback gives a TLS error that does not name the cause. |
 
 [spec-tool-names]: https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool-names

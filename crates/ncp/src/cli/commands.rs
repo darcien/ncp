@@ -17,7 +17,7 @@ use super::{
     render,
     schema_check::{self, Outcome},
     session::{self, Context, Loaded},
-    tool_args::{self, Input},
+    tool_args::{self, Given, Input},
     ui,
 };
 use crate::{
@@ -230,11 +230,15 @@ async fn tool_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
 }
 
 fn find_tool(server: &str, tools: Vec<Tool>, name: &str) -> Result<Tool, Failure> {
+    let near = super::near::nearest(name, tools.iter().map(|tool| tool.name.as_ref()))
+        .map(|near| format!("; did you mean {near:?}?"))
+        .unwrap_or_default();
+    let message = format!("the server has no tool {name:?}{near}");
     tools
         .into_iter()
         .find(|tool| tool.name == name)
         .ok_or_else(|| {
-            Failure::usage(format!("the server has no tool {name:?}"))
+            Failure::usage(message)
                 .server(server)
                 .hint(format!("ncp tool list {}", render::shell_word(server)))
         })
@@ -309,11 +313,12 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
     let server = session::select(&loaded, word, context.ui)?;
     let input = match input {
         Input::Stdin => Input::Object(read_stdin_object(context).await?),
-        other => other,
+        Input::Pairs(pairs) => Input::Pairs(read_files(pairs)?),
+        Input::Object(object) => Input::Object(object),
     };
     let needs_tool = call.help
         || !call.no_validate
-        || matches!(&input, Input::Pairs(pairs) if !pairs.is_empty());
+        || matches!(&input, Input::Pairs(pairs) if tool_args::needs_schema(pairs));
     let name = server.name.as_str();
     with_connection(context, server, async |connection| {
         let tools = if needs_tool || mirrors_parameters(server, connection) {
@@ -330,6 +335,7 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
         }
         let arguments = match (&input, &tool) {
             (Input::Pairs(pairs), Some(tool)) => tool_args::coerce(pairs, &tool.input_schema),
+            (Input::Pairs(pairs), None) => tool_args::coerce(pairs, &JsonObject::new()),
             (Input::Object(object), _) => object.clone(),
             _ => JsonObject::new(),
         };
@@ -391,6 +397,22 @@ fn call_failure(server: &Server, tool: &str, error: &RequestError) -> Failure {
         }
         _ => session::request_failure(server, "tools/call", error),
     }
+}
+
+/// Reads the file of each `key=@path` pair. Its text is the value, as for
+/// `key=value`.
+fn read_files(pairs: Vec<(String, Given)>) -> Result<Vec<(String, Given)>, Failure> {
+    pairs
+        .into_iter()
+        .map(|(key, given)| match given {
+            Given::File(path) => std::fs::read_to_string(&path)
+                .map(|text| (key.clone(), Given::Text(text)))
+                .map_err(|error| {
+                    Failure::usage(format!("{key}=@{path}: cannot read the file: {error}"))
+                }),
+            other => Ok((key, other)),
+        })
+        .collect()
 }
 
 async fn read_stdin_object(context: &Context<'_>) -> Result<JsonObject, Failure> {

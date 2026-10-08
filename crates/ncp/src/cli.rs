@@ -4,6 +4,7 @@ pub mod args;
 pub mod auth;
 mod commands;
 mod diagnostics;
+mod near;
 mod outcome;
 mod render;
 mod schema_check;
@@ -24,7 +25,7 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 
 use self::{
-    args::{Cli, Command},
+    args::{Cli, Command, OutputFormat},
     outcome::{Exit, Failure},
     session::Context,
     timings::Timings,
@@ -67,8 +68,12 @@ pub fn main_with(platform: Platform) -> ExitCode {
         Err(error) => return parse_failure(ui, &error),
     };
     let ui = Ui {
-        verbosity: Verbosity::from_count(cli.options.verbose),
-        ..ui
+        format: match cli.options.output_format {
+            Some(OutputFormat::Text) => Format::Text,
+            Some(OutputFormat::Json) => Format::Json,
+            None => ui.format,
+        },
+        verbosity: Verbosity::from_flags(cli.options.quiet, cli.options.verbose),
     };
     let timings = cli.options.timings.then(|| Arc::new(Timings::new(started)));
     let env = process_env();
@@ -123,6 +128,13 @@ async fn run(
 ) -> Exit {
     let result = async {
         let paths = Paths::from_env(env).map_err(|error| Failure::protocol(error.to_string()))?;
+        let paths = match &cli.options.config_file {
+            Some(path) => Paths {
+                config_file: named_config_file(path)?,
+                ..paths
+            },
+            None => paths,
+        };
         let context = Context {
             env,
             ui,
@@ -147,6 +159,22 @@ async fn run(
             ui.error(&failure);
             failure.exit
         }
+    }
+}
+
+/// The configuration file that `--config-file` names. Unlike the default
+/// file, it must exist: a typing error in the path must not look like an
+/// empty configuration.
+fn named_config_file(path: &std::path::Path) -> Result<std::path::PathBuf, Failure> {
+    let path = std::path::absolute(path)
+        .map_err(|error| Failure::usage(format!("{}: {error}", path.display())))?;
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(Failure::usage(format!(
+            "the configuration file {} does not exist",
+            path.display()
+        )))
     }
 }
 

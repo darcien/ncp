@@ -59,6 +59,25 @@ pub struct GlobalOptions {
     /// credentials, server start, DNS, connect and each response.
     #[arg(long, global = true)]
     pub timings: bool,
+    /// Show no hints and no warnings on stderr. Errors stay.
+    #[arg(short, long, global = true, conflicts_with = "verbose")]
+    pub quiet: bool,
+    /// The output format. Default: text on a TTY, else JSON.
+    #[arg(long, global = true, value_enum, value_name = "FORMAT")]
+    pub output_format: Option<OutputFormat>,
+    /// The configuration file in place of the default file, mcp.json in the
+    /// ncp folder of the XDG configuration folder. It must exist.
+    #[arg(long, global = true, value_name = "PATH")]
+    pub config_file: Option<std::path::PathBuf>,
+}
+
+/// The output format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum OutputFormat {
+    /// Text for people
+    Text,
+    /// One JSON value on stdout, and JSON Lines on stderr
+    Json,
 }
 
 #[derive(Debug, Subcommand)]
@@ -166,6 +185,8 @@ pub enum ToolCommand {
     /// Arguments: key=value pairs, one JSON object, or - to read a JSON
     /// object from stdin. A key=value value is text, except when the input
     /// schema gives the property another type: then the value is JSON.
+    /// key:=json gives a JSON value, and key=@path gives the text of a file
+    /// (@@ at the start is a literal @).
     #[command(disable_help_flag = true)]
     Call(CallArgs),
 }

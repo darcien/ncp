@@ -1671,3 +1671,85 @@ async fn trace_of_a_login_hides_a_value_in_the_server_url() {
     let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
     assert!(!stderr.contains("s3cret-key"), "{stderr}");
 }
+
+#[test]
+fn output_format_option_chooses_text_or_json() {
+    let home = Home::new("output-format");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let text = home.run(&["--output-format", "text", "server", "list"]);
+    assert_eq!(text.code(), 0, "{}", text.describe());
+    let stdout = String::from_utf8_lossy(&text.0.stdout).to_string();
+    assert!(stdout.starts_with("fx"), "{stdout}");
+    let json = home.run(&["server", "list", "--output-format", "json"]);
+    assert_eq!(json.stdout()["servers"][0]["name"], "fx");
+}
+
+#[test]
+fn quiet_hides_warnings_and_hints_but_not_errors() {
+    let home = Home::new("quiet");
+    home.configure(&json!({"fx": {"command": FIXTURE, "args": ["modern"], "disabled": true}}));
+    let loud = home.run(&["server", "list"]);
+    assert!(!loud.stderr().is_empty(), "{}", loud.describe());
+    let quiet = home.run(&["-q", "server", "list"]);
+    assert_eq!(quiet.code(), 0);
+    assert!(quiet.stderr().is_empty(), "{}", quiet.describe());
+    let failed = home.run(&["-q", "tool", "list", "nothing"]);
+    assert_eq!(failed.code(), 2);
+    assert_eq!(failed.error()["code"], "usage");
+    assert_eq!(home.run(&["-q", "-v", "server", "list"]).code(), 2);
+}
+
+#[test]
+fn config_file_option_reads_that_file_and_a_missing_one_is_a_usage_error() {
+    let home = Home::new("config-file");
+    let path = home.root.join("other.json");
+    std::fs::write(
+        &path,
+        json!({"mcpServers": {"other": stdio("modern")}}).to_string(),
+    )
+    .unwrap();
+    let run = home.run(&["--config-file", path.to_str().unwrap(), "server", "list"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(run.stdout()["servers"][0]["name"], "other");
+    let missing = home.root.join("missing.json");
+    let run = home.run(&["--config-file", missing.to_str().unwrap(), "server", "list"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(
+        run.error()["message"]
+            .as_str()
+            .unwrap()
+            .contains("does not exist")
+    );
+}
+
+#[test]
+fn tool_call_reads_json_values_and_file_values() {
+    let home = Home::new("json-file-args");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let file = home.root.join("text.txt");
+    std::fs::write(&file, "from a file").unwrap();
+    let arg = format!("text=@{}", file.display());
+    let run = home.run(&["tool", "call", "fx", "echo", &arg]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(text_of(&run.stdout()), "from a file");
+    let run = home.run(&["tool", "call", "fx", "echo", "text:=\"json text\""]);
+    assert_eq!(text_of(&run.stdout()), "json text", "{}", run.describe());
+    let run = home.run(&["tool", "call", "fx", "echo", "text=@@at"]);
+    assert_eq!(text_of(&run.stdout()), "@at");
+    let run = home.run(&["tool", "call", "fx", "echo", "text=@/nonexistent/x"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+}
+
+#[test]
+fn unknown_names_get_the_nearest_known_name() {
+    let home = Home::new("near-names");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let run = home.run(&["tool", "list", "fz"]);
+    assert_eq!(run.code(), 2);
+    let message = run.error()["message"].as_str().unwrap().to_string();
+    assert!(message.ends_with("did you mean \"fx\"?"), "{message}");
+    let run = home.run(&["tool", "show", "fx", "ech"]);
+    assert_eq!(run.code(), 2);
+    let message = run.error()["message"].as_str().unwrap().to_string();
+    assert!(message.ends_with("did you mean \"echo\"?"), "{message}");
+}
