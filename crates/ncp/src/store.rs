@@ -1,19 +1,21 @@
 //! The credential store: one internal interface for all stores.
 //!
 //! A change of the storage model or of the signing method changes only this
-//! module. Automated tests use the memory store or the file store, never a
-//! native store: the macOS Keychain shows a prompt that an agent cannot
-//! accept.
+//! module. Automated tests use the memory store, the file store, or the
+//! `security` store with a fake program, never a native store: the macOS
+//! Keychain shows a prompt that an agent cannot accept.
 
 mod file;
 mod memory;
 mod native;
+mod security;
 
 use std::{path::PathBuf, time::Duration};
 
 pub use file::FileStore;
 pub use memory::MemoryStore;
 pub use native::NativeStore;
+pub use security::SecurityStore;
 
 use crate::credential::{CredentialKey, Secret};
 
