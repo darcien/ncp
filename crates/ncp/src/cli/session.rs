@@ -188,15 +188,124 @@ fn entry_failure(name: &str, error: &EntryError, path: &Path) -> Failure {
 /// Returns a failure when the connect fails. An era cache that cannot be
 /// read or written gives a warning: `ncp` works the same with no cache.
 pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, Failure> {
+    let prepared = prepare(context, server).await?;
+    let launch = prepared.launch(context, server);
+    // The connect future holds two transports with their observers. Boxed,
+    // it does not make each command future large.
+    let connection = match (
+        Box::pin(client::connect(&launch)).await,
+        &server.transport,
+        &prepared.http,
+    ) {
+        (Err(error), Transport::Http(remote), Some(http)) if error.needs_authorization() => {
+            let challenge = error.challenge();
+            let login = super::auth::StoredLogin {
+                server,
+                remote,
+                http,
+                observer: &prepared.observer,
+                challenge: challenge.as_deref(),
+            };
+            let Some(authorized) = super::auth::stored_login(context, &login).await? else {
+                return Err(connect_failure(context.env, server, &error));
+            };
+            let launch = Launch {
+                authorized: Some(&authorized),
+                ..launch
+            };
+            Box::pin(client::connect(&launch)).await
+        }
+        (result, ..) => result,
+    }
+    .map_err(|error| connect_failure(context.env, server, &error))?;
+    prepared.save_era(context, server, connection.era());
+    Ok(connection)
+}
+
+/// Connects with the stored login of an http server. A server that let a
+/// connect with no token in, and then answered `401` to a request, needs
+/// this.
+///
+/// # Errors
+///
+/// Returns a failure when no login is stored, or when the connect fails.
+pub async fn open_with_login(
+    context: &Context<'_>,
+    server: &Server,
+    challenge: Option<&str>,
+) -> Result<Connection, Failure> {
+    let prepared = prepare(context, server).await?;
+    let needs_login = || {
+        Failure::new(Exit::Auth, "the server needs a login or more scopes")
+            .server(server.name.as_str())
+            .hint(login_hint(server))
+    };
+    let (Transport::Http(remote), Some(http)) = (&server.transport, &prepared.http) else {
+        return Err(needs_login());
+    };
+    let login = super::auth::StoredLogin {
+        server,
+        remote,
+        http,
+        observer: &prepared.observer,
+        challenge,
+    };
+    let Some(authorized) = super::auth::stored_login(context, &login).await? else {
+        return Err(needs_login());
+    };
+    let launch = Launch {
+        authorized: Some(&authorized),
+        ..prepared.launch(context, server)
+    };
+    let connection = Box::pin(client::connect(&launch))
+        .await
+        .map_err(|error| connect_failure(context.env, server, &error))?;
+    prepared.save_era(context, server, connection.era());
+    Ok(connection)
+}
+
+/// The `WWW-Authenticate` challenge of the server, from a connect and a
+/// `tools/list` with no token. `auth login` uses it for discovery and for the scopes, as the
+/// spec describes (MCP 2025-11-25, basic/authorization, "Authorization
+/// Server Discovery"). `None` when the server needs no login or gives no
+/// challenge.
+///
+/// # Errors
+///
+/// Returns a failure when a value of the entry cannot be read.
+pub async fn challenge(context: &Context<'_>, server: &Server) -> Result<Option<String>, Failure> {
+    let prepared = prepare(context, server).await?;
+    let launch = prepared.launch(context, server);
+    Ok(match Box::pin(client::connect(&launch)).await {
+        // A server can let the handshake in and ask for a login at the
+        // first request.
+        Ok(connection) => {
+            let listed = connection.list_tools(context.limits()).await;
+            connection.close().await;
+            listed.err().and_then(|error| error.challenge())
+        }
+        Err(error) => error.challenge(),
+    })
+}
+
+/// The parts of a connect that do not depend on a login.
+struct Prepared {
+    cache: EraCache,
+    cached: Option<Era>,
+    values: crate::config::Values,
+    observer: client::observe::Observer,
+    http: Option<reqwest::Client>,
+    server_log: client::stdio::ServerLog,
+}
+
+async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Failure> {
     let name = server.name.as_str();
     let ui = context.ui;
-    let cache_path = &context.paths.era_cache;
-    let cache = era_file::load(cache_path).unwrap_or_else(|error| {
+    let cache = era_file::load(&context.paths.era_cache).unwrap_or_else(|error| {
         ui.warning(None, &error.to_string());
         EraCache::default()
     });
-    let target = server.target.clone();
-    let cached = cache.lookup(&server.name, &target).cloned();
+    let cached = cache.lookup(&server.name, &server.target).cloned();
     ui.debug(Some(name), &cached_era_text(cached.as_ref()));
     let values = super::secrets::resolve(context, server).await?;
     let shown = server.clone();
@@ -218,52 +327,51 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
         }
         _ => None,
     };
-    let launch = Launch {
-        server,
-        cached_era: cached.as_ref(),
-        base_env: context.env,
-        values: &values,
-        http: http.as_ref(),
-        probe_timeout: client::PROBE_TIMEOUT,
-        connect_limit: client::CONNECT_LIMIT,
-        server_log: &ui.server_log(name),
-        cancel: &context.cancel,
-        observer: &observer,
-        authorized: None,
-    };
-    // The connect future holds two transports with their observers. Boxed,
-    // it does not make each command future large.
-    let connection = match (
-        Box::pin(client::connect(&launch)).await,
-        &server.transport,
-        &http,
-    ) {
-        (Err(error), Transport::Http(remote), Some(http)) if error.needs_authorization() => {
-            let Some(authorized) =
-                super::auth::stored_login(context, server, remote, http, &observer).await?
-            else {
-                return Err(connect_failure(context.env, server, &error));
-            };
-            let launch = Launch {
-                authorized: Some(&authorized),
-                ..launch
-            };
-            Box::pin(client::connect(&launch)).await
+    Ok(Prepared {
+        cache,
+        cached,
+        values,
+        observer,
+        http,
+        server_log: ui.server_log(name),
+    })
+}
+
+impl Prepared {
+    fn launch<'a>(&'a self, context: &'a Context<'_>, server: &'a Server) -> Launch<'a> {
+        Launch {
+            server,
+            cached_era: self.cached.as_ref(),
+            base_env: context.env,
+            values: &self.values,
+            http: self.http.as_ref(),
+            probe_timeout: client::PROBE_TIMEOUT,
+            connect_limit: client::CONNECT_LIMIT,
+            server_log: &self.server_log,
+            cancel: &context.cancel,
+            observer: &self.observer,
+            authorized: None,
         }
-        (result, ..) => result,
     }
-    .map_err(|error| connect_failure(context.env, server, &error))?;
-    if cached.as_ref() != Some(connection.era()) {
+
+    /// Saves the era when it changed. A cache that cannot be written gives
+    /// a warning: `ncp` works the same with no cache.
+    fn save_era(self, context: &Context<'_>, server: &Server, era: &Era) {
+        if self.cached.as_ref() == Some(era) {
+            return;
+        }
+        let ui = context.ui;
         ui.debug(
-            Some(name),
-            &format!("saved the era: {}", era_text(connection.era())),
+            Some(server.name.as_str()),
+            &format!("saved the era: {}", era_text(era)),
         );
-        let cache = cache.record(server.name.clone(), target, connection.era().clone());
-        if let Err(error) = era_file::save(cache_path, &cache) {
+        let cache = self
+            .cache
+            .record(server.name.clone(), server.target.clone(), era.clone());
+        if let Err(error) = era_file::save(&context.paths.era_cache, &cache) {
             ui.warning(None, &error.to_string());
         }
     }
-    Ok(connection)
 }
 
 fn era_text(era: &Era) -> String {
@@ -398,7 +506,10 @@ pub fn request_failure(server: &Server, method: &str, error: &RequestError) -> F
                 }
                 _ => "the server needs a login or more scopes".to_string(),
             };
-            Failure::new(Exit::Auth, format!("{method}: {need}")).hint(login_hint(server))
+            Failure {
+                login_challenge: error.login_challenge(),
+                ..Failure::new(Exit::Auth, format!("{method}: {need}")).hint(login_hint(server))
+            }
         }
         RequestError::Service(rmcp::ServiceError::McpError(data)) => Failure::protocol(format!(
             "{method}: the server returned error {}: {}",

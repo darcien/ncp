@@ -144,6 +144,18 @@ pub enum RequestError {
 }
 
 impl ConnectError {
+    /// The `WWW-Authenticate` challenge of a server that needs a login.
+    #[must_use]
+    pub fn challenge(&self) -> Option<String> {
+        match self {
+            Self::Handshake { source, .. } => match source.as_ref() {
+                ClientInitializeError::TransportError { error, .. } => http::challenge(error),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// True when the server needs a login or more scopes.
     #[must_use]
     pub fn needs_authorization(&self) -> bool {
@@ -166,6 +178,24 @@ impl RequestError {
         matches!(self, Self::Service(ServiceError::TransportSend(error)) if http::needs_authorization(error))
     }
 
+    /// The `WWW-Authenticate` challenge of a `401` or `403` answer.
+    #[must_use]
+    pub fn challenge(&self) -> Option<String> {
+        match self {
+            Self::Service(ServiceError::TransportSend(error)) => http::challenge(error),
+            _ => None,
+        }
+    }
+
+    /// The challenge of a `401` answer.
+    #[must_use]
+    pub fn login_challenge(&self) -> Option<String> {
+        match self {
+            Self::Service(ServiceError::TransportSend(error)) => http::login_challenge(error),
+            _ => None,
+        }
+    }
+
     /// The scopes of a `403 insufficient_scope` answer.
     #[must_use]
     pub fn required_scopes(&self) -> Option<Vec<String>> {
@@ -182,6 +212,8 @@ pub struct Connection {
     service: Service,
     era: Era,
     process: Option<stdio::Process>,
+    /// True when the connection sends the OAuth token of a login.
+    authorized: bool,
 }
 
 /// Connects to the server, and finds its era.
@@ -350,6 +382,7 @@ async fn handshake(
         service,
         era,
         process,
+        authorized: launch.authorized.is_some(),
     })
 }
 
@@ -428,6 +461,12 @@ impl Connection {
     #[must_use]
     pub fn era(&self) -> &Era {
         &self.era
+    }
+
+    /// True when the connection sends the OAuth token of a login.
+    #[must_use]
+    pub fn is_authorized(&self) -> bool {
+        self.authorized
     }
 
     /// What the server said about itself in the handshake.

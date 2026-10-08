@@ -133,16 +133,31 @@ fn show_fix(server: &str, tool: &str) -> String {
     )
 }
 
-/// Runs `work` on a new connection, and always closes the connection.
+/// Runs `work` on a new connection, and always closes the connection. A
+/// server can let a connect with no token in and answer `401` to a
+/// request; then `work` runs once more on a connection with the stored
+/// login. The server did not do the first request.
 async fn with_connection<T>(
     context: &Context<'_>,
     server: &Server,
-    work: impl AsyncFnOnce(&Connection) -> Result<T, Failure>,
+    work: impl AsyncFn(&Connection) -> Result<T, Failure>,
 ) -> Result<T, Failure> {
     let connection = session::open(context, server).await?;
     let result = work(&connection).await;
+    let authorized = connection.is_authorized();
     connection.close().await;
-    result
+    match result {
+        Err(Failure {
+            login_challenge: Some(challenge),
+            ..
+        }) if !authorized => {
+            let connection = session::open_with_login(context, server, Some(&challenge)).await?;
+            let result = work(&connection).await;
+            connection.close().await;
+            result
+        }
+        other => other,
+    }
 }
 
 async fn server_show(context: &Context<'_>, word: &str) -> Result<(), Failure> {
@@ -301,21 +316,21 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
         || matches!(&input, Input::Pairs(pairs) if !pairs.is_empty());
     let name = server.name.as_str();
     with_connection(context, server, async |connection| {
-        let tool = if needs_tool {
-            Some(find_tool(
-                name,
-                list(context, server, connection).await?,
-                tool_name,
-            )?)
+        let tools = if needs_tool || mirrors_parameters(server, connection) {
+            Some(list(context, server, connection).await?)
         } else {
             None
+        };
+        let tool = match tools {
+            Some(tools) if needs_tool => Some(find_tool(name, tools, tool_name)?),
+            _ => None,
         };
         if let (true, Some(tool)) = (call.help, &tool) {
             return show_tool(context, name, tool);
         }
-        let arguments = match (input, &tool) {
-            (Input::Pairs(pairs), Some(tool)) => tool_args::coerce(&pairs, &tool.input_schema),
-            (Input::Object(object), _) => object,
+        let arguments = match (&input, &tool) {
+            (Input::Pairs(pairs), Some(tool)) => tool_args::coerce(pairs, &tool.input_schema),
+            (Input::Object(object), _) => object.clone(),
             _ => JsonObject::new(),
         };
         if let (false, Some(tool)) = (call.no_validate, &tool) {
@@ -334,6 +349,15 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
         print_response(context, name, tool_name, response)
     })
     .await
+}
+
+/// True when a call needs the tool list first: from `2026-07-28` an HTTP
+/// client mirrors the parameters with `x-mcp-header` into `Mcp-Param-*`
+/// headers, and rmcp knows these parameters only from a listed tool
+/// (SEP-2243). A tool that the list does not show stays callable.
+fn mirrors_parameters(server: &Server, connection: &Connection) -> bool {
+    matches!(server.transport, crate::config::Transport::Http(_))
+        && matches!(connection.era(), crate::era::Era::Modern { .. })
 }
 
 fn print_call_help() -> Result<(), Failure> {

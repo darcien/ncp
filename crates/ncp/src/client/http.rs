@@ -182,6 +182,38 @@ pub fn needs_authorization(error: &DynamicTransportError) -> bool {
     )
 }
 
+/// The `WWW-Authenticate` challenge of a `401` or `403` answer. It names
+/// the protected resource metadata and the scopes (RFC 9728 §5.1).
+#[must_use]
+pub fn challenge(error: &DynamicTransportError) -> Option<String> {
+    match error
+        .error
+        .downcast_ref::<StreamableHttpError<reqwest::Error>>()
+    {
+        Some(StreamableHttpError::AuthRequired(required)) => {
+            Some(required.www_authenticate_header.clone())
+        }
+        Some(StreamableHttpError::InsufficientScope(insufficient)) => {
+            Some(insufficient.www_authenticate_header.clone())
+        }
+        _ => None,
+    }
+}
+
+/// The challenge of a `401` answer: the server needs a login.
+#[must_use]
+pub fn login_challenge(error: &DynamicTransportError) -> Option<String> {
+    match error
+        .error
+        .downcast_ref::<StreamableHttpError<reqwest::Error>>()
+    {
+        Some(StreamableHttpError::AuthRequired(required)) => {
+            Some(required.www_authenticate_header.clone())
+        }
+        _ => None,
+    }
+}
+
 /// The scopes that the server asked for in its `403 insufficient_scope`
 /// answer, or `None` for another error.
 #[must_use]

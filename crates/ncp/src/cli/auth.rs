@@ -181,8 +181,9 @@ async fn login(
         AuthorizationManager::new_with_oauth_http_client(remote.url.as_str(), Arc::new(http))
             .await
             .map_err(|error| auth_failure("OAuth setup", &error).server(name))?;
+    let challenge = session::challenge(context, server).await?;
     let metadata = manager
-        .resolve_metadata()
+        .resolve_metadata_from_challenge(challenge.as_deref())
         .await
         .map_err(|error| auth_failure("OAuth discovery", &error).server(name))?
         .metadata;
@@ -257,6 +258,17 @@ async fn login(
     )
 }
 
+/// The inputs of [`stored_login`].
+#[derive(Clone, Copy)]
+pub(super) struct StoredLogin<'a> {
+    pub server: &'a Server,
+    pub remote: &'a RemoteServer,
+    pub http: &'a reqwest::Client,
+    pub observer: &'a crate::client::observe::Observer,
+    /// The `WWW-Authenticate` challenge of the `401` answer.
+    pub challenge: Option<&'a str>,
+}
+
 /// The OAuth client with the stored tokens of the server, or `None` when
 /// no place has tokens, or when the tokens are for another issuer. `ncp`
 /// calls this only after the server answered `401`, so that a server with
@@ -267,11 +279,15 @@ async fn login(
 /// Returns a failure when a store cannot answer or when discovery fails.
 pub(super) async fn stored_login(
     context: &Context<'_>,
-    server: &Server,
-    remote: &RemoteServer,
-    http: &reqwest::Client,
-    observer: &crate::client::observe::Observer,
+    login: &StoredLogin<'_>,
 ) -> Result<Option<crate::client::http::Authorized>, Failure> {
+    let StoredLogin {
+        server,
+        remote,
+        http,
+        observer,
+        challenge,
+    } = *login;
     let name = server.name.as_str();
     let key = CredentialKey::OAuthTokens(server.name.clone());
     let native = secrets::native(context).await.ok();
@@ -303,6 +319,15 @@ pub(super) async fn stored_login(
     manager.set_credential_store(
         TokenStore::new(server.name.clone(), store.clone()).with_tokens(tokens),
     );
+    // The challenge can name the protected resource metadata (RFC 9728
+    // §5.1). With metadata in place, rmcp does no discovery of its own.
+    let metadata = manager
+        .resolve_metadata_from_challenge(challenge)
+        .await
+        .map_err(|error| auth_failure("OAuth discovery", &error).server(name))?
+        .metadata;
+    check_https(&metadata).map_err(|failure| failure.server(name))?;
+    manager.set_metadata(metadata);
     let usable = manager
         .initialize_from_store()
         .await
