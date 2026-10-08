@@ -1,6 +1,7 @@
 //! `--timings`: the time of each step of one run, on stderr.
 //!
-//! The record shows CPU time and network time apart (requirement F2). Each
+//! The record shows CPU time and network time apart, so that a slow server
+//! and a slow `ncp` look different. Each
 //! step that did not occur in the run is absent.
 
 use std::{

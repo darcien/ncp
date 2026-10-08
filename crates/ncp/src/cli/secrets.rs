@@ -46,7 +46,7 @@ pub(super) async fn native(context: &Context<'_>) -> Opened {
     open_within(context, store::CALL_LIMIT).await
 }
 
-async fn open_within(context: &Context<'_>, limit: Duration) -> Opened {
+pub(super) async fn open_within(context: &Context<'_>, limit: Duration) -> Opened {
     let open = context.open_native;
     let program_limit = limit.saturating_sub(PROGRAM_MARGIN);
     interruptible(
@@ -152,7 +152,7 @@ async fn read_stored<'a>(
 }
 
 /// True for an error of the whole store, not of one item.
-fn store_is_down(error: &StoreError) -> bool {
+pub(super) fn store_is_down(error: &StoreError) -> bool {
     matches!(
         error,
         StoreError::Unavailable(_)

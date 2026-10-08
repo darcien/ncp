@@ -1542,3 +1542,70 @@ async fn native_store_that_cannot_answer_gives_its_reason_and_not_a_login_hint()
         "{error}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_to_the_file_removes_old_native_tokens_and_calls_use_the_file() {
+    let (_auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    let home = oauth_home("login-move", &fixture.url).with_fake_keychain();
+    assert_eq!(home.run(&["auth", "login", "web"]).code(), 0);
+    let run = home.run(&LOGIN_TO_FILE);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let items = std::fs::read_to_string(home.root.join("keychain/items.json")).unwrap();
+    assert!(!items.contains("oauth/web/tokens"), "{items}");
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tokens_in_the_file_work_when_the_native_store_cannot_answer() {
+    let (_auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    let home = oauth_home("native-down-file", &fixture.url).with_fake_keychain();
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    std::fs::write(home.root.join("keychain/fail"), "36").unwrap();
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let run = home.run(&["auth", "status", "web"]);
+    assert_eq!(
+        run.stdout()["servers"][0]["loggedIn"],
+        true,
+        "{}",
+        run.describe()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_that_gets_no_redirect_stops_at_the_time_limit() {
+    let (_auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    let home = Home::new("login-timeout");
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
+    let started = std::time::Instant::now();
+    let run = home.run(&[
+        "--timeout",
+        "1",
+        "auth",
+        "login",
+        "web",
+        "--credential-store",
+        "file",
+    ]);
+    assert_eq!(run.code(), 3, "{}", run.describe());
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    assert_eq!(
+        run.error()["hint"],
+        "give a longer limit with --timeout <SECONDS>"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_to_a_server_that_names_no_authorization_server_is_an_error() {
+    let fixture = serve_http(Mode::Modern).await.unwrap();
+    let home = oauth_home("login-no-as", &fixture.url);
+    let run = home.run(&LOGIN_TO_FILE);
+    assert_eq!(run.code(), 3, "{}", run.describe());
+    let message = run.error()["message"].as_str().unwrap().to_string();
+    assert!(
+        message.contains("names no authorization server"),
+        "{message}"
+    );
+    assert!(!home.root.join("state/ncp/credentials.json").exists());
+}

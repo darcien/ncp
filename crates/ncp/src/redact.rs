@@ -1,6 +1,7 @@
 //! Hidden values in diagnostic output.
 //!
-//! Verbose output must not show a secret (requirements S3 and I6). As uv
+//! Verbose output must not show a secret, because logs and screens are
+//! often shared. As uv
 //! does, a hidden value shows as `****`, always with the same length. An
 //! empty value shows as empty. Thus the user can see if a value is set or
 //! empty, but never its length.

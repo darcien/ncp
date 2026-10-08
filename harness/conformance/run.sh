@@ -12,7 +12,8 @@
 #
 # Each version runs three times: the frozen requirement set of the
 # version, all scenarios of the version, and all scenarios again with the
-# era probe of ncp in place of the era that the adapter writes. expected-failures.yaml lists the known
+# era probe of ncp in place of the era that the adapter
+# writes. expected-failures.yaml lists the known
 # failures with their reasons. The suite fails on a new failure and on an
 # entry that passes.
 set -eu

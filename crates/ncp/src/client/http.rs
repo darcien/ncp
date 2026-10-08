@@ -61,7 +61,7 @@ pub fn client(env: &Env, observer: &Observer) -> Result<reqwest::Client, HttpErr
 
 /// The builder with the settings of each client of `ncp`: the proxy, the
 /// roots of `SSL_CERT_FILE`, and the observer. The OAuth requests use it
-/// too, so that the same rules apply to them (requirement N2).
+/// too, so that the same proxy and root rules apply to them.
 ///
 /// # Errors
 ///

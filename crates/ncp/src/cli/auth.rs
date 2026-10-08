@@ -32,6 +32,7 @@ use crate::{
         items::{self, ClientItem},
         store::{TokenStore, parse_item},
     },
+    server::ServerName,
     store::CredentialStore,
 };
 
@@ -71,18 +72,22 @@ pub(super) async fn command(context: &Context<'_>, command: AuthCommand) -> Resu
             credential_store,
         } => {
             let limit = context.request_limit;
-            let timeout = Failure::new(
-                Exit::Auth,
-                format!("the login did not complete in {} s", limit.as_secs()),
-            )
+            let timeout = Failure::protocol(format!(
+                "the login did not complete in {} s",
+                limit.as_secs()
+            ))
             .hint("give a longer limit with --timeout <SECONDS>");
-            limited(
+            let name = limited(
                 context,
                 limit,
                 timeout,
                 Box::pin(login(context, &server, no_browser, credential_store)),
             )
-            .await
+            .await?;
+            // After the limit of the login: the tokens are saved, and the
+            // cleanup has its own short limit.
+            remove_old_tokens(context, &name, credential_store).await;
+            Ok(())
         }
         AuthCommand::Logout { server } => logout(context, &server).await,
         AuthCommand::Status { server } => status(context, server.as_deref()).await,
@@ -217,15 +222,18 @@ async fn login(
     word: &str,
     no_browser: bool,
     place: CredentialPlace,
-) -> Result<(), Failure> {
+) -> Result<ServerName, Failure> {
     let loaded = session::load_config(&context.paths.config_file, context.env)?;
     let server = session::select(&loaded, word, context.ui)?;
     let name = server.name.as_str();
     let remote = remote(server)?;
     let store = place_store(context, name, place).await?;
-    let observer = diagnostics::observer(context.ui, name, context.timings.clone(), |url| {
-        crate::redact::url(url)
-    });
+    let observer = diagnostics::observer(
+        context.ui,
+        name,
+        context.timings.clone(),
+        session::shown_url(server),
+    );
     let http = OAuthHttp::new(context.env, &observer)
         .map_err(|error| Failure::protocol(error.to_string()).server(name))?;
     let mut manager =
@@ -291,7 +299,6 @@ async fn login(
             }
             error => auth_failure("OAuth token request", &error).server(name),
         })?;
-    remove_old_tokens(context, server, place).await;
     let granted = session.auth_manager.get_current_scopes().await;
     context.ui.result(
         || {
@@ -304,7 +311,8 @@ async fn login(
             json!({"server": name, "issuer": issuer, "scopes": granted,
                 "place": secrets::place_name(place)})
         },
-    )
+    )?;
+    Ok(server.name.clone())
 }
 
 /// The inputs of [`stored_login`].
@@ -319,7 +327,7 @@ pub(super) struct StoredLogin<'a> {
 }
 
 /// The OAuth client with the stored tokens of the server, or `None` when
-/// no place has tokens, or when the tokens are for another issuer. `ncp`
+/// the tokens are for another issuer. `ncp`
 /// calls this only after the server answered `401`, so that a server with
 /// no login never opens the native store (design C1).
 ///
@@ -329,6 +337,7 @@ pub(super) struct StoredLogin<'a> {
 pub(super) async fn stored_login(
     context: &Context<'_>,
     login: &StoredLogin<'_>,
+    found: FoundTokens,
 ) -> Result<Option<crate::client::http::Authorized>, Failure> {
     let StoredLogin {
         server,
@@ -338,15 +347,7 @@ pub(super) async fn stored_login(
         challenge,
     } = *login;
     let name = server.name.as_str();
-    let places = token_places(context)
-        .await
-        .map_err(|failure| failure.server(name))?;
-    let Some((store, secret)) = find_tokens(context, &places, server)
-        .await
-        .map_err(|failure| failure.server(name))?
-    else {
-        return Ok(None);
-    };
+    let (store, secret) = found;
     let item =
         parse_item(&secret).map_err(|error| Failure::protocol(error.to_string()).server(name))?;
     let client_id = item.tokens.client_id.clone();
@@ -400,7 +401,7 @@ pub(super) async fn stored_login(
 
 /// Keeps the scopes that the server asked for in a `403` answer in the
 /// tokens item, so that the next `auth login` asks for them with the
-/// scopes that the user has (requirement A9). A failure gives a warning:
+/// scopes that the user has, as the spec asks for a step-up. A failure gives a warning:
 /// the error of the call is the result.
 pub(super) async fn remember_scopes(context: &Context<'_>, server: &Server, error: &RequestError) {
     let Some(scopes) = error.required_scopes().filter(|scopes| !scopes.is_empty()) else {
@@ -424,8 +425,7 @@ async fn add_required_scopes(
     scopes: &[String],
 ) -> Result<(), Failure> {
     let key = CredentialKey::OAuthTokens(server.name.clone());
-    let places = token_places(context).await?;
-    if let Some((store, secret)) = find_tokens(context, &places, server).await? {
+    if let Some((store, secret)) = find_tokens(context, server).await? {
         let mut tokens: Value = serde_json::from_str(secret.expose()).map_err(|error| {
             Failure::protocol(format!("the stored tokens are not JSON: {error}"))
         })?;
@@ -445,43 +445,57 @@ async fn add_required_scopes(
     Ok(())
 }
 
-/// The places of the tokens, in the order of the search: the native store,
-/// then the file. A host with no native store has only the file. A native
-/// store that cannot answer, for example a locked keyring, is an error that
-/// says why (design 2.4): the tokens can be there.
-async fn token_places(context: &Context<'_>) -> Result<Vec<Arc<dyn CredentialStore>>, Failure> {
-    let native = match secrets::native(context).await {
-        Ok(native) => Some(native),
-        Err(crate::store::StoreError::Unavailable(_)) => None,
-        Err(error) => return Err(secrets::store_failure(&error)),
-    };
-    Ok(native.into_iter().chain([secrets::file(context)]).collect())
-}
+/// The tokens item of a server, and the store that has it.
+pub(super) type FoundTokens = (Arc<dyn CredentialStore>, crate::credential::Secret);
 
-/// The tokens item of the server from the first place that has it, with
-/// that place. The time goes to the credentials of `--timings`.
-async fn find_tokens(
+/// The tokens item of the server from the first place that has it: the
+/// native store, then the file, as for `${NAME}` (design 2.4). A host with
+/// no native store has only the file. A native store that cannot answer,
+/// for example a locked keyring, does not stop the search; its error is
+/// the result only when the file has no tokens, so that the error says
+/// why. The time goes to the credentials of `--timings`.
+///
+/// # Errors
+///
+/// Returns a failure when the file cannot be read, when the native store
+/// fails for one item, or when it cannot answer and the file has no
+/// tokens.
+pub(super) async fn find_tokens(
     context: &Context<'_>,
-    places: &[Arc<dyn CredentialStore>],
     server: &Server,
-) -> Result<Option<(Arc<dyn CredentialStore>, crate::credential::Secret)>, Failure> {
+) -> Result<Option<FoundTokens>, Failure> {
     let started = std::time::Instant::now();
-    let key = CredentialKey::OAuthTokens(server.name.clone());
-    let mut found = None;
-    for store in places {
-        let wanted = key.clone();
-        let secret = secrets::call(context, store, move |store| store.load(&wanted))
-            .await
-            .map_err(|error| secrets::store_failure(&error))?;
-        if let Some(secret) = secret {
-            found = Some((store.clone(), secret));
-            break;
-        }
-    }
+    let found = search_tokens(context, server).await;
     if let Some(timings) = &context.timings {
         timings.update(|record| super::timings::add(&mut record.credentials, started.elapsed()));
     }
-    Ok(found)
+    found.map_err(|failure| failure.server(server.name.as_str()))
+}
+
+async fn search_tokens(
+    context: &Context<'_>,
+    server: &Server,
+) -> Result<Option<FoundTokens>, Failure> {
+    let key = CredentialKey::OAuthTokens(server.name.clone());
+    let (native, mut down) = match secrets::native(context).await {
+        Ok(native) => (Some(native), None),
+        Err(crate::store::StoreError::Unavailable(_)) => (None, None),
+        Err(error) => (None, Some(error)),
+    };
+    for store in native.into_iter().chain([secrets::file(context)]) {
+        let wanted = key.clone();
+        match secrets::call(context, &store, move |store| store.load(&wanted)).await {
+            Ok(Some(secret)) => return Ok(Some((store, secret))),
+            Ok(None) => {}
+            Err(crate::store::StoreError::Interrupted) => return Err(session::interrupted()),
+            Err(error) if down.is_none() && secrets::store_is_down(&error) => down = Some(error),
+            Err(error) => return Err(secrets::store_failure(&error)),
+        }
+    }
+    match down {
+        Some(error) => Err(secrets::store_failure(&error)),
+        None => Ok(None),
+    }
 }
 
 fn scope_list(value: &Value) -> Vec<String> {
@@ -511,19 +525,13 @@ fn union(first: &[String], second: &[String]) -> Vec<String> {
 
 /// The scopes for a new login: the scopes that rmcp selects, the scopes
 /// that the user has, and the scopes of a `403` answer since the last
-/// login. A step-up asks for the old and the new scopes (requirement A9).
-async fn login_scopes(
-    context: &Context<'_>,
-    server: &Server,
-    store: &Arc<dyn CredentialStore>,
-    selected: &[String],
-) -> Vec<String> {
-    let key = CredentialKey::OAuthTokens(server.name.clone());
-    let stored = secrets::call(context, store, move |store| store.load(&key))
+/// login. A step-up asks for the old and the new scopes.
+async fn login_scopes(context: &Context<'_>, server: &Server, selected: &[String]) -> Vec<String> {
+    let stored = find_tokens(context, server)
         .await
         .ok()
         .flatten()
-        .and_then(|secret| serde_json::from_str::<Value>(secret.expose()).ok())
+        .and_then(|(_, secret)| serde_json::from_str::<Value>(secret.expose()).ok())
         .unwrap_or(Value::Null);
     let held = union(
         &scope_list(&stored["granted_scopes"]),
@@ -532,21 +540,28 @@ async fn login_scopes(
     union(selected, &held)
 }
 
+/// The limit of the cleanup after a login. It is a cleanup, so it must
+/// not wait for an unlock prompt of a store that the user did not choose.
+const CLEANUP_LIMIT: Duration = Duration::from_secs(5);
+
 /// Removes the tokens of the other place after a login. Calls read the
 /// native store first, so an old item there would hide the new tokens in
 /// the file. A failure gives a warning: the login worked.
-async fn remove_old_tokens(context: &Context<'_>, server: &Server, place: CredentialPlace) {
-    let name = server.name.as_str();
+async fn remove_old_tokens(context: &Context<'_>, name: &ServerName, place: CredentialPlace) {
     let other = match place {
         CredentialPlace::Native => Ok(secrets::file(context)),
-        CredentialPlace::File => secrets::native(context).await,
+        CredentialPlace::File => secrets::open_within(context, CLEANUP_LIMIT).await,
     };
-    let key = CredentialKey::OAuthTokens(server.name.clone());
+    let key = CredentialKey::OAuthTokens(name.clone());
     let removed = match other {
-        Ok(store) => secrets::call(context, &store, move |store| store.delete(&key)).await,
+        Ok(store) => {
+            let delete = crate::store::run_blocking(CLEANUP_LIMIT, move || store.delete(&key));
+            secrets::interruptible(context, delete).await
+        }
         Err(crate::store::StoreError::Unavailable(_)) => Ok(false),
         Err(error) => Err(error),
     };
+    let name = name.as_str();
     match removed {
         Ok(true) => context
             .ui
@@ -559,10 +574,10 @@ async fn remove_old_tokens(context: &Context<'_>, server: &Server, place: Creden
     }
 }
 
-/// The client for the login, in the order of the spec (requirement A6):
+/// The client for the login, in the order of the spec:
 /// the `oauth.clientId` of the configuration, then the stored client of
 /// the same issuer, then a new registration. A Client ID Metadata Document
-/// waits for a release decision (requirement A7).
+/// waits for a release decision: it needs a stable HTTPS URL.
 async fn client_request(
     context: &Context<'_>,
     server: &Server,
@@ -573,7 +588,7 @@ async fn client_request(
     redirect: &RedirectUri,
 ) -> Result<AuthorizationRequest, Failure> {
     let selected = manager.select_scopes(None, &[]);
-    let scopes = login_scopes(context, server, store, &selected).await;
+    let scopes = login_scopes(context, server, &selected).await;
     let request = AuthorizationRequest::new(redirect.to_string())
         .with_client_name(CLIENT_NAME)
         .with_scopes(scopes.clone());
@@ -864,14 +879,9 @@ async fn status(context: &Context<'_>, word: Option<&str>) -> Result<(), Failure
             .filter(|server| matches!(server.transport, Transport::Http(_)))
             .collect(),
     };
-    let places = if servers.is_empty() {
-        Vec::new()
-    } else {
-        token_places(context).await?
-    };
     let mut rows = Vec::new();
     for server in servers {
-        let tokens = match find_tokens(context, &places, server).await? {
+        let tokens = match find_tokens(context, server).await? {
             Some((_, secret)) => Some(serde_json::from_str::<Value>(secret.expose()).map_err(
                 |error| Failure::protocol(format!("the stored tokens are not JSON: {error}")),
             )?),

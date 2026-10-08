@@ -94,8 +94,26 @@ pub fn parse_item(secret: &Secret) -> Result<TokensItem, items::ItemError> {
     })
 }
 
+/// The mark of a failure of the credential file in the text of an rmcp
+/// error. rmcp keeps only a text, and the caller needs the kind: a file
+/// that fails is a local error, and a native store that fails is an
+/// authorization error with the file as the fix.
+const FILE_FAILED: &str = "the credential file failed: ";
+
 fn store_error(error: &StoreError) -> AuthError {
-    AuthError::CredentialStoreError(error.to_string())
+    let text = match error {
+        StoreError::Io { .. } | StoreError::OpenPermissions(_) | StoreError::Corrupt(_) => {
+            format!("{FILE_FAILED}{error}")
+        }
+        _ => error.to_string(),
+    };
+    AuthError::CredentialStoreError(text)
+}
+
+/// True when the text of a token store error is a failure of the file.
+#[must_use]
+pub fn is_file_failure(text: &str) -> bool {
+    text.starts_with(FILE_FAILED)
 }
 
 #[async_trait::async_trait]

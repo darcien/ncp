@@ -222,12 +222,16 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
     Ok(connection)
 }
 
-/// The stored login, within the connect limit and Ctrl-C: the OAuth steps
-/// (discovery, a refresh) have the limit of the connect (design C7).
+/// The stored login. The store read has its own limit of 60 s, so
+/// it comes first. The OAuth steps after it (discovery, a refresh) have
+/// the limit of the connect and Ctrl-C (design C7).
 async fn stored_login(
     context: &Context<'_>,
     login: &super::auth::StoredLogin<'_>,
 ) -> Result<Option<client::http::Authorized>, Failure> {
+    let Some(found) = super::auth::find_tokens(context, login.server).await? else {
+        return Ok(None);
+    };
     let limit = client::CONNECT_LIMIT;
     let timeout = Failure::protocol(format!(
         "the OAuth discovery did not complete in {} s",
@@ -238,7 +242,7 @@ async fn stored_login(
         context,
         limit,
         timeout,
-        Box::pin(super::auth::stored_login(context, login)),
+        Box::pin(super::auth::stored_login(context, login, found)),
     )
     .await
 }
@@ -330,11 +334,7 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
     ui.debug(Some(name), &cached_era_text(cached.as_ref()));
     let values = super::secrets::resolve(context, server).await?;
     let shown = server.clone();
-    // The server URL shows as the file writes it; each other URL, for
-    // example of OAuth, with its secrets hidden.
-    let observer = diagnostics::observer(ui, name, context.timings.clone(), move |url| {
-        crate::redact::url(&hide_expanded_url(&shown, url.to_string()))
-    });
+    let observer = diagnostics::observer(ui, name, context.timings.clone(), shown_url(&shown));
     // Only an http server needs the HTTP client. Thus a bad SSL_CERT_FILE
     // does not stop a stdio server.
     let http = match &server.transport {
@@ -472,6 +472,15 @@ fn through_proxy(env: &Env, url: &crate::server::ServerUrl, failure: Failure) ->
     }
 }
 
+/// How a URL of the server shows in `-vv`: the server URL as the file
+/// writes it; each other URL, for example of OAuth, with its secrets
+/// hidden. An expanded value of the server URL can also be in an OAuth
+/// URL, for example in `resource`.
+pub fn shown_url(server: &Server) -> impl Fn(&str) -> String + Send + Sync + 'static {
+    let server = server.clone();
+    move |url| crate::redact::url(&hide_expanded_url(&server, url.to_string()))
+}
+
 /// The message with the expanded URL replaced by the URL as the file writes
 /// it, with its secret query values and user information hidden. HTTP
 /// errors hold the URL, and a query parameter can hold a key.
@@ -518,17 +527,22 @@ pub fn interrupted() -> Failure {
     Failure::new(Exit::Interrupted, "interrupted")
 }
 
-/// The failure of a request after the connect.
-#[must_use]
 /// The store of the OAuth tokens failed, for example at the save of a
-/// refresh: a locked keyring, or a token set longer than the line of
-/// `security` (design B51). The file can keep the tokens.
+/// refresh. A file that fails is a local error. A native store that fails
+/// (a locked keyring, or a token set longer than the line of `security`,
+/// design B51) is an authorization error: the file can keep the tokens.
 fn token_store_failure(server: &Server, text: &str) -> Failure {
-    Failure::new(Exit::Auth, format!("cannot keep the OAuth tokens: {text}"))
+    let message = format!("cannot keep the OAuth tokens: {text}");
+    if crate::oauth::store::is_file_failure(text) {
+        return Failure::protocol(message).server(server.name.as_str());
+    }
+    Failure::new(Exit::Auth, message)
         .server(server.name.as_str())
         .hint(format!("{} --credential-store file", login_hint(server)))
 }
 
+/// The failure of a request after the connect.
+#[must_use]
 pub fn request_failure(server: &Server, method: &str, error: &RequestError) -> Failure {
     if let Some(text) = error.token_store_error() {
         return token_store_failure(server, &text);

@@ -4,7 +4,8 @@
 //! and the client credentials (`oauth/<server>/client`). The tokens item is
 //! the JSON of rmcp `StoredCredentials`, because rmcp reads it back. The
 //! client item records the issuer that registered the client, so that a new
-//! issuer causes a new registration (requirement A5).
+//! issuer causes a new registration: a client of one authorization server
+//! is not valid at another one.
 
 use std::fmt;
 
