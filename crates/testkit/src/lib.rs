@@ -7,6 +7,11 @@
 //! - `slow-N`: answers after N ms. Also accepts `initialize`.
 //! - `modern-only`: answers at once, and rejects `initialize`.
 //! - `slow-modern-only-N`: answers after N ms, and rejects `initialize`.
+//! - `tools-only`: as `modern`, with no resources and no prompts.
+//! - `repeat-cursor`: as `modern`, and `prompts/list` gives the same cursor
+//!   for ever, as a broken server can.
+//!
+//! The lists of resources and prompts come in two pages.
 //!
 //! [`serve_http_with_oauth`] protects the HTTP fixture with the tokens of a
 //! local authorization server ([`auth_server`]).
@@ -50,6 +55,8 @@ pub enum Mode {
     Slow(Duration),
     ModernOnly,
     SlowModernOnly(Duration),
+    ToolsOnly,
+    RepeatCursor,
 }
 
 impl Mode {
@@ -61,6 +68,8 @@ impl Mode {
             "modern" => Ok(Self::Modern),
             "legacy" => Ok(Self::Legacy),
             "modern-only" => Ok(Self::ModernOnly),
+            "tools-only" => Ok(Self::ToolsOnly),
+            "repeat-cursor" => Ok(Self::RepeatCursor),
             other => {
                 let millis = |prefix: &str| {
                     other
@@ -120,6 +129,11 @@ fn tools() -> Vec<Tool> {
     ]
 }
 
+/// The cursor of a list request, when the client gives one.
+fn cursor(request: Option<&PaginatedRequestParams>) -> Option<&str> {
+    request.and_then(|params| params.cursor.as_deref())
+}
+
 fn text_result(text: impl Into<String>) -> CallToolResponse {
     CallToolResult::success(vec![ContentBlock::text(text)]).into()
 }
@@ -133,14 +147,16 @@ fn argument<'a>(arguments: &'a JsonObject, name: &str) -> &'a str {
 
 impl ServerHandler for Fixture {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(
+        let capabilities = if self.mode == Mode::ToolsOnly {
+            ServerCapabilities::builder().enable_tools().build()
+        } else {
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
                 .enable_prompts()
-                .build(),
-        )
-        .with_instructions("Fixture server for the tests of ncp.")
+                .build()
+        };
+        ServerConfig::new(capabilities).with_instructions("Fixture server for the tests of ncp.")
     }
 
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
@@ -164,7 +180,9 @@ impl ServerHandler for Fixture {
         let mode = self.mode.clone();
         async move {
             match mode {
-                Mode::Modern | Mode::ModernOnly => Ok(result),
+                Mode::Modern | Mode::ModernOnly | Mode::ToolsOnly | Mode::RepeatCursor => {
+                    Ok(result)
+                }
                 Mode::Legacy => Err(ErrorData::new(
                     ErrorCode::METHOD_NOT_FOUND,
                     "Method not found",
@@ -188,15 +206,26 @@ impl ServerHandler for Fixture {
 
     fn list_resources(
         &self,
-        _request: Option<PaginatedRequestParams>,
+        request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListResourcesResult, ErrorData>> + MaybeSendFuture + '_ {
-        std::future::ready(Ok(ListResourcesResult::with_all_items(vec![
-            Resource::new("fixture://greeting", "greeting")
-                .with_description("A greeting")
-                .with_mime_type("text/plain"),
-            Resource::new("fixture://logo", "logo").with_mime_type("image/png"),
-        ])))
+        let result = match cursor(request.as_ref()) {
+            None => {
+                let mut page = ListResourcesResult::with_all_items(vec![
+                    Resource::new("fixture://greeting", "greeting")
+                        .with_description("A greeting")
+                        .with_mime_type("text/plain"),
+                ]);
+                page.next_cursor = Some("2".into());
+                page
+            }
+            Some(_) => ListResourcesResult::with_all_items(vec![
+                Resource::new("fixture://logo", "logo").with_mime_type("image/png"),
+                Resource::new("fixture://pair", "pair").with_description("Two contents"),
+                Resource::new("fixture://ask", "ask").with_description("Asks for input"),
+            ]),
+        };
+        std::future::ready(Ok(result))
     }
 
     fn list_resource_templates(
@@ -217,6 +246,19 @@ impl ServerHandler for Fixture {
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ReadResourceResponse, ErrorData>> + MaybeSendFuture + '_ {
         let uri = request.uri;
+        if uri == "fixture://ask" {
+            return std::future::ready(Ok(ReadResourceResponse::InputRequired(
+                InputRequiredResult::from_request_state("state-r"),
+            )));
+        }
+        if uri == "fixture://pair" {
+            return std::future::ready(Ok(ReadResourceResponse::Complete(
+                ReadResourceResult::new(vec![
+                    ResourceContents::text("one", uri.as_str()),
+                    ResourceContents::text("two", uri.as_str()),
+                ]),
+            )));
+        }
         let contents = match uri.as_str() {
             "fixture://greeting" => Some(ResourceContents::text("hello\n", uri.as_str())),
             // The bytes of a PNG signature, in base64.
@@ -240,17 +282,31 @@ impl ServerHandler for Fixture {
 
     fn list_prompts(
         &self,
-        _request: Option<PaginatedRequestParams>,
+        request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListPromptsResult, ErrorData>> + MaybeSendFuture + '_ {
         let name = PromptArgument::new("name")
             .with_description("Who to greet")
             .with_required(true);
-        std::future::ready(Ok(ListPromptsResult::with_all_items(vec![Prompt::new(
-            "greet",
-            Some("Greet a person"),
-            Some(vec![name]),
-        )])))
+        let greet = Prompt::new("greet", Some("Greet a person"), Some(vec![name]));
+        let result = match (cursor(request.as_ref()), &self.mode) {
+            (_, Mode::RepeatCursor) => {
+                let mut page = ListPromptsResult::with_all_items(vec![greet]);
+                page.next_cursor = Some("again".into());
+                page
+            }
+            (None, _) => {
+                let mut page = ListPromptsResult::with_all_items(vec![greet]);
+                page.next_cursor = Some("2".into());
+                page
+            }
+            (Some(_), _) => ListPromptsResult::with_all_items(vec![Prompt::new(
+                "ask",
+                Some("Asks for input"),
+                None,
+            )]),
+        };
+        std::future::ready(Ok(result))
     }
 
     fn get_prompt(
@@ -260,6 +316,9 @@ impl ServerHandler for Fixture {
     ) -> impl Future<Output = Result<GetPromptResponse, ErrorData>> + MaybeSendFuture + '_ {
         let arguments = request.arguments.unwrap_or_default();
         std::future::ready(match (request.name.as_str(), arguments.get("name")) {
+            ("ask", _) => Ok(GetPromptResponse::InputRequired(
+                InputRequiredResult::from_request_state("state-p"),
+            )),
             ("greet", Some(serde_json::Value::String(name))) => {
                 let message = PromptMessage::new_text(Role::User, format!("Hello, {name}!"));
                 Ok(GetPromptResponse::Complete(

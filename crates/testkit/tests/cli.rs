@@ -1944,3 +1944,77 @@ fn configuration_that_does_not_parse_completes_no_names_and_says_nothing() {
         run.describe()
     );
 }
+
+#[test]
+fn lists_read_all_pages_of_resources_and_prompts() {
+    let home = Home::new("pages");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let run = home.run(&["resource", "list", "fx"]);
+    assert_eq!(
+        run.stdout()["resources"].as_array().unwrap().len(),
+        4,
+        "{}",
+        run.describe()
+    );
+    let run = home.run(&["prompt", "list", "fx"]);
+    assert_eq!(
+        run.stdout()["prompts"].as_array().unwrap().len(),
+        2,
+        "{}",
+        run.describe()
+    );
+}
+
+#[test]
+fn list_with_a_repeated_cursor_stops_with_exit_3() {
+    let home = Home::new("repeat-cursor");
+    home.configure(&json!({"fx": stdio("repeat-cursor")}));
+    let run = home.run(&["prompt", "list", "fx"]);
+    assert_eq!(run.code(), 3, "{}", run.describe());
+    assert!(run.error()["message"].as_str().unwrap().contains("cursor"));
+}
+
+#[test]
+fn server_with_no_resources_or_prompts_gives_empty_lists_and_a_hint() {
+    let home = Home::new("tools-only");
+    home.configure(&json!({"fx": stdio("tools-only")}));
+    for (command, field) in [("resource", "resources"), ("prompt", "prompts")] {
+        let run = home.run(&[command, "list", "fx"]);
+        assert_eq!(run.code(), 0, "{}", run.describe());
+        assert_eq!(run.stdout()[field], json!([]));
+        assert!(!notes(&run, "hint").is_empty(), "{}", run.describe());
+    }
+}
+
+#[test]
+fn input_required_from_a_resource_or_a_prompt_gives_exit_5() {
+    let home = Home::new("input-required-read");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let run = home.run(&["resource", "read", "fx", "fixture://ask"]);
+    assert_eq!(run.code(), 5, "{}", run.describe());
+    assert_eq!(run.stdout()["resultType"], "input_required");
+    let run = home.run(&["prompt", "get", "fx", "ask"]);
+    assert_eq!(run.code(), 5, "{}", run.describe());
+}
+
+#[test]
+fn raw_read_of_several_contents_is_a_usage_error_with_empty_stdout() {
+    let home = Home::new("pair-raw");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let run = home.run(&[
+        "--output-format",
+        "text",
+        "resource",
+        "read",
+        "fx",
+        "fixture://pair",
+    ]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(run.stdout_is_empty());
+    // --output-format text gives text on stderr too.
+    let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
+    assert!(
+        stderr.contains("hint: use --output-format json"),
+        "{stderr}"
+    );
+}
