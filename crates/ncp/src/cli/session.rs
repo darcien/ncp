@@ -449,6 +449,16 @@ fn connect_failure(env: &Env, server: &Server, error: &ConnectError) -> Failure 
     };
     let failure =
         Failure::new(exit, hide_expanded_url(server, message)).server(server.name.as_str());
+    // The log of the server is on stderr already; the command gives the
+    // rest of the reason.
+    let failure = if let ConnectError::Exited { .. } = error {
+        failure.hint(format!(
+            "run the command in a shell to see why: {}",
+            super::render::target(server)
+        ))
+    } else {
+        failure
+    };
     let failure = if exit == Exit::Auth {
         failure.hint(login_hint(server))
     } else {

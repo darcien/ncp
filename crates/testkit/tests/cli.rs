@@ -653,7 +653,7 @@ fn unknown_tool_with_no_check_is_a_usage_error() {
     home.configure(&json!({"fx": stdio("modern")}));
     let run = home.run(&["tool", "call", "fx", "nope", "--no-validate"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "ncp tool show fx nope");
+    assert_eq!(run.error()["hint"], "ncp tool list fx");
 }
 
 #[test]
@@ -1810,4 +1810,28 @@ fn prompt_list_and_get_use_the_prompt_arguments() {
     assert_eq!(run.error()["hint"], "ncp prompt list fx");
     let run = home.run(&["prompt", "get", "fx", "greet", "name:=1"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
+}
+
+#[test]
+fn server_that_stops_at_its_start_gives_its_exit_status_and_its_log() {
+    let home = Home::new("stops-at-start");
+    home.configure(&json!({"fx": {"command": "/bin/sh", "args": ["-c", "echo boom >&2; exit 7"]}}));
+    let run = home.run(&["tool", "list", "fx"]);
+    assert_eq!(run.code(), 3, "{}", run.describe());
+    let error = run.error();
+    let message = error["message"].as_str().unwrap();
+    assert!(
+        message.contains("stopped before the handshake") && message.contains('7'),
+        "{message}"
+    );
+    assert!(
+        error["hint"].as_str().unwrap().contains("/bin/sh"),
+        "{error}"
+    );
+    let logs = notes(&run, "serverLog");
+    assert!(
+        logs.iter().any(|log| log["message"] == "boom"),
+        "{}",
+        run.describe()
+    );
 }

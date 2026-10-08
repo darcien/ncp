@@ -19,6 +19,12 @@ use crate::{
     expand::Env,
 };
 
+/// The wait for the last log lines of a server that stopped.
+const LOG_WAIT: Duration = Duration::from_millis(500);
+
+/// The wait for the exit status of a server whose handshake failed.
+const EXIT_WAIT: Duration = Duration::from_millis(500);
+
 /// Wait time after each stop step.
 const STOP_WAIT: Duration = Duration::from_secs(2);
 
@@ -63,6 +69,8 @@ impl std::fmt::Debug for ServerLog {
 
 pub struct Process {
     child: Box<dyn ChildWrapper>,
+    /// The reader of the stderr of the server.
+    log_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 /// Starts the server. Returns the process and its stdout and stdin.
@@ -93,14 +101,17 @@ pub fn spawn(
         .wrap(ProcessGroup::leader())
         .wrap(KillOnDrop)
         .spawn()?;
-    if let (ServerLog::Lines(write), Some(stderr)) = (log, child.stderr().take()) {
-        // The task ends when the server closes its stderr.
-        tokio::spawn(log_lines(stderr, write.clone()));
-    }
+    // The task ends when the server closes its stderr.
+    let log_task = match (log, child.stderr().take()) {
+        (ServerLog::Lines(write), Some(stderr)) => {
+            Some(tokio::spawn(log_lines(stderr, write.clone())))
+        }
+        _ => None,
+    };
     let stdout = child.stdout().take();
     let stdin = child.stdin().take();
     match (stdout, stdin) {
-        (Some(stdout), Some(stdin)) => Ok((Process { child }, stdout, stdin)),
+        (Some(stdout), Some(stdin)) => Ok((Process { child, log_task }, stdout, stdin)),
         _ => Err(std::io::Error::other("server process has no stdio pipes")),
     }
 }
@@ -153,15 +164,28 @@ impl Process {
         self.child.id()
     }
 
-    /// Stops the process group. The caller closes stdin first.
+    /// The exit status, when the process ended or ends within a short
+    /// wait. A server that stops at its start closes its stdout first, so
+    /// its status can come a moment after the handshake fails.
+    pub async fn exit_status(&mut self) -> Option<std::process::ExitStatus> {
+        tokio::time::timeout(EXIT_WAIT, self.child.wait())
+            .await
+            .ok()?
+            .ok()
+    }
+
+    /// Stops the process group. The caller closes stdin first. Then the
+    /// last lines of its log go out: they often say why a server stopped.
     pub async fn stop(mut self) {
-        if self.wait_for_exit().await {
-            return;
+        let exited = self.wait_for_exit().await
+            || (self.child.signal(SIGTERM).is_ok() && self.wait_for_exit().await);
+        if !exited {
+            let _ = Box::into_pin(self.child.kill()).await;
         }
-        if self.child.signal(SIGTERM).is_ok() && self.wait_for_exit().await {
-            return;
+        if let Some(task) = self.log_task.take() {
+            // A child process of the server can keep stderr open.
+            let _ = tokio::time::timeout(LOG_WAIT, task).await;
         }
-        let _ = Box::into_pin(self.child.kill()).await;
     }
 
     async fn wait_for_exit(&mut self) -> bool {

@@ -132,6 +132,8 @@ pub enum ConnectError {
     Cancelled,
     #[error("no HTTP client was given for an http server")]
     NoHttpClient,
+    #[error("the server {command:?} stopped before the handshake completed ({status})")]
+    Exited { command: String, status: String },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -343,10 +345,7 @@ async fn handshake(
                     ConnectError::Spawn {
                         // The command as the file writes it: an expanded
                         // value must not show.
-                        command: match &launch.server.target {
-                            Target::Stdio { command, .. } => command.clone(),
-                            Target::Remote { .. } => String::new(),
-                        },
+                        command: configured_command(launch.server),
                         cwd: match &launch.server.target {
                             Target::Stdio { cwd, .. } => cwd.clone(),
                             Target::Remote { .. } => None,
@@ -365,7 +364,27 @@ async fn handshake(
             // The handshake future owns stdin. It ends with the race, so
             // stdin is closed before the stop steps.
             match race(serve, deadline, launch.cancel).await {
-                Ended::Done(service) => (service.map_err(failed)?, Some(process)),
+                Ended::Done(Ok(service)) => (service, Some(process)),
+                // A failed handshake can be a server that stopped: a closed
+                // connection, or a broken pipe on Linux. Its exit status
+                // says why. The answer of a legacy server stays as it is,
+                // so that the probe can fall back.
+                Ended::Done(Err(source)) if !is_legacy_answer(&source) => {
+                    let mut process = process;
+                    let exited = process.exit_status().await;
+                    process.stop().await;
+                    return Err(match exited {
+                        Some(status) => ConnectError::Exited {
+                            command: configured_command(launch.server),
+                            status: status.to_string(),
+                        },
+                        None => failed(source),
+                    });
+                }
+                Ended::Done(Err(source)) => {
+                    process.stop().await;
+                    return Err(failed(source));
+                }
                 ended => {
                     process.stop().await;
                     return Err(ended.into_error(timeout));
@@ -410,6 +429,14 @@ async fn handshake(
         process,
         authorized: launch.authorized.is_some(),
     })
+}
+
+/// The command as the file writes it: an expanded value must not show.
+fn configured_command(server: &Server) -> String {
+    match &server.target {
+        Target::Stdio { command, .. } => command.clone(),
+        Target::Remote { .. } => String::new(),
+    }
 }
 
 /// How a handshake ended.

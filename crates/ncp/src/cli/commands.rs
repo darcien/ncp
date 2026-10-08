@@ -367,7 +367,7 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
             Ok(response) => response,
             Err(error) => {
                 super::auth::remember_scopes(context, server, &error).await;
-                return Err(call_failure(server, tool_name, &error));
+                return Err(call_failure(server, tool_name, tool.is_some(), &error));
             }
         };
         print_response(context, name, tool_name, response)
@@ -637,20 +637,27 @@ fn print_call_help() -> Result<(), Failure> {
 
 /// The spec says that a server answers an unknown tool or bad arguments
 /// with "invalid params" (MCP 2025-11-25, server/tools, "Error Handling").
-/// That is a usage error, and `tool show` gives the fix.
-fn call_failure(server: &Server, tool: &str, error: &RequestError) -> Failure {
+/// That is a usage error. When `ncp` knows the tool from the list, `tool
+/// show` gives the fix; else the tool can be unknown, and `tool list`
+/// gives the fix.
+fn call_failure(server: &Server, tool: &str, listed: bool, error: &RequestError) -> Failure {
     let name = server.name.as_str();
     match error {
         RequestError::Service(ServiceError::McpError(data))
             if data.code == ErrorCode::INVALID_PARAMS =>
         {
-            Failure::usage(format!("the server refused the call: {}", data.message))
-                .server(name)
-                .hint(format!(
+            let hint = if listed {
+                format!(
                     "ncp tool show {} {}",
                     render::shell_word(name),
                     render::shell_word(tool)
-                ))
+                )
+            } else {
+                format!("ncp tool list {}", render::shell_word(name))
+            };
+            Failure::usage(format!("the server refused the call: {}", data.message))
+                .server(name)
+                .hint(hint)
         }
         _ => session::request_failure(server, "tools/call", error),
     }
