@@ -5,6 +5,7 @@ mod commands;
 mod outcome;
 mod render;
 mod schema_check;
+pub mod secrets;
 mod session;
 mod tool_args;
 mod ui;
@@ -12,6 +13,7 @@ mod ui;
 use std::{process::ExitCode, time::Duration};
 
 use clap::{Parser, error::ErrorKind};
+use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 
 use self::{
@@ -29,6 +31,13 @@ const SHUTDOWN_LIMIT: Duration = Duration::from_secs(2);
 /// Runs `ncp` and gives its exit code.
 #[must_use]
 pub fn main() -> ExitCode {
+    main_with(secrets::open_native)
+}
+
+/// Runs `ncp` with another native store. The test kit gives a fake, so that
+/// tests never use the real Keychain or Secret Service.
+#[must_use]
+pub fn main_with(open_native: secrets::OpenNative) -> ExitCode {
     let ui = Ui {
         format: Format::detect(),
     };
@@ -45,7 +54,7 @@ pub fn main() -> ExitCode {
             return failure.exit.into();
         }
     };
-    let exit = runtime.block_on(run(cli, &env, ui));
+    let exit = runtime.block_on(run(cli, &env, ui, open_native));
     shut_down(runtime);
     exit.into()
 }
@@ -76,7 +85,7 @@ fn process_env() -> Env {
         .collect()
 }
 
-async fn run(cli: Cli, env: &Env, ui: Ui) -> Exit {
+async fn run(cli: Cli, env: &Env, ui: Ui, open_native: secrets::OpenNative) -> Exit {
     let result = async {
         let paths = Paths::from_env(env).map_err(|error| Failure::protocol(error.to_string()))?;
         let context = Context {
@@ -85,10 +94,12 @@ async fn run(cli: Cli, env: &Env, ui: Ui) -> Exit {
             paths,
             request_limit: Duration::from_secs(cli.options.timeout),
             cancel: interrupt_token(),
+            open_native,
         };
         match cli.command {
             Command::Server(command) => commands::server(&context, command).await,
             Command::Tool(command) => commands::tool(&context, command).await,
+            Command::Secret(command) => secrets::command(&context, command).await,
         }
     }
     .await;
@@ -101,18 +112,24 @@ async fn run(cli: Cli, env: &Env, ui: Ui) -> Exit {
     }
 }
 
-/// A token that fires on Ctrl-C. The terminal sends SIGINT to `ncp` only,
-/// because each stdio server runs in its own process group. Thus `ncp` can
+/// A token that fires on Ctrl-C. Each stdio server runs in its own process
+/// group, so the SIGINT of the terminal does not reach it, and `ncp` can
 /// send the cancel request and stop the server itself (the spec,
-/// basic/utilities/cancellation).
+/// basic/utilities/cancellation). A store program stays in the group of
+/// `ncp`, so Ctrl-C stops it too.
 fn interrupt_token() -> CancellationToken {
     let token = CancellationToken::new();
-    let fire = token.clone();
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            fire.cancel();
-        }
-    });
+    // The handler is in place when this function returns, before the first
+    // await. Thus a Ctrl-C at any time reaches the token, also during a
+    // read of stdin. With no handler, the default action stops `ncp`.
+    if let Ok(mut interrupt) = signal(SignalKind::interrupt()) {
+        let fire = token.clone();
+        tokio::spawn(async move {
+            if interrupt.recv().await.is_some() {
+                fire.cancel();
+            }
+        });
+    }
     token
 }
 

@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 
 const NCP: &str = env!("CARGO_BIN_EXE_ncp-cli");
 const FIXTURE: &str = env!("CARGO_BIN_EXE_ncp-fixture");
+const FAKE_SECURITY: &str = env!("CARGO_BIN_EXE_fake-security");
 
 /// A temporary home for one test.
 struct Home {
@@ -56,6 +57,16 @@ impl Home {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, json!({ "mcpServers": servers }).to_string()).unwrap();
         self
+    }
+
+    /// A fake `security` program as the native store, with its files in
+    /// `keychain/`.
+    fn with_fake_keychain(self) -> Self {
+        let dir = self.root.join("keychain");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(FAKE_SECURITY, dir.join("security")).unwrap();
+        let program = dir.join("security").display().to_string();
+        self.set("NCP_TEST_SECURITY_PROGRAM", &program)
     }
 
     fn set(mut self, name: &str, value: &str) -> Self {
@@ -349,16 +360,169 @@ fn unknown_server_and_unknown_tool_name_the_command_that_lists_them() {
 }
 
 #[test]
-fn unset_variable_gives_a_usage_error_with_the_fix() {
-    let home = Home::new("unset");
-    home.configure(&json!({"fx": {"command": FIXTURE, "args": ["modern"],
-        "env": {"TOKEN": "${env:FIXTURE_TOKEN}"}}}));
+fn unset_variable_in_args_gives_a_usage_error_with_the_fix() {
+    let home = Home::new("unset-args");
+    home.configure(&json!({"fx": {"command": FIXTURE, "args": ["${env:FIXTURE_MODE}"]}}));
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "export FIXTURE_TOKEN=<value>");
-    let home = home.set("FIXTURE_TOKEN", "t");
-    let run = home.run(&["tool", "call", "fx", "env", "name=TOKEN"]);
-    assert_eq!(text_of(&run.stdout()), "t");
+    assert_eq!(run.error()["hint"], "export FIXTURE_MODE=<value>");
+    let home = home.set("FIXTURE_MODE", "modern");
+    assert_eq!(home.run(&["tool", "list", "fx"]).code(), 0);
+}
+
+fn env_server() -> Value {
+    json!({"fx": {"command": FIXTURE, "args": ["modern"],
+        "env": {"TOKEN": "${env:FIXTURE_TOKEN}"}}})
+}
+
+fn env_value(home: &Home) -> Run {
+    home.run(&["tool", "call", "fx", "env", "name=TOKEN"])
+}
+
+#[test]
+fn name_that_no_place_has_names_the_secret_set_command() {
+    let home = Home::new("unset-env").with_fake_keychain();
+    home.configure(&env_server());
+    let run = env_value(&home);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    let error = run.error();
+    assert_eq!(error["message"], "FIXTURE_TOKEN is not set and not stored");
+    assert_eq!(error["hint"], "ncp secret set FIXTURE_TOKEN");
+}
+
+#[test]
+fn name_with_no_native_store_names_the_file_option() {
+    let home = Home::new("no-native");
+    home.configure(&env_server());
+    let run = env_value(&home);
+    assert_eq!(run.code(), 4, "{}", run.describe());
+    assert_eq!(
+        run.error()["hint"],
+        "ncp secret set FIXTURE_TOKEN --credential-store file"
+    );
+    let run = home.run_with_stdin(&["secret", "set", "FIXTURE_TOKEN"], "v\n");
+    assert_eq!(run.code(), 4, "{}", run.describe());
+    assert_eq!(
+        run.error()["hint"],
+        "ncp secret set FIXTURE_TOKEN --credential-store file"
+    );
+}
+
+#[test]
+fn value_from_the_credential_file_expands_in_env_and_the_environment_wins() {
+    let home = Home::new("file-secret");
+    home.configure(&env_server());
+    let run = home.run_with_stdin(
+        &[
+            "secret",
+            "set",
+            "FIXTURE_TOKEN",
+            "--credential-store",
+            "file",
+        ],
+        "from-file\n",
+    );
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(
+        run.stdout(),
+        json!({"name": "FIXTURE_TOKEN", "place": "file"})
+    );
+    let path = home.root.join("state/ncp/credentials.json");
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    assert_eq!(text_of(&env_value(&home).stdout()), "from-file");
+    let home = home.set("FIXTURE_TOKEN", "from-env");
+    assert_eq!(text_of(&env_value(&home).stdout()), "from-env");
+}
+
+#[test]
+fn native_store_comes_before_the_file_and_list_shows_both_places() {
+    let home = Home::new("native-secret").with_fake_keychain();
+    home.configure(&env_server());
+    let set = |args: &[&str], value: &str| {
+        let run = home.run_with_stdin(args, value);
+        assert_eq!(run.code(), 0, "{}", run.describe());
+        run
+    };
+    set(
+        &[
+            "secret",
+            "set",
+            "FIXTURE_TOKEN",
+            "--credential-store",
+            "file",
+        ],
+        "file\n",
+    );
+    let run = set(&["secret", "set", "FIXTURE_TOKEN"], "native\n");
+    assert!(
+        run.stderr()
+            .iter()
+            .any(|line| line.get("warning").is_some()),
+        "{}",
+        run.describe()
+    );
+    set(
+        &["secret", "set", "UNUSED", "--credential-store", "file"],
+        "x",
+    );
+    assert_eq!(text_of(&env_value(&home).stdout()), "native");
+    let list = home.run(&["secret", "list"]);
+    assert_eq!(list.code(), 0, "{}", list.describe());
+    assert_eq!(
+        list.stdout(),
+        json!({"secrets": [
+            {"name": "FIXTURE_TOKEN", "places": ["native", "file"], "used": true},
+            {"name": "UNUSED", "places": ["file"], "used": false}
+        ]})
+    );
+    let calls = std::fs::read_to_string(home.root.join("keychain/calls.log")).unwrap();
+    assert!(
+        !calls.contains("native"),
+        "a value is in an argument: {calls}"
+    );
+    let run = home.run(&["secret", "delete", "FIXTURE_TOKEN"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(
+        run.stdout(),
+        json!({"name": "FIXTURE_TOKEN", "places": ["native", "file"]})
+    );
+    let run = home.run(&["secret", "delete", "FIXTURE_TOKEN"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(run.error()["hint"], "ncp secret list");
+}
+
+#[test]
+fn secret_set_rejects_a_bad_name_and_an_empty_value() {
+    let home = Home::new("secret-bad");
+    let run = home.run_with_stdin(&["secret", "set", "A-B", "--credential-store", "file"], "x");
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    let run = home.run_with_stdin(&["secret", "set", "A", "--credential-store", "file"], "\n");
+    assert_eq!(run.code(), 2, "{}", run.describe());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stored_bearer_token_goes_in_a_static_header() {
+    let fixture = serve_http_with(Mode::Modern, Some("t0ken")).await.unwrap();
+    let home = Home::new("static-header");
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url,
+        "headers": {"Authorization": "Bearer ${WEB_TOKEN}"}}}));
+    let run = home.run_with_stdin(
+        &["secret", "set", "WEB_TOKEN", "--credential-store", "file"],
+        "t0ken",
+    );
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+}
+
+#[test]
+fn server_list_reads_no_store() {
+    let home = Home::new("list-no-store").with_fake_keychain();
+    home.configure(&env_server());
+    let run = home.run(&["server", "list"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(!home.root.join("keychain/calls.log").exists());
 }
 
 #[test]
@@ -587,4 +751,115 @@ fn long_server_log_lines_are_cut_between_characters() {
     assert_eq!(logs[3], "del \u{7f} c1 \u{9b}");
     let raw = String::from_utf8_lossy(&run.0.stderr).into_owned();
     assert!(raw.contains("del \\u007f c1 \\u009b"), "{raw}");
+}
+
+fn warnings(run: &Run) -> Vec<String> {
+    run.stderr()
+        .into_iter()
+        .filter_map(|line| line["warning"]["message"].as_str().map(str::to_string))
+        .collect()
+}
+
+#[test]
+fn secret_set_warns_when_another_place_wins() {
+    let home = Home::new("copy-warnings")
+        .with_fake_keychain()
+        .set("SHADOWED", "env");
+    let run = home.run_with_stdin(&["secret", "set", "A"], "native");
+    assert_eq!(warnings(&run), Vec::<String>::new(), "{}", run.describe());
+    let run = home.run_with_stdin(
+        &["secret", "set", "A", "--credential-store", "file"],
+        "file",
+    );
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let messages = warnings(&run);
+    assert!(
+        messages[0].contains("the new value is not used"),
+        "{messages:?}"
+    );
+    assert!(
+        run.stderr()
+            .contains(&json!({"hint": {"message": "ncp secret delete A"}})),
+        "{}",
+        run.describe()
+    );
+    let run = home.run_with_stdin(
+        &["secret", "set", "SHADOWED", "--credential-store", "file"],
+        "x",
+    );
+    assert!(
+        warnings(&run)[0].contains("environment"),
+        "{}",
+        run.describe()
+    );
+}
+
+#[test]
+fn secret_commands_work_with_no_native_store_and_no_noise() {
+    let home = Home::new("file-only");
+    let run = home.run_with_stdin(&["secret", "set", "A", "--credential-store", "file"], "x");
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(warnings(&run), Vec::<String>::new());
+    let list = home.run(&["secret", "list"]);
+    assert_eq!(warnings(&list), Vec::<String>::new());
+    assert_eq!(list.stdout()["secrets"][0]["places"], json!(["file"]));
+    let run = home.run(&["secret", "delete", "TYPO"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(run.error()["message"], "TYPO is not stored");
+}
+
+#[test]
+fn secret_list_works_with_a_configuration_that_does_not_load() {
+    let home = Home::new("list-bad-config");
+    let path = home.config_path();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "{").unwrap();
+    home.run_with_stdin(&["secret", "set", "A", "--credential-store", "file"], "x");
+    let run = home.run(&["secret", "list"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(run.stdout()["secrets"][0]["used"], false);
+    assert_eq!(warnings(&run).len(), 1, "{}", run.describe());
+}
+
+#[test]
+fn name_used_only_in_args_is_not_used_and_names_the_rule() {
+    let home = Home::new("args-only");
+    home.configure(&json!({"fx": {"command": FIXTURE, "args": ["${ARG_ONLY}"]}}));
+    home.run_with_stdin(
+        &["secret", "set", "ARG_ONLY", "--credential-store", "file"],
+        "modern",
+    );
+    let list = home.run(&["secret", "list"]);
+    assert_eq!(list.stdout()["secrets"][0]["used"], false);
+    let run = home.run(&["tool", "list", "fx"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    let message = run.error()["message"].as_str().unwrap().to_string();
+    assert!(message.contains("only in env and headers"), "{message}");
+}
+
+#[test]
+fn copy_check_of_a_slow_native_store_stops_at_its_limit_and_leaves_no_program() {
+    let home = Home::new("slow-copy-check").with_fake_keychain();
+    std::fs::write(home.root.join("keychain/delay"), "20000").unwrap();
+    let start = std::time::Instant::now();
+    let run = home.run_with_stdin(&["secret", "set", "A", "--credential-store", "file"], "x");
+    let elapsed = start.elapsed();
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(elapsed < std::time::Duration::from_secs(8), "{elapsed:?}");
+    assert!(
+        warnings(&run)[0].contains("cannot check"),
+        "{}",
+        run.describe()
+    );
+    assert!(
+        !run.stderr().iter().any(|line| line.get("hint").is_some()),
+        "{}",
+        run.describe()
+    );
+    let program = home.root.join("keychain/security").display().to_string();
+    let found = Command::new("pgrep")
+        .args(["-f", &program])
+        .output()
+        .unwrap();
+    assert!(found.stdout.is_empty(), "a security program still runs");
 }

@@ -31,6 +31,7 @@ pub struct Context<'a> {
     pub request_limit: Duration,
     /// Fires on Ctrl-C.
     pub cancel: CancellationToken,
+    pub open_native: super::secrets::OpenNative,
 }
 
 impl Context<'_> {
@@ -142,10 +143,19 @@ fn entry_failure(name: &str, error: &EntryError, path: &Path) -> Failure {
     ))
     .server(name);
     match error {
+        // Only env and headers values can use a stored secret: a value in
+        // the command or the arguments shows in the process list.
         EntryError::Variable {
             error: ExpandError::Unset(variable),
             ..
-        } => failure.hint(format!("export {variable}=<value>")),
+        } => Failure {
+            message: format!(
+                "{}; a stored secret can go only in env and headers values",
+                failure.message
+            ),
+            ..failure
+        }
+        .hint(format!("export {variable}=<value>")),
         _ => failure,
     }
 }
@@ -166,16 +176,7 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
     });
     let target = server.target.clone();
     let cached = cache.lookup(&server.name, &target).cloned();
-    let values = server.expand_values(context.env).map_err(|error| {
-        let failure = Failure::usage(error.to_string()).server(name);
-        match error {
-            EntryError::Variable {
-                error: ExpandError::Unset(variable),
-                ..
-            } => failure.hint(format!("export {variable}=<value>")),
-            _ => failure,
-        }
-    })?;
+    let values = super::secrets::resolve(context, server).await?;
     let http = client::http::client()
         .map_err(|error| Failure::protocol(error.to_string()).server(name))?;
     let launch = Launch {

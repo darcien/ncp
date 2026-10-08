@@ -5,7 +5,7 @@
 //! for example a joined `server.tool` word, or `key=value` in the place of
 //! the tool.
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 const AFTER_HELP: &str = "\
 The normal order of work:
@@ -14,6 +14,10 @@ The normal order of work:
   ncp tool list <SERVER>
   ncp tool show <SERVER> <TOOL>
   ncp tool call <SERVER> <TOOL> [key=value...]
+
+A ${NAME} in an env or headers value comes from the environment, the
+native store, or the credential file. Store a value with:
+  ncp secret set <NAME>
 
 Output is text on a TTY and JSON in a pipe.";
 
@@ -55,6 +59,39 @@ pub enum Command {
     /// Tools of a server
     #[command(subcommand)]
     Tool(ToolCommand),
+    /// Named values for ${NAME} in the configuration
+    #[command(subcommand)]
+    Secret(SecretCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SecretCommand {
+    /// Read one value from stdin and keep it under the name. On a TTY the
+    /// input is not shown.
+    Set {
+        /// The name, as in ${NAME} in the configuration
+        name: String,
+        /// The place for the value.
+        #[arg(long, value_enum, default_value_t = CredentialPlace::Native)]
+        credential_store: CredentialPlace,
+    },
+    /// List the names of the stored secrets and the place of each one.
+    /// Shows no value.
+    List,
+    /// Remove the secret from all places.
+    Delete {
+        /// The name, as in ${NAME} in the configuration
+        name: String,
+    },
+}
+
+/// The place for a new value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum CredentialPlace {
+    /// The macOS Keychain or the Linux Secret Service
+    Native,
+    /// The opt-in credential file, mode 0600
+    File,
 }
 
 #[derive(Debug, Subcommand)]
@@ -141,6 +178,31 @@ mod tests {
         assert_eq!(call.arguments, ["q=a b"]);
         assert!(call.no_validate && call.help);
         assert_eq!(cli.options.timeout, 5);
+    }
+
+    #[test]
+    fn secret_set_takes_the_place_of_the_value() {
+        let cli = Cli::try_parse_from([
+            "ncp",
+            "secret",
+            "set",
+            "TOKEN",
+            "--credential-store",
+            "file",
+        ])
+        .unwrap();
+        let Command::Secret(SecretCommand::Set {
+            name,
+            credential_store,
+        }) = cli.command
+        else {
+            panic!("not secret set")
+        };
+        assert_eq!(name, "TOKEN");
+        assert_eq!(credential_store, CredentialPlace::File);
+        assert!(
+            Cli::try_parse_from(["ncp", "secret", "set", "T", "--credential-store", "x"]).is_err()
+        );
     }
 
     #[test]
