@@ -7,6 +7,7 @@ pub mod credential;
 pub mod era;
 pub mod era_file;
 pub mod expand;
+pub mod oauth;
 pub mod paths;
 mod private_file;
 pub mod proxy;

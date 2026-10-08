@@ -51,12 +51,19 @@ fn http_line(
                 .iter()
                 .map(|(name, value)| format!("{name}: {value}"))
                 .collect();
+            let body = |label: &str, body: &Option<String>| {
+                body.as_ref()
+                    .map(|body| format!("trace: server {server}: {label} body {body}\n"))
+                    .unwrap_or_default()
+            };
             format!(
-                "trace: server {server}: {} {url} [{}]: {} in {} ms\n",
+                "trace: server {server}: {} {url} [{}]: {} in {} ms\n{}{}",
                 exchange.method,
                 headers.join(", "),
                 exchange.outcome,
-                ms(exchange.elapsed)
+                ms(exchange.elapsed),
+                body("request", &exchange.request_body),
+                body("response", &exchange.response_body),
             )
         }
         Format::Json => {
@@ -65,13 +72,20 @@ fn http_line(
                 .iter()
                 .map(|(name, value)| (name.clone(), json!(value)))
                 .collect();
-            json_line(&json!({"trace": {"server": server, "http": {
+            let mut http = json!({
                 "method": exchange.method,
                 "url": url,
                 "headers": headers,
                 "outcome": exchange.outcome,
                 "ms": ms(exchange.elapsed),
-            }}}))
+            });
+            if let Some(body) = &exchange.request_body {
+                http["requestBody"] = json!(body);
+            }
+            if let Some(body) = &exchange.response_body {
+                http["responseBody"] = json!(body);
+            }
+            json_line(&json!({"trace": {"server": server, "http": http}}))
         }
     }
 }
@@ -153,6 +167,8 @@ mod tests {
             headers: vec![("authorization".into(), "****".into())],
             outcome: "JSON response".into(),
             elapsed: Duration::from_micros(3_140),
+            request_body: None,
+            response_body: None,
         };
         let line = trace_line(Format::Text, "gh", &Event::Http(&exchange), &hidden).unwrap();
         assert_eq!(

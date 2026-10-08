@@ -35,8 +35,11 @@ const SECRET_NAME_PARTS: [&str; 7] = [
 /// they occur in too many common names.
 const SECRET_NAMES: [&str; 4] = ["code", "sig", "pwd", "auth"];
 
-/// OAuth fields that hold a token or a client secret.
-const OAUTH_SECRET_FIELDS: [&str; 8] = [
+/// OAuth fields and form parameters that hold a token, a code or a client
+/// secret. The names are standard (RFC 6749, 7591, 7636, 8693), so the list
+/// is exact: a part such as `token` would also hide `token_type` and the
+/// endpoints of the metadata.
+const OAUTH_SECRET_FIELDS: [&str; 12] = [
     "access_token",
     "refresh_token",
     "id_token",
@@ -45,6 +48,10 @@ const OAUTH_SECRET_FIELDS: [&str; 8] = [
     "code_verifier",
     "registration_access_token",
     "client_assertion",
+    "assertion",
+    "subject_token",
+    "actor_token",
+    "password",
 ];
 
 /// The value as it shows: `****`, or empty when it is empty.
@@ -101,6 +108,32 @@ pub fn url(text: &str) -> String {
     url.to_string()
 }
 
+/// True when the OAuth field or form parameter holds a secret.
+#[must_use]
+pub fn is_oauth_secret(name: &str) -> bool {
+    OAUTH_SECRET_FIELDS.contains(&name)
+}
+
+/// The form body (`application/x-www-form-urlencoded`) with each secret
+/// value hidden.
+#[must_use]
+pub fn form(body: &str) -> String {
+    url::form_urlencoded::parse(body.as_bytes())
+        .fold(
+            url::form_urlencoded::Serializer::new(String::new()),
+            |mut form, (name, value)| {
+                let shown = if is_oauth_secret(&name) {
+                    hide(&value)
+                } else {
+                    &value
+                };
+                form.append_pair(&name, shown);
+                form
+            },
+        )
+        .finish()
+}
+
 /// The OAuth message with each token and client secret hidden, at any
 /// depth.
 #[must_use]
@@ -111,7 +144,7 @@ pub fn oauth_json(value: &Value) -> Value {
                 .iter()
                 .map(|(name, field)| {
                     let shown = match field {
-                        Value::String(text) if OAUTH_SECRET_FIELDS.contains(&name.as_str()) => {
+                        Value::String(text) if is_oauth_secret(name) => {
                             Value::String(hide(text).to_string())
                         }
                         other => oauth_json(other),
@@ -164,6 +197,20 @@ mod tests {
             "https://example.com/mcp?token="
         );
         assert_eq!(url("not a url"), "****");
+    }
+
+    #[test]
+    fn form_hides_codes_verifiers_tokens_and_client_secrets() {
+        assert_eq!(
+            form(
+                "grant_type=authorization_code&code=c&code_verifier=v&client_id=id&client_secret=s&redirect_uri=http%3A%2F%2F127.0.0.1%3A1%2Fcallback"
+            ),
+            "grant_type=authorization_code&code=****&code_verifier=****&client_id=id&client_secret=****&redirect_uri=http%3A%2F%2F127.0.0.1%3A1%2Fcallback"
+        );
+        assert_eq!(
+            form("refresh_token=r&resource=https%3A%2F%2Fa"),
+            "refresh_token=****&resource=https%3A%2F%2Fa"
+        );
     }
 
     #[test]

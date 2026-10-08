@@ -51,6 +51,18 @@ pub fn builder() -> reqwest::ClientBuilder {
 /// Returns an error when the file in `SSL_CERT_FILE` gives no root
 /// certificate, or when reqwest cannot make the client.
 pub fn client(env: &Env, observer: &Observer) -> Result<reqwest::Client, HttpError> {
+    Ok(configured(env, observer)?.build()?)
+}
+
+/// The builder with the settings of each client of `ncp`: the proxy, the
+/// roots of `SSL_CERT_FILE`, and the observer. The OAuth requests use it
+/// too, so that the same rules apply to them (requirement N2).
+///
+/// # Errors
+///
+/// Returns an error when the file in `SSL_CERT_FILE` gives no root
+/// certificate.
+pub fn configured(env: &Env, observer: &Observer) -> Result<reqwest::ClientBuilder, HttpError> {
     let builder = builder()
         .dns_resolver(std::sync::Arc::new(ObservedResolver {
             observer: observer.clone(),
@@ -58,7 +70,7 @@ pub fn client(env: &Env, observer: &Observer) -> Result<reqwest::Client, HttpErr
         .connector_layer(ObservedConnectLayer {
             observer: observer.clone(),
         });
-    Ok(with_cert_file(builder, env)?.build()?)
+    with_cert_file(builder, env)
 }
 
 /// Adds the roots in the file that `SSL_CERT_FILE` names to the system

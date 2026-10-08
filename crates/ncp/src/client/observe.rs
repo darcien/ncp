@@ -49,6 +49,10 @@ pub struct HttpExchange {
     /// What came back: the kind of response, or the error.
     pub outcome: String,
     pub elapsed: Duration,
+    /// The bodies of an OAuth request, with secrets hidden. The bodies of
+    /// MCP requests show as JSON-RPC messages.
+    pub request_body: Option<String>,
+    pub response_body: Option<String>,
 }
 
 #[derive(Debug)]
@@ -220,6 +224,8 @@ impl<C> ObservedHttp<C> {
             headers,
             outcome,
             elapsed: started.elapsed(),
+            request_body: None,
+            response_body: None,
         }));
         result
     }
