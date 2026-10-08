@@ -91,7 +91,7 @@ impl Setup {
             cached_era: self.cached.as_ref(),
             base_env: &self.base_env,
             values: &self.values,
-            http: &http,
+            http: Some(&http),
             probe_timeout: self.probe_timeout,
             connect_limit: self.connect_limit,
             server_log: &client::stdio::ServerLog::Inherit,

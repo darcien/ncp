@@ -44,6 +44,7 @@ fn http_line(
     shown_url: &dyn Fn(&str) -> String,
 ) -> String {
     let url = shown_url(&exchange.url);
+    let outcome = hide_url_in(&exchange.outcome, &exchange.url, &url);
     match format {
         Format::Text => {
             let headers: Vec<String> = exchange
@@ -60,7 +61,7 @@ fn http_line(
                 "trace: server {server}: {} {url} [{}]: {} in {} ms\n{}{}",
                 exchange.method,
                 headers.join(", "),
-                exchange.outcome,
+                outcome,
                 ms(exchange.elapsed),
                 body("request", &exchange.request_body),
                 body("response", &exchange.response_body),
@@ -76,7 +77,7 @@ fn http_line(
                 "method": exchange.method,
                 "url": url,
                 "headers": headers,
-                "outcome": exchange.outcome,
+                "outcome": outcome,
                 "ms": ms(exchange.elapsed),
             });
             if let Some(body) = &exchange.request_body {
@@ -87,6 +88,18 @@ fn http_line(
             }
             json_line(&json!({"trace": {"server": server, "http": http}}))
         }
+    }
+}
+
+/// The text with the URL as the request used it replaced by the URL as it
+/// shows. An HTTP error names the URL that it got, and that URL can hold a
+/// `${NAME}` value or a key.
+fn hide_url_in(text: &str, url: &str, shown: &str) -> String {
+    let parsed = url::Url::parse(url).map(|url| url.to_string());
+    let text = text.replace(url, shown);
+    match parsed {
+        Ok(parsed) if parsed != url => text.replace(&parsed, shown),
+        _ => text,
     }
 }
 
@@ -183,6 +196,21 @@ mod tests {
             "https://****@h.test/mcp?api_key=****"
         );
         assert_eq!(value["trace"]["http"]["headers"]["authorization"], "****");
+    }
+
+    #[test]
+    fn http_errors_show_the_url_with_its_secrets_hidden() {
+        let exchange = HttpExchange {
+            method: "POST",
+            url: "http://h.test/mcp?api_key=k3y".into(),
+            headers: Vec::new(),
+            outcome: "error: error sending request for url (http://h.test/mcp?api_key=k3y)".into(),
+            elapsed: Duration::from_millis(1),
+            request_body: None,
+            response_body: None,
+        };
+        let line = trace_line(Format::Text, "gh", &Event::Http(&exchange), &hidden).unwrap();
+        assert!(!line.contains("k3y"), "{line}");
     }
 
     #[test]

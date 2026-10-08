@@ -15,7 +15,7 @@ use super::{
     diagnostics,
     outcome::{Exit, Failure},
     timings::Timings,
-    ui::Ui,
+    ui::{Ui, Verbosity},
 };
 use crate::{
     client::{self, ConnectError, Connection, Launch, RequestError, RequestLimits},
@@ -198,26 +198,32 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
     let target = server.target.clone();
     let cached = cache.lookup(&server.name, &target).cloned();
     ui.debug(Some(name), &cached_era_text(cached.as_ref()));
-    let started = Instant::now();
     let values = super::secrets::resolve(context, server).await?;
-    if let Some(timings) = &context.timings {
-        timings.update(|record| record.credentials = Some(started.elapsed()));
-    }
-    if let Transport::Http(remote) = &server.transport {
-        ui.debug(Some(name), &route_text(context.env, server, remote));
-    }
     let shown = server.clone();
     let observer = diagnostics::observer(ui, name, context.timings.clone(), move |url| {
-        crate::redact::url(&hide_expanded_url(&shown, url.to_string()))
+        hide_expanded_url(&shown, url.to_string())
     });
-    let http = client::http::client(context.env, &observer)
-        .map_err(|error| Failure::protocol(error.to_string()).server(name))?;
+    // Only an http server needs the HTTP client. Thus a bad SSL_CERT_FILE
+    // does not stop a stdio server.
+    let http = match &server.transport {
+        Transport::Http(remote) => {
+            // The route costs a read of the system settings on macOS.
+            if ui.verbosity >= Verbosity::Verbose {
+                ui.debug(Some(name), &route_text(context.env, server, remote));
+            }
+            Some(
+                client::http::client(context.env, &observer)
+                    .map_err(|error| Failure::protocol(error.to_string()).server(name))?,
+            )
+        }
+        _ => None,
+    };
     let launch = Launch {
         server,
         cached_era: cached.as_ref(),
         base_env: context.env,
         values: &values,
-        http: &http,
+        http: http.as_ref(),
         probe_timeout: client::PROBE_TIMEOUT,
         connect_limit: client::CONNECT_LIMIT,
         server_log: &ui.server_log(name),
@@ -258,7 +264,7 @@ fn cached_era_text(cached: Option<&Era>) -> String {
 
 /// The proxy route of the server URL, with its source.
 fn route_text(env: &Env, server: &Server, remote: &config::RemoteServer) -> String {
-    let shown = crate::redact::url(&hide_expanded_url(server, remote.url.as_str().to_string()));
+    let shown = hide_expanded_url(server, remote.url.as_str().to_string());
     match url::Url::parse(remote.url.as_str()) {
         Ok(target) => format!("route to {shown}: {}", crate::proxy::route(env, &target)),
         Err(_) => format!("route to {shown}: unknown"),
@@ -283,8 +289,9 @@ fn connect_failure(env: &Env, server: &Server, error: &ConnectError) -> Failure 
     };
     let failure =
         Failure::new(exit, hide_expanded_url(server, message)).server(server.name.as_str());
-    match (&server.transport, exit) {
-        (Transport::Http(remote), Exit::Protocol) => through_proxy(env, &remote.url, failure),
+    // A proxy on another host can also answer 401 or 403.
+    match &server.transport {
+        Transport::Http(remote) => through_proxy(env, &remote.url, failure),
         _ => failure,
     }
 }
@@ -309,13 +316,18 @@ fn through_proxy(env: &Env, url: &crate::server::ServerUrl, failure: Failure) ->
 }
 
 /// The message with the expanded URL replaced by the URL as the file writes
-/// it. HTTP errors hold the URL, and a query parameter can hold a key.
+/// it, with its secret query values and user information hidden. HTTP
+/// errors hold the URL, and a query parameter can hold a key.
 fn hide_expanded_url(server: &Server, message: String) -> String {
     match (&server.transport, &server.target) {
-        (Transport::Http(remote) | Transport::Sse(remote), Target::Remote { url })
-            if remote.url.as_str() != url =>
-        {
-            message.replace(remote.url.as_str(), url)
+        (Transport::Http(remote) | Transport::Sse(remote), Target::Remote { url }) => {
+            let shown = crate::redact::url(url);
+            let message = message.replace(remote.url.as_str(), &shown);
+            // reqwest names the URL in its parsed form.
+            match url::Url::parse(remote.url.as_str()) {
+                Ok(parsed) => message.replace(parsed.as_str(), &shown),
+                Err(_) => message,
+            }
         }
         _ => message,
     }

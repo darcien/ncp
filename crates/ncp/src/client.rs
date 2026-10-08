@@ -60,7 +60,8 @@ pub struct Launch<'a> {
     pub base_env: &'a Env,
     /// The `env` or `headers` values of the entry, after expansion.
     pub values: &'a Values,
-    pub http: &'a reqwest::Client,
+    /// The HTTP client. An http server needs it; a stdio server does not.
+    pub http: Option<&'a reqwest::Client>,
     /// Normally [`PROBE_TIMEOUT`].
     pub probe_timeout: Duration,
     /// Normally [`CONNECT_LIMIT`].
@@ -123,6 +124,8 @@ pub enum ConnectError {
     Timeout(Duration),
     #[error("the connect was interrupted")]
     Cancelled,
+    #[error("no HTTP client was given for an http server")]
+    NoHttpClient,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -300,8 +303,12 @@ async fn handshake(
             }
         }
         Transport::Http(server) => {
-            let transport =
-                http::transport(launch.http, server, &launch.values.headers, launch.observer)?;
+            let transport = http::transport(
+                launch.http.ok_or(ConnectError::NoHttpClient)?,
+                server,
+                &launch.values.headers,
+                launch.observer,
+            )?;
             let serve = info.serve_with_lifecycle(transport, lifecycle);
             match race(serve, deadline, launch.cancel).await {
                 Ended::Done(service) => (service.map_err(failed)?, None),

@@ -81,9 +81,17 @@ fn with_cert_file(
     builder: reqwest::ClientBuilder,
     env: &Env,
 ) -> Result<reqwest::ClientBuilder, HttpError> {
-    let Some(path) = env.get(CERT_FILE).filter(|path| !path.is_empty()) else {
+    let Some(path) = env.get(CERT_FILE) else {
         return Ok(builder);
     };
+    // On Linux the system store reads the variable too, and an empty value
+    // there loads no root at all. The same error on each host is clearer.
+    if path.is_empty() {
+        return Err(HttpError::CertFile {
+            path: String::new(),
+            reason: "the variable is empty; remove it or name a PEM file".to_string(),
+        });
+    }
     let failed = |reason: String| HttpError::CertFile {
         path: path.clone(),
         reason,
@@ -194,8 +202,9 @@ mod tests {
     }
 
     #[test]
-    fn empty_cert_file_variable_is_ignored() {
-        assert!(client(&env(&[(CERT_FILE, "")]), &Observer::default()).is_ok());
+    fn empty_cert_file_variable_is_an_error_on_each_host() {
+        let error = client(&env(&[(CERT_FILE, "")]), &Observer::default()).unwrap_err();
+        assert!(error.to_string().contains("SSL_CERT_FILE"), "{error}");
     }
 
     #[test]

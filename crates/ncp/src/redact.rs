@@ -80,32 +80,51 @@ pub fn header(name: &str, value: &str, sensitive: bool) -> String {
 }
 
 /// The URL with its user information and its secret query values hidden.
-/// A text that is not a URL is hidden as a whole.
+/// The rest of the text stays as it is, also a `${NAME}` of the
+/// configuration, so that the URL shows as the user wrote it. A text that
+/// is not a URL is hidden as a whole.
 #[must_use]
 pub fn url(text: &str) -> String {
-    let Ok(mut url) = url::Url::parse(text) else {
+    let Some((scheme, rest)) = text.split_once("://") else {
         return hide(text).to_string();
     };
-    if !url.username().is_empty() || url.password().is_some() {
-        // Both calls fail only for a URL with no host, which has no user
-        // information.
-        let _ = url.set_password(None);
-        let _ = url.set_username(HIDDEN);
-    }
-    let pairs: Vec<(String, String)> = url.query_pairs().into_owned().collect();
-    if pairs.iter().any(|(name, _)| is_secret_name(name)) {
-        url.query_pairs_mut()
-            .clear()
-            .extend_pairs(pairs.iter().map(|(name, value)| {
-                let shown = if is_secret_name(name) {
-                    hide(value)
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(authority_end);
+    let authority = match authority.rsplit_once('@') {
+        Some((_, host)) => format!("{HIDDEN}@{host}"),
+        None => authority.to_string(),
+    };
+    let (before_fragment, fragment) = match tail.split_once('#') {
+        Some((before, fragment)) => (before, Some(fragment)),
+        None => (tail, None),
+    };
+    let tail = match before_fragment.split_once('?') {
+        Some((path, query)) => format!("{path}?{}", hide_query(query)),
+        None => before_fragment.to_string(),
+    };
+    let fragment = fragment.map(|f| format!("#{f}")).unwrap_or_default();
+    format!("{scheme}://{authority}{tail}{fragment}")
+}
+
+/// The query with the value of each secret parameter hidden.
+fn hide_query(query: &str) -> String {
+    query
+        .split('&')
+        .map(|pair| match pair.split_once('=') {
+            Some((name, value)) => {
+                let decoded: String = url::form_urlencoded::parse(name.as_bytes())
+                    .map(|(name, _)| name.into_owned())
+                    .collect();
+                if is_secret_name(&decoded) {
+                    format!("{name}={}", hide(value))
                 } else {
-                    value.as_str()
-                };
-                (name.as_str(), shown)
-            }));
-    }
-    url.to_string()
+                    pair.to_string()
+                }
+            }
+            None => pair.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("&")
 }
 
 /// True when the OAuth field or form parameter holds a secret.
@@ -187,7 +206,11 @@ mod tests {
             url("https://user:pass@example.com/mcp?api_key=k1&page=2&Token=t&code=c"),
             "https://****@example.com/mcp?api_key=****&page=2&Token=****&code=****"
         );
-        assert_eq!(url("http://:pass@p.test:3128"), "http://****@p.test:3128/");
+        assert_eq!(url("http://:pass@p.test:3128"), "http://****@p.test:3128");
+        assert_eq!(
+            url("http://h:1/mcp/${KEY}?q=a%20b&key=${KEY}#f"),
+            "http://h:1/mcp/${KEY}?q=a%20b&key=****#f"
+        );
         assert_eq!(
             url("https://example.com/mcp?q=a"),
             "https://example.com/mcp?q=a"

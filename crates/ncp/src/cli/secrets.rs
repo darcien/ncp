@@ -116,12 +116,14 @@ pub(super) async fn resolve(context: &Context<'_>, server: &Server) -> Result<Va
     }
     let mut values: Env = context.env.clone();
     if !missing.is_empty() {
-        let mut native = native(context).await;
-        let file = file(context);
-        for name in missing {
-            let (secret, place) = find(context, name, &mut native, &file)
-                .await
-                .map_err(|failure| failure.server(name_of_server))?;
+        // The time of the store reads, also when they fail: a slow or
+        // locked store is the reason to measure.
+        let started = std::time::Instant::now();
+        let found = read_stored(context, &missing).await;
+        if let Some(timings) = &context.timings {
+            timings.update(|record| record.credentials = Some(started.elapsed()));
+        }
+        for (name, secret, place) in found.map_err(|failure| failure.server(name_of_server))? {
             context
                 .ui
                 .debug(Some(name_of_server), &format!("{name} from {place}"));
@@ -131,6 +133,21 @@ pub(super) async fn resolve(context: &Context<'_>, server: &Server) -> Result<Va
     server
         .expand_values(&values)
         .map_err(|error| Failure::usage(error.to_string()).server(name_of_server))
+}
+
+/// The values of the names from the stores, with the place of each one.
+async fn read_stored<'a>(
+    context: &Context<'_>,
+    names: &[&'a str],
+) -> Result<Vec<(&'a str, Secret, &'static str)>, Failure> {
+    let mut native = native(context).await;
+    let file = file(context);
+    let mut found = Vec::new();
+    for name in names {
+        let (secret, place) = find(context, name, &mut native, &file).await?;
+        found.push((*name, secret, place));
+    }
+    Ok(found)
 }
 
 /// True for an error of the whole store, not of one item.

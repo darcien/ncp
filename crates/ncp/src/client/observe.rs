@@ -241,14 +241,16 @@ fn shown_headers(
     let mut headers: Vec<(String, String)> = custom
         .iter()
         .map(|(name, value)| {
-            let text = value.to_str().unwrap_or_default();
+            let text = String::from_utf8_lossy(value.as_bytes());
             (
                 name.as_str().to_string(),
-                redact::header(name.as_str(), text, value.is_sensitive()),
+                redact::header(name.as_str(), &text, value.is_sensitive()),
             )
         })
         .chain(auth_header.map(|value| ("authorization".to_string(), redact::hide(value).into())))
-        .chain(session_id.map(|id| ("mcp-session-id".to_string(), id.to_string())))
+        // A session ID lets another client take the session (MCP
+        // 2025-11-25, security best practices, "Session Hijacking").
+        .chain(session_id.map(|id| ("mcp-session-id".to_string(), redact::hide(id).into())))
         .collect();
     headers.sort();
     headers
@@ -470,7 +472,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shown_headers_hide_credentials_and_keep_the_session() {
+    fn shown_headers_hide_credentials_and_the_session() {
         let mut secret = HeaderValue::from_static("k");
         secret.set_sensitive(true);
         let custom = HashMap::from([
@@ -484,7 +486,7 @@ mod tests {
             shown_headers(Some("s1"), Some("t0ken"), &custom),
             [
                 ("authorization".to_string(), "****".to_string()),
-                ("mcp-session-id".into(), "s1".into()),
+                ("mcp-session-id".into(), "****".into()),
                 ("x-api-key".into(), "****".into()),
                 ("x-org".into(), "acme".into()),
             ]

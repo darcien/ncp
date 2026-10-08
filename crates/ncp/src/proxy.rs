@@ -75,13 +75,19 @@ impl fmt::Display for Route {
     }
 }
 
-/// The first variable of the list that is set and not empty.
-fn first<'a>(env: &'a Env, names: &[&'static str]) -> Option<(&'static str, &'a str)> {
-    names.iter().find_map(|name| {
-        env.get(*name)
-            .filter(|value| !value.is_empty())
-            .map(|value| (*name, value.as_str()))
-    })
+/// The first variable of the list that is set, also when it is empty, as
+/// reqwest reads them. A value that is not a URI names no proxy.
+fn first_set<'a>(env: &'a Env, names: &[&'static str]) -> Option<(&'static str, &'a str)> {
+    names
+        .iter()
+        .find_map(|name| env.get(*name).map(|value| (*name, value.as_str())))
+        .filter(|(_, value)| !value.is_empty() && value.parse::<http::Uri>().is_ok())
+}
+
+fn no_proxy_is_set(env: &Env) -> bool {
+    NO.iter()
+        .find_map(|name| env.get(*name))
+        .is_some_and(|value| !value.is_empty())
 }
 
 /// The route of a request to the URL.
@@ -90,39 +96,26 @@ pub fn route(env: &Env, target: &url::Url) -> Route {
     route_with(env, target, Matcher::from_system)
 }
 
-/// The route, with the matcher of the system settings for the case with no
-/// proxy variable. `Matcher::from_system` reads the process environment
-/// too, which is the same environment in `ncp`.
-fn route_with(env: &Env, target: &url::Url, system: impl FnOnce() -> Matcher) -> Route {
+/// The route from the matcher of reqwest, and the source by the rules of
+/// that matcher: the variable of the scheme, then `ALL_PROXY`, then the
+/// system settings. `Matcher::from_system` reads the process environment,
+/// which is the same environment in `ncp`.
+fn route_with(env: &Env, target: &url::Url, matcher: impl FnOnce() -> Matcher) -> Route {
     let Ok(uri) = target.as_str().parse::<http::Uri>() else {
         return Route::Direct;
     };
-    let https = target.scheme() == "https";
-    // reqwest ignores HTTP_PROXY in a CGI program, because a CGI request
-    // can set it from a header.
-    let cgi = env.contains_key("REQUEST_METHOD");
-    let for_scheme = if https {
-        first(env, &HTTPS)
-    } else if cgi {
-        None
+    // reqwest uses no proxy in a CGI program, because a CGI request can
+    // set a proxy variable from a header.
+    if env.contains_key("REQUEST_METHOD") {
+        return Route::Direct;
+    }
+    let scheme = if target.scheme() == "https" {
+        &HTTPS
     } else {
-        first(env, &HTTP)
+        &HTTP
     };
-    let chosen = for_scheme.or_else(|| first(env, &ALL));
-    let no_proxy = first(env, &NO).map(|(_, value)| value).unwrap_or_default();
-    let (matcher, source) = match chosen {
-        Some((name, value)) => {
-            let builder = Matcher::builder().no(no_proxy);
-            let builder = match (name, https) {
-                (name, _) if ALL.contains(&name) => builder.all(value),
-                (_, true) => builder.https(value),
-                (_, false) => builder.http(value),
-            };
-            (builder.build(), Source::Variable(name))
-        }
-        None => (system(), Source::SystemSettings),
-    };
-    match matcher.intercept(&uri) {
+    let variable = first_set(env, scheme).or_else(|| first_set(env, &ALL));
+    match matcher().intercept(&uri) {
         Some(intercept) => {
             let url = intercept.uri().to_string();
             let url = if intercept.basic_auth().is_some() {
@@ -130,9 +123,11 @@ fn route_with(env: &Env, target: &url::Url, system: impl FnOnce() -> Matcher) ->
             } else {
                 url
             };
+            let source =
+                variable.map_or(Source::SystemSettings, |(name, _)| Source::Variable(name));
             Route::Proxy { url, source }
         }
-        None if chosen.is_some() => Route::DirectByNoProxy,
+        None if variable.is_some() && no_proxy_is_set(env) => Route::DirectByNoProxy,
         None => Route::Direct,
     }
 }
@@ -152,10 +147,45 @@ mod tests {
         url::Url::parse(text).unwrap()
     }
 
-    /// The route with no system proxy, so that the settings of the host do
-    /// not change the result.
+    /// The value of the first variable that is set, as hyper-util reads it.
+    fn value(env: &Env, names: &[&str]) -> String {
+        names
+            .iter()
+            .find_map(|name| env.get(*name).cloned())
+            .unwrap_or_default()
+    }
+
+    /// The route with the matcher of the variables only, so that the
+    /// settings of the host do not change the result.
     fn route(env: &Env, target: &url::Url) -> Route {
-        route_with(env, target, || Matcher::builder().build())
+        let matcher = Matcher::builder()
+            .http(value(env, &HTTP))
+            .https(value(env, &HTTPS))
+            .all(value(env, &ALL))
+            .no(value(env, &NO));
+        route_with(env, target, || matcher.build())
+    }
+
+    #[test]
+    fn the_first_variable_that_is_set_wins_also_when_it_is_empty() {
+        let target = url("http://127.0.0.1:8080/mcp");
+        let vars = env(&[("HTTP_PROXY", ""), ("http_proxy", "http://p.test:1")]);
+        assert_eq!(route(&vars, &target), Route::Direct);
+        let vars = env(&[
+            ("HTTP_PROXY", "http://p.test:1"),
+            ("NO_PROXY", ""),
+            ("no_proxy", "127.0.0.1"),
+        ]);
+        assert!(matches!(route(&vars, &target), Route::Proxy { .. }));
+    }
+
+    #[test]
+    fn cgi_program_uses_no_proxy_for_any_scheme() {
+        let vars = env(&[
+            ("HTTPS_PROXY", "http://p.test:1"),
+            ("REQUEST_METHOD", "GET"),
+        ]);
+        assert_eq!(route(&vars, &url("https://a.example/")), Route::Direct);
     }
 
     #[test]

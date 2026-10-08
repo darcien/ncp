@@ -1260,3 +1260,36 @@ async fn status_shows_the_login_with_no_token_and_logout_removes_the_tokens() {
         "logout keeps the client: {file}"
     );
 }
+
+#[test]
+fn trace_of_a_failed_request_hides_values_in_the_url() {
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let home = Home::new("trace-error").set("PATH_KEY", "s3cret-path");
+    home.configure(&json!({"web": {"type": "http",
+        "url": format!("http://127.0.0.1:{port}/mcp/${{PATH_KEY}}?api_key=k3y")}}));
+    let run = home.run(&["-vv", "tool", "list", "web"]);
+    assert_eq!(run.code(), 3, "{}", run.describe());
+    let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
+    assert!(
+        notes(&run, "trace")
+            .iter()
+            .any(|trace| trace.get("http").is_some()),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("s3cret-path") && !stderr.contains("k3y"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn stdio_server_works_with_a_bad_ssl_cert_file() {
+    let home = Home::new("stdio-cert").set("SSL_CERT_FILE", "/nonexistent/ca.pem");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let run = home.run(&["tool", "list", "fx"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+}

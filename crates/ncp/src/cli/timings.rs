@@ -107,12 +107,12 @@ pub fn render(format: Format, record: &Record, total: Duration, cpu: Option<Dura
         Format::Text => {
             let parts = steps
                 .iter()
-                .map(|(_, name, value)| format!("{name} {} ms", ms(*value)))
+                .map(|(_, name, value)| format!("{name} {:.1} ms", ms(*value)))
                 .chain((!record.responses.is_empty()).then(|| {
                     let times: Vec<String> = record
                         .responses
                         .iter()
-                        .map(|value| format!("{} ms", ms(*value)))
+                        .map(|value| format!("{:.1} ms", ms(*value)))
                         .collect();
                     format!("responses {}", times.join(" "))
                 }))
@@ -158,8 +158,8 @@ mod tests {
         );
         assert_eq!(
             text,
-            "timings: total 41 ms, cpu 8 ms, config 0.4 ms, dns 2 ms, connect 4.2 ms, \
-             responses 18 ms 9.5 ms\n"
+            "timings: total 41.0 ms, cpu 8.0 ms, config 0.4 ms, dns 2.0 ms, connect 4.2 ms, \
+             responses 18.0 ms 9.5 ms\n"
         );
     }
 

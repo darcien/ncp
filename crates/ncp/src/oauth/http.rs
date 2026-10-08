@@ -87,10 +87,10 @@ fn headers(request: &reqwest::Request) -> Vec<(String, String)> {
         .headers()
         .iter()
         .map(|(name, value)| {
-            let text = value.to_str().unwrap_or_default();
+            let text = String::from_utf8_lossy(value.as_bytes());
             (
                 name.as_str().to_string(),
-                redact::header(name.as_str(), text, value.is_sensitive()),
+                redact::header(name.as_str(), &text, value.is_sensitive()),
             )
         })
         .collect();
