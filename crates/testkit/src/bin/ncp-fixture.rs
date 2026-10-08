@@ -5,6 +5,10 @@
 //! - `ignore-term`: stay alive after stdin closes, and ignore SIGTERM.
 //!
 //! The two options test the stop steps of the client.
+//!
+//! When `NCP_FIXTURE_PID_FILE` is set, the server writes its process ID to
+//! that file at start. A test of the command line uses it to check that
+//! `ncp` stopped the server.
 
 use std::process::ExitCode;
 
@@ -21,6 +25,11 @@ async fn main() -> ExitCode {
         );
         return ExitCode::from(2);
     };
+    if let Some(path) = std::env::var_os("NCP_FIXTURE_PID_FILE")
+        && std::fs::write(path, std::process::id().to_string()).is_err()
+    {
+        return ExitCode::FAILURE;
+    }
     let option = args.get(1).map(String::as_str);
     // A SIGTERM handler replaces the default action, so install it only for
     // the options that test the stop steps.

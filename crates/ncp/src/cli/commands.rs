@@ -354,12 +354,13 @@ async fn read_stdin_object(context: &Context<'_>) -> Result<JsonObject, Failure>
         );
     }
     let mut text = String::new();
-    tokio::io::stdin()
-        .read_to_string(&mut text)
-        .await
-        .map_err(|error| {
+    let mut stdin = tokio::io::stdin();
+    tokio::select! {
+        read = stdin.read_to_string(&mut text) => read.map_err(|error| {
             Failure::usage(format!("cannot read the arguments from stdin: {error}"))
-        })?;
+        })?,
+        () = context.cancel.cancelled() => return Err(session::interrupted()),
+    };
     tool_args::object(&text).map_err(|error| Failure::usage(error.to_string()))
 }
 

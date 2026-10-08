@@ -37,10 +37,7 @@ pub fn main() -> ExitCode {
         Err(error) => return parse_failure(ui, &error),
     };
     let env = process_env();
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
+    let runtime = match runtime() {
         Ok(runtime) => runtime,
         Err(error) => {
             let failure = Failure::protocol(format!("cannot start the async runtime: {error}"));
@@ -49,8 +46,26 @@ pub fn main() -> ExitCode {
         }
     };
     let exit = runtime.block_on(run(cli, &env, ui));
-    runtime.shutdown_timeout(SHUTDOWN_LIMIT);
+    shut_down(runtime);
     exit.into()
+}
+
+/// The async runtime of `ncp`: one thread, because each command does one
+/// thing at a time. Store calls run on blocking threads.
+///
+/// # Errors
+///
+/// Returns an error when the runtime cannot start.
+pub fn runtime() -> std::io::Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+}
+
+/// Stops the runtime. A store call that passed its limit can stay on its
+/// blocking thread, so the wait for it has a limit.
+pub fn shut_down(runtime: tokio::runtime::Runtime) {
+    runtime.shutdown_timeout(SHUTDOWN_LIMIT);
 }
 
 /// The environment of the process. A variable that is not UTF-8 cannot be
@@ -69,7 +84,7 @@ async fn run(cli: Cli, env: &Env, ui: Ui) -> Exit {
             ui,
             paths,
             request_limit: Duration::from_secs(cli.options.timeout),
-            cancel: CancellationToken::new(),
+            cancel: interrupt_token(),
         };
         match cli.command {
             Command::Server(command) => commands::server(&context, command).await,
@@ -84,6 +99,21 @@ async fn run(cli: Cli, env: &Env, ui: Ui) -> Exit {
             failure.exit
         }
     }
+}
+
+/// A token that fires on Ctrl-C. The terminal sends SIGINT to `ncp` only,
+/// because each stdio server runs in its own process group. Thus `ncp` can
+/// send the cancel request and stop the server itself (the spec,
+/// basic/utilities/cancellation).
+fn interrupt_token() -> CancellationToken {
+    let token = CancellationToken::new();
+    let fire = token.clone();
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            fire.cancel();
+        }
+    });
+    token
 }
 
 /// Help and version go to stdout with exit 0. A parse error is a usage
