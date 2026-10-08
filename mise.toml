@@ -51,10 +51,17 @@ run = [
   "harness/linux/run.sh offline cargo test --workspace --locked",
 ]
 
+# The Secret Service tests start their own D-Bus session and keyring daemon
+# in the container. They never run on the host.
+[tasks."linux:secret-service"]
+description = "Run the Secret Service tests in a container, with no network"
+depends = ["linux:test"]
+run = "harness/linux/run.sh secret-service"
+
 # Format first, so that the checks see the formatted code.
 [tasks.precommit]
 description = "Format, then run all checks and tests on the host and in Linux"
 run = [
   { task = "fmt" },
-  { tasks = ["check", "test", "linux:check", "linux:test"] },
+  { tasks = ["check", "test", "linux:check", "linux:secret-service"] },
 ]

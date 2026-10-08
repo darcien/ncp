@@ -76,3 +76,18 @@ RUN mkdir -p "$CARGO_HOME/registry" "$CARGO_TARGET_DIR" \
     && chmod 0777 "$CARGO_HOME/registry" "$CARGO_TARGET_DIR"
 
 WORKDIR /work
+
+# The stage for the Secret Service tests. dbus gives dbus-run-session, so
+# each test run starts its own session bus. gnome-keyring gives the Secret
+# Service. The packages come from deb.debian.org, as the packages of the
+# toolchain stage do.
+FROM toolchain AS secret-service
+
+# dbus-daemon needs a passwd entry for its user. The container runs as the
+# host user, so secret-service.sh adds that entry at the start of each run.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+        dbus \
+        gnome-keyring \
+    && rm -rf /var/lib/apt/lists/* \
+    && chmod a+w /etc/passwd

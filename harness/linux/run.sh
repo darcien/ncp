@@ -5,6 +5,7 @@
 #   harness/linux/run.sh image
 #   harness/linux/run.sh cargo <command> [arguments]
 #   harness/linux/run.sh offline cargo <command> [arguments]
+#   harness/linux/run.sh secret-service
 #
 # "offline" runs the container with no network. Run "cargo fetch" first:
 # the registry volume then has all crates. Tests use only local servers,
@@ -31,12 +32,15 @@ image="ncp-harness-linux:$name"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 
 build_image() {
+	stage="${1:-toolchain}"
+	tag="$image"
+	[ "$stage" = toolchain ] || tag="$image-$stage"
 	rust_version="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$root/rust-toolchain.toml")"
 	docker build \
 		--platform "$platform" \
 		--build-arg "RUST_VERSION=$rust_version" \
-		--target toolchain \
-		--tag "$image" \
+		--target "$stage" \
+		--tag "$tag" \
 		"$root/harness/linux"
 }
 
@@ -65,8 +69,28 @@ run_cargo() {
 		cargo "$command" --target "$target" "$@"
 }
 
+# The Secret Service tests use the build volume of the other runs, with no
+# network.
+run_secret_service() {
+	docker run --rm --init \
+		--network none \
+		--env CARGO_NET_OFFLINE=true \
+		--platform "$platform" \
+		--user "$(id -u):$(id -g)" \
+		--env HOME=/tmp \
+		--volume "$root:/work:ro" \
+		--volume ncp-harness-cargo-registry:/usr/local/cargo/registry \
+		--volume "ncp-harness-target-$name:/target" \
+		"$image-secret-service" \
+		sh harness/linux/secret-service.sh "$target"
+}
+
 case "${1:-}" in
 image) build_image ;;
+secret-service)
+	build_image secret-service
+	run_secret_service
+	;;
 cargo)
 	shift
 	[ "$#" -gt 0 ] || {
@@ -85,7 +109,7 @@ offline)
 	run_cargo none "$@"
 	;;
 *)
-	echo "usage: run.sh image | run.sh [offline] cargo <command> [arguments]" >&2
+	echo "usage: run.sh image | run.sh [offline] cargo <command> [arguments] | run.sh secret-service" >&2
 	exit 2
 	;;
 esac
