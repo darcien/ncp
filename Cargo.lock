@@ -1415,6 +1415,7 @@ dependencies = [
 name = "ncp-testkit"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "bytes",
  "http",
  "http-body-util",
@@ -1422,11 +1423,13 @@ dependencies = [
  "hyper-util",
  "ncp",
  "reqwest",
+ "ring",
  "rmcp",
  "serde_json",
  "tokio",
  "tokio-rustls",
  "tokio-util",
+ "url",
 ]
 
 [[package]]

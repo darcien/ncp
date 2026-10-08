@@ -7,6 +7,11 @@
 //! - `slow-N`: answers after N ms. Also accepts `initialize`.
 //! - `modern-only`: answers at once, and rejects `initialize`.
 //! - `slow-modern-only-N`: answers after N ms, and rejects `initialize`.
+//!
+//! [`serve_http_with_oauth`] protects the HTTP fixture with the tokens of a
+//! local authorization server ([`auth_server`]).
+
+pub mod auth_server;
 
 use std::{
     borrow::Cow,
@@ -263,8 +268,69 @@ pub async fn serve_http_with(
     mode: Mode,
     bearer_token: Option<&str>,
 ) -> std::io::Result<HttpFixture> {
-    serve(mode, bearer_token, None).await
+    let access = bearer_token.map_or(Access::Open, |token| {
+        Access::Bearer(format!("Bearer {token}"))
+    });
+    serve(mode, access, None).await
 }
+
+/// A tool that needs one more scope. A call with a token that does not
+/// have the scope gets `403` with `insufficient_scope` (step-up).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StepUp {
+    pub tool: String,
+    pub scope: String,
+}
+
+/// Starts a Streamable HTTP fixture that accepts only the access tokens of
+/// the authorization server. It serves its protected resource metadata
+/// (RFC 9728) with the server as its authorization server. A request with
+/// no valid token gets `401` with the metadata URL in `WWW-Authenticate`.
+///
+/// # Errors
+///
+/// Returns an error when no loopback port is free.
+pub async fn serve_http_with_oauth(
+    mode: Mode,
+    auth: &auth_server::AuthServer,
+    step_up: Option<StepUp>,
+) -> std::io::Result<HttpFixture> {
+    let access = Access::OAuth(Arc::new(OAuthAccess {
+        auth: auth.state.clone(),
+        step_up,
+    }));
+    serve(mode, access, None).await
+}
+
+/// The access rule of the HTTP fixture.
+#[derive(Clone)]
+enum Access {
+    Open,
+    /// The exact `Authorization` header value.
+    Bearer(String),
+    OAuth(Arc<OAuthAccess>),
+}
+
+struct OAuthAccess {
+    auth: auth_server::AuthState,
+    step_up: Option<StepUp>,
+}
+
+/// The URL of the protected resource metadata of the MCP URL, with the path
+/// of the resource after the well-known part (RFC 9728 §3.1).
+#[must_use]
+pub fn metadata_url(mcp_url: &str) -> String {
+    match url::Url::parse(mcp_url) {
+        Ok(url) => format!(
+            "{}{WELL_KNOWN_RESOURCE}{}",
+            url.origin().ascii_serialization(),
+            url.path()
+        ),
+        Err(_) => String::new(),
+    }
+}
+
+const WELL_KNOWN_RESOURCE: &str = "/.well-known/oauth-protected-resource";
 
 /// The test CA that signed the certificate of [`serve_https`].
 pub const TEST_CA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/tls/ca.pem");
@@ -277,7 +343,7 @@ pub const TEST_CA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/tls/ca.
 /// Returns an error when the test certificate does not load, or when no
 /// loopback port is free.
 pub async fn serve_https(mode: Mode) -> std::io::Result<HttpFixture> {
-    serve(mode, None, Some(test_tls()?)).await
+    serve(mode, Access::Open, Some(test_tls()?)).await
 }
 
 fn test_tls() -> std::io::Result<tokio_rustls::TlsAcceptor> {
@@ -307,10 +373,9 @@ fn test_tls() -> std::io::Result<tokio_rustls::TlsAcceptor> {
 
 async fn serve(
     mode: Mode,
-    bearer_token: Option<&str>,
+    access: Access,
     tls: Option<tokio_rustls::TlsAcceptor>,
 ) -> std::io::Result<HttpFixture> {
-    let expected = bearer_token.map(|token| format!("Bearer {token}"));
     let fixture = Fixture::new(mode);
     let discover_calls = fixture.discover_calls.clone();
     let stop = CancellationToken::new();
@@ -324,6 +389,7 @@ async fn serve(
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let scheme = if tls.is_some() { "https" } else { "http" };
     let url = format!("{scheme}://{}/mcp", listener.local_addr()?);
+    let resource: Arc<str> = Arc::from(url.as_str());
     let accept_stop = stop.clone();
     tokio::spawn(async move {
         loop {
@@ -334,15 +400,16 @@ async fn serve(
                 },
                 () = accept_stop.cancelled() => return,
             };
-            let (service, expected, tls) = (service.clone(), expected.clone(), tls.clone());
+            let (service, access, tls) = (service.clone(), access.clone(), tls.clone());
+            let resource = resource.clone();
             tokio::spawn(async move {
                 match tls {
                     Some(tls) => {
                         if let Ok(stream) = tls.accept(stream).await {
-                            serve_connection(stream, service, expected).await;
+                            serve_connection(stream, service, access, resource).await;
                         }
                     }
-                    None => serve_connection(stream, service, expected).await,
+                    None => serve_connection(stream, service, access, resource).await,
                 }
             });
         }
@@ -357,28 +424,109 @@ async fn serve(
 async fn serve_connection(
     stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     service: StreamableHttpService<Fixture, LocalSessionManager>,
-    expected: Option<String>,
+    access: Access,
+    resource: Arc<str>,
 ) {
     let handler = hyper::service::service_fn(move |request: http::Request<_>| {
-        let service = service.clone();
-        let sent = request
-            .headers()
-            .get(http::header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok());
-        let allowed = expected
-            .as_deref()
-            .is_none_or(|expected| sent == Some(expected));
+        let (service, access, resource) = (service.clone(), access.clone(), resource.clone());
         async move {
-            if allowed {
-                Ok::<_, Infallible>(service.handle(request).await)
-            } else {
-                Ok(unauthorized())
-            }
+            let sent = request
+                .headers()
+                .get(http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .map(String::from);
+            Ok::<_, Infallible>(match access {
+                Access::Open => service.handle(request).await,
+                Access::Bearer(expected) if sent.as_deref() == Some(expected.as_str()) => {
+                    service.handle(request).await
+                }
+                Access::Bearer(_) => unauthorized(),
+                Access::OAuth(oauth) => {
+                    oauth_handle(&service, &oauth, &resource, sent.as_deref(), request).await
+                }
+            })
         }
     });
     let _ = hyper::server::conn::http1::Builder::new()
         .serve_connection(hyper_util::rt::TokioIo::new(stream), handler)
         .await;
+}
+
+type FixtureResponse = http::Response<BoxBody<Bytes, Infallible>>;
+
+fn challenge(status: http::StatusCode, value: &str) -> FixtureResponse {
+    let mut response = http::Response::new(Full::new(Bytes::new()).boxed());
+    *response.status_mut() = status;
+    if let Ok(value) = http::HeaderValue::from_str(value) {
+        response
+            .headers_mut()
+            .insert(http::header::WWW_AUTHENTICATE, value);
+    }
+    response
+}
+
+/// True when the JSON-RPC body calls the tool.
+fn calls_tool(body: &[u8], tool: &str) -> bool {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .is_ok_and(|message| message["method"] == "tools/call" && message["params"]["name"] == tool)
+}
+
+async fn oauth_handle(
+    service: &StreamableHttpService<Fixture, LocalSessionManager>,
+    oauth: &OAuthAccess,
+    resource: &str,
+    sent: Option<&str>,
+    request: http::Request<hyper::body::Incoming>,
+) -> FixtureResponse {
+    let metadata = metadata_url(resource);
+    let path = request.uri().path();
+    if request.method() == http::Method::GET
+        && path.starts_with(WELL_KNOWN_RESOURCE)
+        && metadata.ends_with(path)
+    {
+        return auth_server::json_response(
+            http::StatusCode::OK,
+            &json!({
+                "resource": resource,
+                "authorization_servers": [oauth.auth.issuer()],
+                "bearer_methods_supported": ["header"],
+                "scopes_supported": ["a", "b"],
+            }),
+        );
+    }
+    let token = sent.and_then(|value| value.strip_prefix("Bearer "));
+    let Some(scopes) = token.and_then(|token| oauth.auth.token_scopes(token)) else {
+        let error = if token.is_some() {
+            "error=\"invalid_token\", "
+        } else {
+            ""
+        };
+        return challenge(
+            http::StatusCode::UNAUTHORIZED,
+            &format!("Bearer {error}resource_metadata=\"{metadata}\""),
+        );
+    };
+    let Some(step_up) = &oauth.step_up else {
+        return service.handle(request).await;
+    };
+    let (parts, body) = request.into_parts();
+    let body = body
+        .collect()
+        .await
+        .map(http_body_util::Collected::to_bytes)
+        .unwrap_or_default();
+    if calls_tool(&body, &step_up.tool) && !scopes.contains(&step_up.scope) {
+        return challenge(
+            http::StatusCode::FORBIDDEN,
+            &format!(
+                "Bearer error=\"insufficient_scope\", scope=\"{}\", resource_metadata=\"{metadata}\"",
+                step_up.scope
+            ),
+        );
+    }
+    service
+        .handle(http::Request::from_parts(parts, Full::new(body)))
+        .await
 }
 
 /// A proxy that records the first line of each request and answers each
