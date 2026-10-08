@@ -9,6 +9,15 @@ rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 publish = false
 
+# Debug info is the largest part of the build output. Line tables keep the
+# file and line in backtraces of the workspace crates. The dependencies get
+# no debug info.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
