@@ -6,6 +6,7 @@
 #   harness/linux/run.sh cargo <command> [arguments]
 #   harness/linux/run.sh offline cargo <command> [arguments]
 #   harness/linux/run.sh secret-service
+#   harness/linux/run.sh prune
 #
 # "offline" runs the container with no network. Run "cargo fetch" first:
 # the registry volume then has all crates. Tests use only local servers,
@@ -85,8 +86,35 @@ run_secret_service() {
 		sh harness/linux/secret-service.sh "$target"
 }
 
+# Cargo never removes old build output, so the target volumes grow with no
+# limit. A volume is only a cache, thus a removal costs one full build.
+# Docker gives sizes in decimal units, for example 10.39GB. All platforms are
+# in the check, because an old volume also uses disk space.
+prune() {
+	limit_gb=16
+	docker system df -v --format '{{range .Volumes}}{{.Name}} {{.Size}}{{println}}{{end}}' |
+		awk -v limit="$limit_gb" '
+			BEGIN {
+				scale["B"] = 1e-9; scale["kB"] = 1e-6; scale["MB"] = 1e-3
+				scale["GB"] = 1; scale["TB"] = 1e3
+			}
+			$1 ~ /^ncp-harness-target-/ {
+				unit = $2
+				sub(/^[0-9.]+/, "", unit)
+				gb = ($2 + 0) * scale[unit]
+				printf "%s %s\n", $1, $2 > "/dev/stderr"
+				if (gb > limit) print $1
+			}' |
+		while read -r volume; do
+			echo "run.sh: $volume is larger than ${limit_gb}GB. Removing it." >&2
+			docker volume rm "$volume" >/dev/null ||
+				echo "run.sh: cannot remove $volume. A container uses it." >&2
+		done
+}
+
 case "${1:-}" in
 image) build_image ;;
+prune) prune ;;
 secret-service)
 	build_image secret-service
 	run_secret_service
@@ -109,7 +137,7 @@ offline)
 	run_cargo none "$@"
 	;;
 *)
-	echo "usage: run.sh image | run.sh [offline] cargo <command> [arguments] | run.sh secret-service" >&2
+	echo "usage: run.sh image | run.sh [offline] cargo <command> [arguments] | run.sh secret-service | run.sh prune" >&2
 	exit 2
 	;;
 esac

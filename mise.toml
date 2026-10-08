@@ -23,6 +23,18 @@ run = "cargo deny --locked check"
 description = "Check spelling in code and docs"
 run = "typos"
 
+# The build output and the container disk grow with no limit. Monitor them
+# to prevent a full disk.
+[tasks."check:disk"]
+description = "Show the size of the build output and the container disk, and the free disk space"
+run = """
+[ ! -d target ] || du -sh target
+data_dir="$(orb config show 2>/dev/null | sed -n 's/^data_dir: //p')"
+[ -z "$data_dir" ] && exit 0
+du -sh "$data_dir"
+df -Ph "$data_dir" | awk 'NR == 2 { print $4 " free on " $6 }'
+"""
+
 [tasks.check]
 description = "Run all static checks"
 depends = ["check:fmt", "check:clippy", "check:deny", "check:typos"]
@@ -51,6 +63,12 @@ run = [
   "harness/linux/run.sh offline cargo test --workspace --locked",
 ]
 
+# Run it before the other Linux tasks: a volume that is in use cannot be
+# removed.
+[tasks."linux:prune"]
+description = "Show the size of the Linux target volumes, and remove each one above the limit"
+run = "harness/linux/run.sh prune"
+
 # The Secret Service tests start their own D-Bus session and keyring daemon
 # in the container. They never run on the host.
 [tasks."linux:secret-service"]
@@ -58,10 +76,12 @@ description = "Run the Secret Service tests in a container, with no network"
 depends = ["linux:test"]
 run = "harness/linux/run.sh secret-service"
 
-# Format first, so that the checks see the formatted code.
+# Format and prune first, so that the checks see the formatted code. Show
+# the disk use last, after the builds.
 [tasks.precommit]
 description = "Format, then run all checks and tests on the host and in Linux"
 run = [
-  { task = "fmt" },
+  { tasks = ["fmt", "linux:prune"] },
   { tasks = ["check", "test", "linux:check", "linux:secret-service"] },
+  { task = "check:disk" },
 ]
