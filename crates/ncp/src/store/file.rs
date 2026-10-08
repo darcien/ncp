@@ -2,21 +2,17 @@
 //!
 //! Use it only after an explicit opt-in, for a system with no native store.
 //! The store does not read a file that other users can open, as ssh does for
-//! private keys. A write goes to a new file that replaces the old file, so a
-//! failed write cannot leave a partial file.
+//! private keys.
 
-use std::{
-    collections::BTreeMap,
-    fs::{self, DirBuilder, OpenOptions},
-    io::{ErrorKind, Write},
-    os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeMap, fs, io::ErrorKind, os::unix::fs::PermissionsExt, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use super::{CredentialStore, StoreError};
-use crate::credential::{CredentialKey, Secret};
+use crate::{
+    credential::{CredentialKey, Secret},
+    private_file,
+};
 
 const FORMAT_VERSION: u32 = 1;
 
@@ -53,29 +49,8 @@ impl FileStore {
     }
 
     fn write(&self, content: &Content) -> Result<(), StoreError> {
-        let parent = self.path.parent().unwrap_or(Path::new("."));
-        DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(parent)
-            .map_err(|source| self.io(source))?;
-        let temporary = self
-            .path
-            .with_extension(format!("{}.tmp", std::process::id()));
-        let written = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temporary)
-            .and_then(|mut file| {
-                file.write_all(encode(content).as_bytes())?;
-                file.sync_all()
-            })
-            .and_then(|()| fs::rename(&temporary, &self.path));
-        written.map_err(|source| {
-            let _ = fs::remove_file(&temporary);
-            self.io(source)
-        })
+        private_file::write(&self.path, encode(content).as_bytes())
+            .map_err(|source| self.io(source))
     }
 
     fn change(&self, edit: impl FnOnce(&mut BTreeMap<String, String>)) -> Result<(), StoreError> {
@@ -124,6 +99,8 @@ fn encode(content: &Content) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
     use crate::{credential::SecretKind, server::ServerName};
 
