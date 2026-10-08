@@ -13,6 +13,8 @@ async-trait = "0.1"
 # depends on it.
 base64 = "0.23"
 clap = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "suggestions"] }
+# The shell completion scripts.
+clap_complete = "4.6"
 futures-util = { version = "0.3", default-features = false }
 http = "1"
 # The proxy matcher of reqwest, so that -v and the errors show the route

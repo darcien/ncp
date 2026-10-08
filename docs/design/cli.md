@@ -57,7 +57,7 @@ ncp [OPTIONS] auth status [<SERVER>]
 ncp [OPTIONS] secret set <NAME> [--credential-store <native|file>]
 ncp [OPTIONS] secret list
 ncp [OPTIONS] secret delete <NAME>
-ncp generate-shell-completion <bash|zsh|fish>      (after the MVP)
+ncp generate-shell-completion <bash|zsh|fish>
 ```
 
 | Command | Network | Result |
@@ -73,7 +73,7 @@ ncp generate-shell-completion <bash|zsh|fish>      (after the MVP)
 | `secret set` | No | Reads one value from stdin and keeps it under the name (section 2.4). On a TTY the input is not shown. The value never goes in an argument (S3). |
 | `secret list` | No | The names of the stored secrets and the place of each one (native store, file, or both). Names that no `${NAME}` in the configuration uses are marked. Never a value. |
 | `secret delete` | No | Removes the secret from all places and says from which. |
-| `generate-shell-completion` | No | After the MVP. The completion script for the shell. Server names come from the configuration. Tool names come only from a cache, or are not completed. Completion never starts a server. |
+| `generate-shell-completion` | No | The completion script for the shell. Server names come from the configuration. Tool names come only from a cache, or are not completed. Completion never starts a server. |
 
 `ncp --help` shows the normal order of work: `server list`, `server show`,
 `tool list`, `tool show`, `tool call`.
@@ -378,6 +378,7 @@ user reviews them.
 | B56 | `-q` and `-v` together are a usage error. `-q` keeps the server log of a stdio server and the result. `--config-file` takes a path that is relative to the working directory, and the file must exist (exit 2). `--output-format` changes only the format, not the TTY checks (for example the hidden input of `secret set`). | A quiet run with diagnostics has no meaning. The server log is the only view of a server failure. A typing error in a named path must not look like an empty configuration. |
 | B57 | The text of a `key=@path` file follows the schema rule of `key=value`: a property of type `number` reads the text as JSON. A relative path is relative to the working directory. `ncp` reads each file before it connects; a file that it cannot read is a usage error (exit 2). The first `=` splits a word; a `:` just before it makes the value JSON (`key:=json`). | The file is a long `key=value`, so the same rule applies. A typing error in a path must not start a server. |
 | B58 | `resource read` writes the contents as they are, also in a pipe: text with no change, and the bytes of a blob. Only `--output-format json` gives the MCP `ReadResourceResult`. On a TTY, text gets the escapes of B15, and a blob shows as one summary line. A server with no `resources` or `prompts` capability gives an empty list and a hint. A server with no `resources/templates/list` gives no templates. "Invalid params" and "resource not found" are usage errors with the hint `ncp resource list SERVER` or `ncp prompt list SERVER`. Prompt arguments are `key=value` or `key=@path`: the spec gives them as text. `input_required` gives exit 5, as for `tool call`. | Section 2: the output can go into a pipe, for example an image into a file. A binary on a terminal can change the terminal. |
+| B59 | clap writes the static part of each completion script (commands, options, value choices). A server name comes from `ncp __complete-servers` at completion time: a word that is not in the grammar, so that the scripts do not offer it. It reads only the configuration file, writes one name on each line, and writes nothing (exit 0) when the configuration cannot be read. The scripts run it at the server argument of each command. Tool names do not complete. | The dynamic engine of clap_complete needs unstable features of two crates. The hidden word starts no server and opens no store, so a tab is fast and shows no prompt. Tool names need a running server or a cache. |
 | B50 | When `SSL_CERT_FILE` is set, `ncp` trusts the PEM roots in the file in addition to the system store. A file that `ncp` cannot read, or that has no certificate, gives exit 3 with the path and the variable name, and so does an empty value. Only an http server reads the file, so a stdio server works with a bad value. On Linux the system store reads `SSL_CERT_FILE` (and `SSL_CERT_DIR`) in place of the system roots, so there the file replaces the system roots, as in OpenSSL; an empty value there loads no root. `ncp` cannot change this, because it does not change its own environment. | N4, with the variable name of curl, OpenSSL and uv. A silent fallback gives a TLS error that does not name the cause. |
 
 [spec-tool-names]: https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool-names

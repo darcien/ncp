@@ -1835,3 +1835,88 @@ fn server_that_stops_at_its_start_gives_its_exit_status_and_its_log() {
         run.describe()
     );
 }
+
+/// A configuration whose server leaves a mark file when it starts.
+fn marking_server(home: &Home) -> PathBuf {
+    let mark = home.root.join("started");
+    home.configure(&json!({
+        "beta": {"command": "/bin/sh", "args": ["-c", format!("touch {}", mark.display())]},
+        "alpha": {"type": "http", "url": "https://example.com/mcp"}
+    }));
+    mark
+}
+
+#[test]
+fn completion_scripts_name_ncp_and_read_server_names_at_completion_time() {
+    let home = Home::new("completion-scripts");
+    for shell in ["bash", "zsh", "fish"] {
+        let run = home.run(&["generate-shell-completion", shell]);
+        assert_eq!(run.code(), 0, "{}", run.describe());
+        let script = String::from_utf8_lossy(&run.0.stdout).to_string();
+        assert!(script.contains("ncp __complete-servers"), "{shell}");
+        // zsh runs the command in one function, and names the function at
+        // each place.
+        let places = match shell {
+            "zsh" => script.matches(":_ncp_servers'").count(),
+            _ => script.matches("ncp __complete-servers").count(),
+        };
+        assert_eq!(
+            places, 11,
+            "{shell}: one place for each command with a server"
+        );
+    }
+    assert_eq!(home.run(&["generate-shell-completion", "elvish"]).code(), 2);
+}
+
+#[test]
+fn server_names_complete_from_the_configuration_and_start_no_server() {
+    let home = Home::new("completion-names");
+    let mark = marking_server(&home);
+    let run = home.run(&["__complete-servers"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(String::from_utf8_lossy(&run.0.stdout), "alpha\nbeta\n");
+    assert_eq!(String::from_utf8_lossy(&run.0.stderr), "");
+    assert!(!mark.exists(), "a server started");
+}
+
+#[test]
+fn bash_completion_offers_the_configured_server_names() {
+    let home = Home::new("completion-bash");
+    let mark = marking_server(&home);
+    let bin = home.root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink(NCP, bin.join("ncp")).unwrap();
+    let script = home.root.join("ncp.bash");
+    let run = home.run(&["generate-shell-completion", "bash"]);
+    std::fs::write(&script, &run.0.stdout).unwrap();
+    let probe = format!(
+        "source {}; COMP_WORDS=(ncp tool list ''); COMP_CWORD=3; _ncp ncp '' list; printf '%s\\n' \"${{COMPREPLY[@]}}\"",
+        script.display()
+    );
+    let home = home.set("PATH", &format!("{}:/usr/bin:/bin", bin.display()));
+    let output = Command::new("bash")
+        .args(["-c", &probe])
+        .env_clear()
+        .envs(home.env.iter().cloned())
+        .output()
+        .unwrap();
+    let words = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(words.lines().any(|word| word == "alpha"), "{words}");
+    assert!(words.lines().any(|word| word == "beta"), "{words}");
+    assert!(!mark.exists(), "a server started");
+}
+
+#[test]
+fn configuration_that_does_not_parse_completes_no_names_and_says_nothing() {
+    let home = Home::new("completion-broken");
+    let path = home.config_path();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "{ not json").unwrap();
+    let run = home.run(&["__complete-servers"]);
+    assert_eq!(run.code(), 0);
+    assert!(
+        run.0.stdout.is_empty() && run.0.stderr.is_empty(),
+        "{}",
+        run.describe()
+    );
+}

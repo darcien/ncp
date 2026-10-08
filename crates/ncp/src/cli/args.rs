@@ -100,6 +100,21 @@ pub enum Command {
     /// Named values for ${NAME} in the configuration
     #[command(subcommand)]
     Secret(SecretCommand),
+    /// Print the completion script for a shell. Server names complete from
+    /// the configuration.
+    GenerateShellCompletion {
+        /// The shell
+        #[arg(value_enum)]
+        shell: CompletionShell,
+    },
+}
+
+/// A shell with a completion script.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum CompletionShell {
+    Bash,
+    Zsh,
+    Fish,
 }
 
 #[derive(Debug, Subcommand)]

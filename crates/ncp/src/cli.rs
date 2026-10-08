@@ -3,6 +3,7 @@
 pub mod args;
 pub mod auth;
 mod commands;
+mod completion;
 mod diagnostics;
 mod near;
 mod outcome;
@@ -59,6 +60,13 @@ pub fn main() -> ExitCode {
 #[must_use]
 pub fn main_with(platform: Platform) -> ExitCode {
     let started = Instant::now();
+    // The completion scripts run this at each tab. It is not part of the
+    // grammar, so that the scripts do not offer it, and it is fast and
+    // silent, also with no HOME or a broken configuration.
+    if std::env::args_os().nth(1).as_deref() == Some(completion::SERVERS_COMMAND.as_ref()) {
+        completion::servers(&process_env());
+        return ExitCode::SUCCESS;
+    }
     let ui = Ui {
         format: Format::detect(),
         verbosity: Verbosity::Normal,
@@ -154,6 +162,7 @@ async fn run(
             Command::Prompt(command) => commands::prompt(&context, command).await,
             Command::Auth(command) => auth::command(&context, command).await,
             Command::Secret(command) => secrets::command(&context, command).await,
+            Command::GenerateShellCompletion { shell } => completion::script(shell),
         }
     }
     .await;
