@@ -2,14 +2,14 @@
 # its reason. The suite fails when an entry passes, so that this list stays
 # current. The report is docs/research/conformance.md.
 client:
-  # Elicitation (requirement P9) comes after the MVP. With no TTY, ncp
+  # Elicitation comes after the MVP. With no TTY, ncp
   # stops with exit 5 (input required) and does not answer.
   - elicitation-sep1034-client-defaults
-  # A multi-round tool call (MRTR, requirement P8): ncp gives the
+  # A multi-round tool call (MRTR): ncp gives the
   # input_required result to the caller with exit 5 and does not continue.
   - sep-2322-client-request-state
   # A Client ID Metadata Document needs a stable HTTPS URL. Its place is a
-  # release decision of the user (requirement A7), so CIMD is off.
+  # release decision of the user, so CIMD is off.
   - auth/basic-cimd:cimd-client-id-used
   # The configuration reads only oauth.clientId (design C4). A client
   # secret in the configuration file would be a secret in a plain file.

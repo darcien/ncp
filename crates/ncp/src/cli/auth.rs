@@ -86,8 +86,7 @@ pub(super) async fn command(context: &Context<'_>, command: AuthCommand) -> Resu
             .await?;
             // After the limit of the login: the tokens are saved, and the
             // cleanup has its own short limit.
-            remove_old_tokens(context, &name, credential_store).await;
-            Ok(())
+            remove_old_tokens(context, &name, credential_store).await
         }
         AuthCommand::Logout { server } => logout(context, &server).await,
         AuthCommand::Status { server } => status(context, server.as_deref()).await,
@@ -263,7 +262,7 @@ async fn login(
         server,
         remote,
         &mut manager,
-        &store,
+        (&store, place),
         &issuer,
         &redirect,
     )
@@ -493,7 +492,10 @@ async fn search_tokens(
         }
     }
     match down {
-        Some(error) => Err(secrets::store_failure(&error)),
+        Some(error) => Err(secrets::store_failure(&error).hint(format!(
+            "ncp auth login {} --credential-store file",
+            super::render::shell_word(server.name.as_str())
+        ))),
         None => Ok(None),
     }
 }
@@ -526,12 +528,31 @@ fn union(first: &[String], second: &[String]) -> Vec<String> {
 /// The scopes for a new login: the scopes that rmcp selects, the scopes
 /// that the user has, and the scopes of a `403` answer since the last
 /// login. A step-up asks for the old and the new scopes.
-async fn login_scopes(context: &Context<'_>, server: &Server, selected: &[String]) -> Vec<String> {
-    let stored = find_tokens(context, server)
+async fn login_scopes(
+    context: &Context<'_>,
+    server: &Server,
+    chosen: (&Arc<dyn CredentialStore>, CredentialPlace),
+    selected: &[String],
+) -> Vec<String> {
+    let key = CredentialKey::OAuthTokens(server.name.clone());
+    let (store, place) = chosen;
+    let wanted = key.clone();
+    let in_chosen = secrets::call(context, store, move |store| store.load(&wanted))
         .await
         .ok()
-        .flatten()
-        .and_then(|(_, secret)| serde_json::from_str::<Value>(secret.expose()).ok())
+        .flatten();
+    let found = if in_chosen.is_some() {
+        in_chosen
+    } else if let Ok(other) = other_place(context, place).await {
+        crate::store::run_blocking(CLEANUP_LIMIT, move || other.load(&key))
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    let stored = found
+        .and_then(|secret| serde_json::from_str::<Value>(secret.expose()).ok())
         .unwrap_or(Value::Null);
     let held = union(
         &scope_list(&stored["granted_scopes"]),
@@ -544,14 +565,28 @@ async fn login_scopes(context: &Context<'_>, server: &Server, selected: &[String
 /// not wait for an unlock prompt of a store that the user did not choose.
 const CLEANUP_LIMIT: Duration = Duration::from_secs(5);
 
-/// Removes the tokens of the other place after a login. Calls read the
-/// native store first, so an old item there would hide the new tokens in
-/// the file. A failure gives a warning: the login worked.
-async fn remove_old_tokens(context: &Context<'_>, name: &ServerName, place: CredentialPlace) {
-    let other = match place {
+/// The other place than the one that the user chose. The native store
+/// gets the short limit: the user did not choose it.
+async fn other_place(
+    context: &Context<'_>,
+    chosen: CredentialPlace,
+) -> Result<Arc<dyn CredentialStore>, crate::store::StoreError> {
+    match chosen {
         CredentialPlace::Native => Ok(secrets::file(context)),
         CredentialPlace::File => secrets::open_within(context, CLEANUP_LIMIT).await,
-    };
+    }
+}
+
+/// Removes the tokens of the other place after a login. Calls read the
+/// native store first, so an old item there would hide the new tokens in
+/// the file. A failure gives a warning: the login worked. Ctrl-C gives
+/// 130, as at each other step.
+async fn remove_old_tokens(
+    context: &Context<'_>,
+    name: &ServerName,
+    place: CredentialPlace,
+) -> Result<(), Failure> {
+    let other = other_place(context, place).await;
     let key = CredentialKey::OAuthTokens(name.clone());
     let removed = match other {
         Ok(store) => {
@@ -567,11 +602,15 @@ async fn remove_old_tokens(context: &Context<'_>, name: &ServerName, place: Cred
             .ui
             .debug(Some(name), "removed the old tokens of the other place"),
         Ok(false) => {}
+        Err(crate::store::StoreError::Interrupted) => {
+            return Err(session::interrupted().server(name));
+        }
         Err(error) => context.ui.warning(
             Some(name),
             &format!("cannot remove the old tokens of the other place: {error}"),
         ),
     }
+    Ok(())
 }
 
 /// The client for the login, in the order of the spec:
@@ -583,12 +622,12 @@ async fn client_request(
     server: &Server,
     remote: &RemoteServer,
     manager: &mut AuthorizationManager,
-    store: &Arc<dyn CredentialStore>,
+    (store, place): (&Arc<dyn CredentialStore>, CredentialPlace),
     issuer: &str,
     redirect: &RedirectUri,
 ) -> Result<AuthorizationRequest, Failure> {
     let selected = manager.select_scopes(None, &[]);
-    let scopes = login_scopes(context, server, &selected).await;
+    let scopes = login_scopes(context, server, (store, place), &selected).await;
     let request = AuthorizationRequest::new(redirect.to_string())
         .with_client_name(CLIENT_NAME)
         .with_scopes(scopes.clone());
