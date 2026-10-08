@@ -8,7 +8,8 @@ use std::collections::{BTreeMap, HashMap};
 
 use reqwest::header::{HeaderName, HeaderValue};
 use rmcp::transport::{
-    StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
+    DynamicTransportError, StreamableHttpClientTransport,
+    streamable_http_client::{StreamableHttpClientTransportConfig, StreamableHttpError},
 };
 
 use crate::{
@@ -87,6 +88,18 @@ pub fn transport(
         http.clone(),
         config,
     ))
+}
+
+/// True when the server answered `401` or `403`: it needs a login or more
+/// scopes.
+#[must_use]
+pub fn needs_authorization(error: &DynamicTransportError) -> bool {
+    matches!(
+        error
+            .error
+            .downcast_ref::<StreamableHttpError<reqwest::Error>>(),
+        Some(StreamableHttpError::AuthRequired(_) | StreamableHttpError::InsufficientScope(_))
+    )
 }
 
 #[cfg(test)]

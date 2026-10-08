@@ -21,7 +21,7 @@ use rmcp::{
     model::{
         CallToolRequest, CallToolRequestParams, CallToolResponse, ClientCapabilities, ClientConfig,
         ClientRequest, Implementation, JsonObject, ListToolsRequest, PaginatedRequestParams,
-        ServerResult, Tool,
+        ServerPeerInfo, ServerResult, Tool,
     },
     service::{ClientInitializeError, PeerRequestOptions, RunningService, ServiceError},
 };
@@ -168,6 +168,30 @@ pub enum RequestError {
     Timeout(Duration),
     #[error("server sent a result of the wrong type")]
     UnexpectedResult,
+}
+
+impl ConnectError {
+    /// True when the server needs a login or more scopes.
+    #[must_use]
+    pub fn needs_authorization(&self) -> bool {
+        match self {
+            Self::Handshake { source, .. } => match source.as_ref() {
+                ClientInitializeError::TransportError { error, .. } => {
+                    http::needs_authorization(error)
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+}
+
+impl RequestError {
+    /// True when the server needs a login or more scopes.
+    #[must_use]
+    pub fn needs_authorization(&self) -> bool {
+        matches!(self, Self::Service(ServiceError::TransportSend(error)) if http::needs_authorization(error))
+    }
 }
 
 type Service = RunningService<RoleClient, ClientConfig>;
@@ -360,6 +384,12 @@ impl Connection {
     #[must_use]
     pub fn era(&self) -> &Era {
         &self.era
+    }
+
+    /// What the server said about itself in the handshake.
+    #[must_use]
+    pub fn server_info(&self) -> Option<std::sync::Arc<ServerPeerInfo>> {
+        self.service.peer_info()
     }
 
     /// Lists all tools. Each page is one request with its own limits.
