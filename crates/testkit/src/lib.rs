@@ -111,7 +111,8 @@ fn tools() -> Vec<Tool> {
             "wait",
             "Wait; write the marker file when cancelled",
             schema(json!({"type": "object", "properties": {
-                "ms": {"type": "integer"}, "marker": {"type": "string"}}})),
+                "ms": {"type": "integer"}, "marker": {"type": "string"},
+                "started": {"type": "string"}}})),
         ),
     ]
 }
@@ -210,6 +211,11 @@ impl ServerHandler for Fixture {
                     .and_then(serde_json::Value::as_u64)
                     .unwrap_or(0);
                 let marker = argument(&arguments, "marker").to_string();
+                // A test can wait for this file before it interrupts.
+                let started = argument(&arguments, "started");
+                if !started.is_empty() {
+                    let _ = std::fs::write(started, "started");
+                }
                 tokio::select! {
                     () = tokio::time::sleep(Duration::from_millis(ms)) => Ok(text_result("done")),
                     () = context.ct.cancelled() => {

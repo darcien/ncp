@@ -118,11 +118,21 @@ fn ctrl_c_during_a_request_sends_cancel_stops_the_server_and_exits_130() {
     let pid_file = home.path("server.pid");
     let marker = home.path("cancelled");
     home.configure(&json!({"fx": fixture("modern", &pid_file)}));
+    let started = home.path("started");
     let marker_arg = format!("marker={}", marker.display());
-    let child = home.spawn(&["tool", "call", "fx", "wait", "ms=30000", &marker_arg]);
+    let started_arg = format!("started={}", started.display());
+    let child = home.spawn(&[
+        "tool",
+        "call",
+        "fx",
+        "wait",
+        "ms=30000",
+        &marker_arg,
+        &started_arg,
+    ]);
     let server = wait_for_file(&pid_file);
-    // The schema check and the call come after the handshake.
-    std::thread::sleep(Duration::from_millis(700));
+    // Interrupt only when the server runs the call, also on a busy host.
+    wait_for_file(&started);
     let (code, elapsed, stderr) = interrupt(child);
     assert_eq!(code, 130, "{stderr}");
     assert!(elapsed < Duration::from_secs(6), "{elapsed:?}");
