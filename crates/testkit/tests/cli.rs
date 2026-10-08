@@ -1373,3 +1373,49 @@ async fn login_after_insufficient_scope_asks_for_the_old_and_the_new_scopes() {
     let run = home.run(&call);
     assert_eq!(run.code(), 0, "{}", run.describe());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn trace_of_a_login_and_a_call_shows_no_token_code_or_verifier() {
+    let (_auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    let home = oauth_home("login-trace", &fixture.url);
+    let login = home.run(&["-vv", "auth", "login", "web", "--credential-store", "file"]);
+    assert_eq!(login.code(), 0, "{}", login.describe());
+    let call = home.run(&["-vv", "tool", "list", "web"]);
+    assert_eq!(call.code(), 0, "{}", call.describe());
+    for run in [&login, &call] {
+        let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
+        assert!(
+            stderr.contains("/token"),
+            "the token request shows: {stderr}"
+        );
+        for secret in [
+            "\"at-",
+            "\"rt-",
+            "code=code-",
+            "code_verifier=",
+            "Bearer at-",
+        ] {
+            let shown = stderr
+                .lines()
+                .filter(|line| line.contains(secret) && !line.contains("code_verifier=****"))
+                .count();
+            assert_eq!(shown, 0, "{secret} shows: {stderr}");
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn oauth_discovery_goes_through_the_proxy() {
+    let (_auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    let proxy = ncp_testkit::serve_fake_proxy().await.unwrap();
+    let home = oauth_home("login-proxy", &fixture.url).set("HTTP_PROXY", &proxy.url);
+    let run = home.run(&LOGIN_TO_FILE);
+    assert_ne!(run.code(), 0, "{}", run.describe());
+    let lines = proxy.request_lines.lock().unwrap().clone();
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with(&format!("GET {}", fixture.url))),
+        "{lines:?}"
+    );
+}
