@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::{
@@ -20,7 +21,50 @@ const REMOTE_KEYS: [&str; 3] = ["type", "url", "headers"];
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Server {
     pub name: ServerName,
+    /// The values after `${NAME}` expansion.
     pub transport: Transport,
+    /// The target as the file writes it, before expansion. Output and the
+    /// era cache use it, so an expanded value never goes to a file or to
+    /// the screen.
+    pub target: Target,
+}
+
+impl Server {
+    /// A server with no variables, so the target is the transport.
+    #[must_use]
+    pub fn new(name: ServerName, transport: Transport) -> Self {
+        let target = match &transport {
+            Transport::Stdio(stdio) => Target::Stdio {
+                command: stdio.command.clone(),
+                args: stdio.args.clone(),
+                cwd: stdio.cwd.clone(),
+            },
+            Transport::Http(remote) | Transport::Sse(remote) => Target::Remote {
+                url: remote.url.as_str().to_string(),
+            },
+        };
+        Self {
+            name,
+            transport,
+            target,
+        }
+    }
+}
+
+/// The parts of a server configuration that identify the server process or
+/// origin. Environment values and headers are not part of it: they can hold
+/// secrets, and they do not change the server program.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "transport", rename_all = "snake_case")]
+pub enum Target {
+    Stdio {
+        command: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+    },
+    Remote {
+        url: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,10 +245,10 @@ fn parse_entry(name: &str, value: &Value, env: &Env) -> (Result<Server, EntryErr
         Err(error) => (Err(error), Vec::new()),
         Ok((server_name, object, kind)) => {
             let warnings = unknown_keys(name, object, kind);
-            let transport = transport(object, kind, env);
-            let server = transport.map(|transport| Server {
+            let server = transport(object, kind, env).map(|transport| Server {
                 name: server_name,
                 transport,
+                target: configured_target(object, kind),
             });
             (server, warnings)
         }
@@ -239,6 +283,36 @@ fn unknown_keys(server: &str, object: &Map<String, Value>, kind: Kind) -> Vec<Wa
             key: key.clone(),
         })
         .collect()
+}
+
+/// The target with no expansion. The transport parsed first, so each field
+/// has the right type.
+fn configured_target(object: &Map<String, Value>, kind: Kind) -> Target {
+    let text = |field: &str| {
+        object
+            .get(field)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    };
+    match kind {
+        Kind::Stdio => Target::Stdio {
+            command: text("command").unwrap_or_default(),
+            args: object
+                .get("args")
+                .and_then(Value::as_array)
+                .map(|args| {
+                    args.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            cwd: text("cwd"),
+        },
+        Kind::Http | Kind::Sse => Target::Remote {
+            url: text("url").unwrap_or_default(),
+        },
+    }
 }
 
 fn transport(object: &Map<String, Value>, kind: Kind, env: &Env) -> Result<Transport, EntryError> {
@@ -459,6 +533,30 @@ mod tests {
         };
         assert_eq!(remote.url.as_str(), "http://localhost:8080/mcp");
         assert_eq!(remote.headers.get("X").map(String::as_str), Some("/home/u"));
+    }
+
+    #[test]
+    fn target_keeps_variables_unexpanded_and_ignores_env_and_headers() {
+        let config = load(
+            r#"{"mcpServers": {
+                "s": {"command": "srv", "args": ["--port=${PORT}"], "env": {"T": "${HOME}"}},
+                "r": {"type": "http", "url": "http://localhost:${PORT}/mcp", "headers": {"X": "${HOME}"}}
+            }}"#,
+        );
+        assert_eq!(
+            config.server("s").unwrap().target,
+            Target::Stdio {
+                command: "srv".into(),
+                args: vec!["--port=${PORT}".into()],
+                cwd: None
+            }
+        );
+        assert_eq!(
+            config.server("r").unwrap().target,
+            Target::Remote {
+                url: "http://localhost:${PORT}/mcp".into()
+            }
+        );
     }
 
     #[test]

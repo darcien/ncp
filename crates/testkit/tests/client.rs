@@ -29,9 +29,9 @@ fn name() -> ServerName {
 }
 
 fn stdio(args: &[&str], env: &[(&str, &str)]) -> Server {
-    Server {
-        name: name(),
-        transport: Transport::Stdio(StdioServer {
+    Server::new(
+        name(),
+        Transport::Stdio(StdioServer {
             command: FIXTURE.into(),
             args: args.iter().map(ToString::to_string).collect(),
             env: env
@@ -40,20 +40,20 @@ fn stdio(args: &[&str], env: &[(&str, &str)]) -> Server {
                 .collect(),
             cwd: None,
         }),
-    }
+    )
 }
 
 fn http_server(url: &str, headers: &[(&str, &str)]) -> Server {
-    Server {
-        name: name(),
-        transport: Transport::Http(RemoteServer {
+    Server::new(
+        name(),
+        Transport::Http(RemoteServer {
             url: ServerUrl::parse(url).unwrap(),
             headers: headers
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
         }),
-    }
+    )
 }
 
 /// Tests use only local servers, and reqwest sends loopback requests to a
@@ -573,13 +573,13 @@ async fn stops_stdio_server_that_ignores_sigterm_with_sigkill() {
 
 #[tokio::test]
 async fn rejects_sse_server() {
-    let server = Server {
-        name: name(),
-        transport: Transport::Sse(RemoteServer {
+    let server = Server::new(
+        name(),
+        Transport::Sse(RemoteServer {
             url: ServerUrl::parse("http://localhost:1/sse").unwrap(),
             headers: BTreeMap::new(),
         }),
-    };
+    );
     let error = Setup::new(server).connect().await.err().unwrap();
     assert!(matches!(error, ConnectError::SseNotSupported(_)));
 }

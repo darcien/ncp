@@ -14,10 +14,7 @@ use std::{collections::BTreeMap, fmt};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    config::{Server, Transport},
-    server::ServerName,
-};
+use crate::{config::Target, server::ServerName};
 
 /// The first version with `server/discover` and no `initialize` handshake.
 const FIRST_MODERN: &str = "2026-07-28";
@@ -128,38 +125,6 @@ pub fn startup(cached: Option<&Era>) -> Startup {
     }
 }
 
-/// The parts of a server configuration that identify the server process or
-/// origin. Environment values and headers are not part of it: they can hold
-/// secrets, and they do not change the server program.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "transport", rename_all = "snake_case")]
-pub enum Target {
-    Stdio {
-        command: String,
-        args: Vec<String>,
-        cwd: Option<String>,
-    },
-    Remote {
-        url: String,
-    },
-}
-
-impl Target {
-    #[must_use]
-    pub fn of(server: &Server) -> Self {
-        match &server.transport {
-            Transport::Stdio(stdio) => Self::Stdio {
-                command: stdio.command.clone(),
-                args: stdio.args.clone(),
-                cwd: stdio.cwd.clone(),
-            },
-            Transport::Http(remote) | Transport::Sse(remote) => Self::Remote {
-                url: remote.url.as_str().to_string(),
-            },
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CachedEra {
     target: Target,
@@ -192,7 +157,6 @@ impl EraCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::StdioServer;
 
     fn version(text: &str) -> ProtocolVersion {
         ProtocolVersion::parse(text).unwrap()
@@ -263,20 +227,6 @@ mod tests {
         );
         assert_eq!(cache.lookup(&name("s"), &remote("https://b/mcp")), None);
         assert_eq!(cache.lookup(&name("t"), &remote("https://a/mcp")), None);
-    }
-
-    #[test]
-    fn target_ignores_env_and_headers() {
-        let server = |env_value: &str| Server {
-            name: name("s"),
-            transport: Transport::Stdio(StdioServer {
-                command: "srv".into(),
-                args: vec!["-v".into()],
-                env: BTreeMap::from([("TOKEN".into(), env_value.into())]),
-                cwd: None,
-            }),
-        };
-        assert_eq!(Target::of(&server("a")), Target::of(&server("b")));
     }
 
     #[test]
