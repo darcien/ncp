@@ -263,6 +263,53 @@ pub async fn serve_http_with(
     mode: Mode,
     bearer_token: Option<&str>,
 ) -> std::io::Result<HttpFixture> {
+    serve(mode, bearer_token, None).await
+}
+
+/// The test CA that signed the certificate of [`serve_https`].
+pub const TEST_CA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/tls/ca.pem");
+
+/// Starts a Streamable HTTP fixture over TLS, with a certificate from
+/// [`TEST_CA`] for `127.0.0.1`. No system trusts this CA.
+///
+/// # Errors
+///
+/// Returns an error when the test certificate does not load, or when no
+/// loopback port is free.
+pub async fn serve_https(mode: Mode) -> std::io::Result<HttpFixture> {
+    serve(mode, None, Some(test_tls()?)).await
+}
+
+fn test_tls() -> std::io::Result<tokio_rustls::TlsAcceptor> {
+    use tokio_rustls::rustls::{
+        self,
+        pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
+    };
+    let invalid = |error: &dyn std::fmt::Display| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
+    };
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/tls");
+    let chain = CertificateDer::pem_file_iter(format!("{dir}/server.pem"))
+        .and_then(Iterator::collect::<Result<Vec<_>, _>>)
+        .map_err(|error| invalid(&error))?;
+    let key = PrivateKeyDer::from_pem_file(format!("{dir}/server.key"))
+        .map_err(|error| invalid(&error))?;
+    let config = rustls::ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .map_err(|error| invalid(&error))?
+    .with_no_client_auth()
+    .with_single_cert(chain, key)
+    .map_err(|error| invalid(&error))?;
+    Ok(tokio_rustls::TlsAcceptor::from(Arc::new(config)))
+}
+
+async fn serve(
+    mode: Mode,
+    bearer_token: Option<&str>,
+    tls: Option<tokio_rustls::TlsAcceptor>,
+) -> std::io::Result<HttpFixture> {
     let expected = bearer_token.map(|token| format!("Bearer {token}"));
     let fixture = Fixture::new(mode);
     let discover_calls = fixture.discover_calls.clone();
@@ -275,7 +322,8 @@ pub async fn serve_http_with(
             .with_cancellation_token(stop.child_token()),
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    let url = format!("http://{}/mcp", listener.local_addr()?);
+    let scheme = if tls.is_some() { "https" } else { "http" };
+    let url = format!("{scheme}://{}/mcp", listener.local_addr()?);
     let accept_stop = stop.clone();
     tokio::spawn(async move {
         loop {
@@ -286,29 +334,16 @@ pub async fn serve_http_with(
                 },
                 () = accept_stop.cancelled() => return,
             };
-            let service = service.clone();
-            let expected = expected.clone();
+            let (service, expected, tls) = (service.clone(), expected.clone(), tls.clone());
             tokio::spawn(async move {
-                let handler = hyper::service::service_fn(move |request: http::Request<_>| {
-                    let service = service.clone();
-                    let sent = request
-                        .headers()
-                        .get(http::header::AUTHORIZATION)
-                        .and_then(|value| value.to_str().ok());
-                    let allowed = expected
-                        .as_deref()
-                        .is_none_or(|expected| sent == Some(expected));
-                    async move {
-                        if allowed {
-                            Ok::<_, Infallible>(service.handle(request).await)
-                        } else {
-                            Ok(unauthorized())
+                match tls {
+                    Some(tls) => {
+                        if let Ok(stream) = tls.accept(stream).await {
+                            serve_connection(stream, service, expected).await;
                         }
                     }
-                });
-                let _ = hyper::server::conn::http1::Builder::new()
-                    .serve_connection(hyper_util::rt::TokioIo::new(stream), handler)
-                    .await;
+                    None => serve_connection(stream, service, expected).await,
+                }
             });
         }
     });
@@ -317,6 +352,33 @@ pub async fn serve_http_with(
         discover_calls,
         stop,
     })
+}
+
+async fn serve_connection(
+    stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    service: StreamableHttpService<Fixture, LocalSessionManager>,
+    expected: Option<String>,
+) {
+    let handler = hyper::service::service_fn(move |request: http::Request<_>| {
+        let service = service.clone();
+        let sent = request
+            .headers()
+            .get(http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok());
+        let allowed = expected
+            .as_deref()
+            .is_none_or(|expected| sent == Some(expected));
+        async move {
+            if allowed {
+                Ok::<_, Infallible>(service.handle(request).await)
+            } else {
+                Ok(unauthorized())
+            }
+        }
+    });
+    let _ = hyper::server::conn::http1::Builder::new()
+        .serve_connection(hyper_util::rt::TokioIo::new(stream), handler)
+        .await;
 }
 
 /// A proxy that records the first line of each request and answers each

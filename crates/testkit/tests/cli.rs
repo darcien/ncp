@@ -898,3 +898,36 @@ async fn requests_go_through_the_proxy_unless_no_proxy_names_the_host() {
     let home = home.set("NO_PROXY", "127.0.0.1");
     assert_eq!(home.run(&["tool", "list", "web"]).code(), 0);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn https_server_works_with_the_roots_in_ssl_cert_file() {
+    let fixture = ncp_testkit::serve_https(Mode::Modern).await.unwrap();
+    let home = Home::new("cert-file").set("SSL_CERT_FILE", ncp_testkit::TEST_CA);
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn https_server_with_an_unknown_ca_fails_without_ssl_cert_file() {
+    let fixture = ncp_testkit::serve_https(Mode::Modern).await.unwrap();
+    let home = Home::new("no-cert-file");
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 3, "{}", run.describe());
+}
+
+#[test]
+fn unreadable_ssl_cert_file_gives_a_local_error_that_names_the_variable() {
+    let home = Home::new("bad-cert-file");
+    let missing = home.root.join("missing.pem").display().to_string();
+    let home = home.set("SSL_CERT_FILE", &missing);
+    home.configure(&json!({"web": {"type": "http", "url": "https://127.0.0.1:9/mcp"}}));
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 3, "{}", run.describe());
+    let message = run.error()["message"].as_str().unwrap().to_string();
+    assert!(
+        message.contains("SSL_CERT_FILE") && message.contains(&missing),
+        "{message}"
+    );
+}

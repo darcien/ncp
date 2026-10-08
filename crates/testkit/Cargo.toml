@@ -20,6 +20,7 @@ ncp = { path = "../ncp" }
 rmcp = { version = "=3.5.1", default-features = false, features = ["server", "transport-io", "transport-streamable-http-server"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-std", "io-util", "signal", "sync"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 tokio-util = "0.7"
 
 [dev-dependencies]

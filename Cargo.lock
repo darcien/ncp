@@ -1361,6 +1361,7 @@ dependencies = [
  "rmcp",
  "serde_json",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
 ]
 

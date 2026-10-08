@@ -1,8 +1,8 @@
 //! The HTTP client and the Streamable HTTP transport.
 //!
 //! `ncp` gives rmcp its own `reqwest::Client`. The client reads the proxy
-//! variables, uses the system root certificates, and keeps connections for
-//! the next request.
+//! variables, uses the system root certificates and the roots in
+//! `SSL_CERT_FILE`, and keeps connections for the next request.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -12,7 +12,14 @@ use rmcp::transport::{
     streamable_http_client::{StreamableHttpClientTransportConfig, StreamableHttpError},
 };
 
-use crate::config::{Expanded, RemoteServer};
+use crate::{
+    config::{Expanded, RemoteServer},
+    expand::Env,
+};
+
+/// The variable that names a file of extra root certificates, as curl,
+/// OpenSSL and uv use it.
+const CERT_FILE: &str = "SSL_CERT_FILE";
 
 #[derive(Debug, thiserror::Error)]
 pub enum HttpError {
@@ -22,6 +29,8 @@ pub enum HttpError {
     HeaderName(String),
     #[error("header {0:?} has a value that is not valid in a header")]
     HeaderValue(String),
+    #[error("cannot use the root certificates in {path} ({CERT_FILE}): {reason}")]
+    CertFile { path: String, reason: String },
 }
 
 /// The builder of the HTTP client, with the proxy variables of the process.
@@ -35,9 +44,34 @@ pub fn builder() -> reqwest::ClientBuilder {
 
 /// # Errors
 ///
-/// Returns an error when reqwest cannot make the client.
-pub fn client() -> Result<reqwest::Client, HttpError> {
-    Ok(builder().build()?)
+/// Returns an error when the file in `SSL_CERT_FILE` gives no root
+/// certificate, or when reqwest cannot make the client.
+pub fn client(env: &Env) -> Result<reqwest::Client, HttpError> {
+    Ok(with_cert_file(builder(), env)?.build()?)
+}
+
+/// Adds the roots in the file that `SSL_CERT_FILE` names to the system
+/// roots, for a host with no usable system store. A file that `ncp` cannot
+/// use is an error, because a silent fallback gives a TLS error that does
+/// not name the cause.
+fn with_cert_file(
+    builder: reqwest::ClientBuilder,
+    env: &Env,
+) -> Result<reqwest::ClientBuilder, HttpError> {
+    let Some(path) = env.get(CERT_FILE).filter(|path| !path.is_empty()) else {
+        return Ok(builder);
+    };
+    let failed = |reason: String| HttpError::CertFile {
+        path: path.clone(),
+        reason,
+    };
+    let pem = std::fs::read(path).map_err(|error| failed(error.to_string()))?;
+    let roots =
+        reqwest::Certificate::from_pem_bundle(&pem).map_err(|error| failed(error.to_string()))?;
+    if roots.is_empty() {
+        return Err(failed("the file has no PEM certificate".to_string()));
+    }
+    Ok(builder.tls_certs_merge(roots))
 }
 
 /// The expanded headers of the entry. A value from `${NAME}` is marked
@@ -118,6 +152,33 @@ mod tests {
         assert!(authorization.is_sensitive());
         assert!(!format!("{headers:?}").contains("t0ken"));
         assert_eq!(headers[&HeaderName::from_static("x-org")], "o");
+    }
+
+    fn env(pairs: &[(&str, &str)]) -> Env {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn empty_cert_file_variable_is_ignored() {
+        assert!(client(&env(&[(CERT_FILE, "")])).is_ok());
+    }
+
+    #[test]
+    fn cert_file_with_no_certificate_names_the_file_and_the_variable() {
+        let dir = std::env::temp_dir().join(format!("ncp-cert-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("empty.pem");
+        std::fs::write(&path, "not a certificate\n").unwrap();
+        let path = path.to_string_lossy().to_string();
+        let error = client(&env(&[(CERT_FILE, &path)])).unwrap_err().to_string();
+        assert!(
+            error.contains(&path) && error.contains(CERT_FILE),
+            "{error}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -177,7 +177,7 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
     let target = server.target.clone();
     let cached = cache.lookup(&server.name, &target).cloned();
     let values = super::secrets::resolve(context, server).await?;
-    let http = client::http::client()
+    let http = client::http::client(context.env)
         .map_err(|error| Failure::protocol(error.to_string()).server(name))?;
     let launch = Launch {
         server,

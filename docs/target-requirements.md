@@ -93,7 +93,7 @@ extension.
 | N1 | MUST | Network access only to the configured MCP servers and their authorization servers. No telemetry, no download, no self-update. | — |
 | N2 | MUST | Proxy variables `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` (upper and lower case), with credentials in the proxy URL. When no variable is set, the manual HTTP and HTTPS proxy of the macOS system settings, as uv does. No exception for loopback hosts: `NO_PROXY` is the only exception list, as in curl and uv. This applies to MCP and OAuth requests. | — |
 | N3 | MUST | System root certificates, including roots that the company adds, with no extra setting. | — |
-| N4 | SHOULD | Optional CA file setting (`SSL_CERT_FILE`) for systems with no usable system store. | — |
+| N4 | SHOULD | Optional CA file setting (`SSL_CERT_FILE`) for systems with no usable system store. `ncp` trusts the roots in the file in addition to the system store. | — |
 | N5 | MUST | stdio servers receive the proxy variables. | — |
 
 Not in scope: PAC files, and NTLM or Kerberos proxy authentication. Such
