@@ -7,6 +7,13 @@
 #   harness/linux/run.sh offline cargo <command> [arguments]
 #   harness/linux/run.sh secret-service
 #   harness/linux/run.sh prune
+#   harness/linux/run.sh release
+#   harness/linux/run.sh smoke
+#
+# "release" builds the static release binary of ncp with no network, and
+# copies it to dist/ncp-<target>. Run "cargo fetch" first. "smoke" runs
+# that binary in an empty image (no shell, no libc, no files) with no
+# network: --version, server list, and secret list.
 #
 # "offline" runs the container with no network. Run "cargo fetch" first:
 # the registry volume then has all crates. Tests use only local servers,
@@ -112,8 +119,52 @@ prune() {
 		done
 }
 
+# The release build. Only -p ncp: in the workspace, cargo unifies the
+# features of rmcp with the server features of the test kit.
+release() {
+	mkdir -p "$root/dist"
+	docker run --rm --init \
+		--network none \
+		--env CARGO_NET_OFFLINE=true \
+		--platform "$platform" \
+		--user "$(id -u):$(id -g)" \
+		--env HOME=/tmp \
+		--volume "$root:/work:ro" \
+		--volume "$root/dist:/dist" \
+		--volume ncp-harness-cargo-registry:/usr/local/cargo/registry \
+		--volume "ncp-harness-target-$name:/target" \
+		"$image" \
+		sh -c "cargo build --release --locked -p ncp --target $target \
+			&& cp /target/$target/release/ncp /dist/ncp-$target"
+}
+
+# An image with only the binary, made with docker import: no base image,
+# no download. The binary must run with no libc and no files.
+smoke() {
+	binary="$root/dist/ncp-$target"
+	[ -f "$binary" ] || {
+		echo "run.sh: $binary does not exist; run: run.sh release" >&2
+		exit 2
+	}
+	work="$(mktemp -d "$root/dist/smoke.XXXXXX")"
+	mkdir -p "$work/bin"
+	cp "$binary" "$work/bin/ncp"
+	tar -C "$work" -c bin | docker import --platform "$platform" - "ncp-smoke:$name" >/dev/null
+	rm -rf "$work"
+	for command in "--version" "server list" "secret list"; do
+		echo "== ncp $command"
+		# shellcheck disable=SC2086
+		docker run --rm --network none --platform "$platform" \
+			--env HOME=/ --env XDG_CONFIG_HOME=/ --env XDG_CACHE_HOME=/ --env XDG_STATE_HOME=/ \
+			"ncp-smoke:$name" /bin/ncp $command
+	done
+	docker image rm "ncp-smoke:$name" >/dev/null
+}
+
 case "${1:-}" in
 image) build_image ;;
+release) release ;;
+smoke) smoke ;;
 prune) prune ;;
 secret-service)
 	build_image secret-service
@@ -137,7 +188,7 @@ offline)
 	run_cargo none "$@"
 	;;
 *)
-	echo "usage: run.sh image | run.sh [offline] cargo <command> [arguments] | run.sh secret-service | run.sh prune" >&2
+	echo "usage: run.sh image | run.sh [offline] cargo <command> [arguments] | run.sh secret-service | run.sh prune | run.sh release | run.sh smoke" >&2
 	exit 2
 	;;
 esac

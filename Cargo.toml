@@ -18,6 +18,14 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 debug = false
 
+# A release is one static binary. Link-time optimization over all crates
+# and one code unit give a smaller and faster binary; the build is slower.
+# The symbols go away, because a release ships no debug info.
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "symbols"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 

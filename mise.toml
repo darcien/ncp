@@ -65,6 +65,10 @@ run = [
   "harness/linux/run.sh offline cargo test --workspace --locked",
 ]
 
+[tasks.release]
+description = "Build the release binaries for macOS and Linux, run them, and write SHA256SUMS"
+run = "harness/release.sh"
+
 # The conformance suite: an online install from the lock file, then an
 # offline run. See harness/conformance/run.sh.
 [tasks."conformance:install"]
