@@ -41,7 +41,21 @@ pub async fn tool(context: &Context<'_>, command: ToolCommand) -> Result<(), Fai
 }
 
 fn load(context: &Context<'_>) -> Result<Loaded, Failure> {
-    session::load_config(&context.paths.config_file, context.env)
+    let path = &context.paths.config_file;
+    let loaded = context.timed(
+        |record, elapsed| record.config = Some(elapsed),
+        || session::load_config(path, context.env),
+    )?;
+    let state = if loaded.exists {
+        ""
+    } else {
+        " (does not exist)"
+    };
+    context.ui.debug(
+        None,
+        &format!("configuration file: {}{state}", path.display()),
+    );
+    Ok(loaded)
 }
 
 fn server_list(context: &Context<'_>) -> Result<(), Failure> {

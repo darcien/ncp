@@ -931,3 +931,133 @@ fn unreadable_ssl_cert_file_gives_a_local_error_that_names_the_variable() {
         "{message}"
     );
 }
+
+/// The JSON Lines on stderr with the kind as their key, for example
+/// `debug`.
+fn notes(run: &Run, kind: &str) -> Vec<Value> {
+    run.stderr()
+        .into_iter()
+        .filter_map(|line| line.get(kind).cloned())
+        .collect()
+}
+
+#[test]
+fn verbose_output_names_the_source_of_each_value_and_never_the_value() {
+    let home = Home::new("verbose-sources").set("FIXTURE_TOKEN", "s3cret-value");
+    home.configure(&env_server());
+    let run = home.run(&["-v", "tool", "call", "fx", "env", "name=TOKEN"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let messages: Vec<String> = notes(&run, "debug")
+        .iter()
+        .map(|note| note["message"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        messages.contains(&"FIXTURE_TOKEN from the environment".to_string()),
+        "{messages:?}"
+    );
+    assert!(
+        messages.contains(&"no cached era: probe with server/discover".to_string()),
+        "{messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.starts_with("saved the era: modern")),
+        "{messages:?}"
+    );
+    assert!(!String::from_utf8_lossy(&run.0.stderr).contains("s3cret-value"));
+    let run = home.run(&["tool", "list", "fx"]);
+    assert!(notes(&run, "debug").is_empty(), "{}", run.describe());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn verbose_output_names_the_proxy_route_and_a_stored_value_source() {
+    let fixture = serve_http_with(Mode::Modern, Some("t0ken")).await.unwrap();
+    let home = Home::new("verbose-route")
+        .set("HTTP_PROXY", "http://proxy.invalid:3128")
+        .set("NO_PROXY", "127.0.0.1");
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url,
+        "headers": {"Authorization": "Bearer ${WEB_TOKEN}"}}}));
+    let set = &["secret", "set", "WEB_TOKEN", "--credential-store", "file"];
+    assert_eq!(home.run_with_stdin(set, "t0ken").code(), 0);
+    let run = home.run(&["-v", "tool", "list", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let messages: Vec<String> = notes(&run, "debug")
+        .iter()
+        .map(|note| note["message"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        messages.contains(&"WEB_TOKEN from the credential file".to_string()),
+        "{messages:?}"
+    );
+    let route = format!(
+        "route to {}: direct, because NO_PROXY matches the host",
+        fixture.url
+    );
+    assert!(messages.contains(&route), "{messages:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn trace_output_shows_messages_and_requests_with_secrets_hidden() {
+    let fixture = serve_http_with(Mode::Modern, Some("t0ken")).await.unwrap();
+    let home = Home::new("trace").set("WEB_TOKEN", "t0ken");
+    let url = format!("{}?api_key=k3y", fixture.url);
+    home.configure(&json!({"web": {"type": "http", "url": url,
+        "headers": {"Authorization": "Bearer ${WEB_TOKEN}", "X-Org": "acme"}}}));
+    let run = home.run(&["-vv", "tool", "list", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
+    assert!(
+        !stderr.contains("t0ken") && !stderr.contains("k3y"),
+        "{stderr}"
+    );
+    let traces = notes(&run, "trace");
+    assert!(
+        traces
+            .iter()
+            .any(|trace| trace["sent"]["method"] == "tools/list"),
+        "{stderr}"
+    );
+    assert!(
+        traces
+            .iter()
+            .any(|trace| trace["received"]["result"]["tools"].is_array()),
+        "{stderr}"
+    );
+    let request = traces
+        .iter()
+        .find_map(|trace| trace.get("http"))
+        .unwrap_or_else(|| panic!("no HTTP trace: {stderr}"));
+    assert_eq!(request["method"], "POST");
+    assert!(
+        request["url"].as_str().unwrap().ends_with("?api_key=****"),
+        "{request}"
+    );
+    assert_eq!(request["headers"]["authorization"], "****");
+    assert_eq!(request["headers"]["x-org"], "acme");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn timings_show_cpu_and_network_steps_after_the_run() {
+    let fixture = serve_http(Mode::Modern).await.unwrap();
+    let home = Home::new("timings");
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
+    let run = home.run(&["--timings", "tool", "list", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let lines = run.stderr();
+    let timings = &lines.last().unwrap()["timings"];
+    for step in ["totalMs", "cpuMs", "configMs", "connectMs"] {
+        assert!(timings[step].is_number(), "{step}: {timings}");
+    }
+    assert!(
+        timings.get("dnsMs").is_none(),
+        "an IP address needs no DNS: {timings}"
+    );
+    assert!(
+        timings["responseMs"].as_array().unwrap().len() >= 2,
+        "the handshake and tools/list: {timings}"
+    );
+    let failed = home.run(&["--timings", "tool", "list", "nothing"]);
+    assert_eq!(failed.code(), 2);
+    assert!(failed.stderr().last().unwrap()["timings"]["totalMs"].is_number());
+}

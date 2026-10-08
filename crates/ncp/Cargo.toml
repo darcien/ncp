@@ -11,10 +11,13 @@ publish.workspace = true
 # depends on it.
 base64 = "0.23"
 clap = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "suggestions"] }
+futures-util = { version = "0.3", default-features = false }
 http = "1"
 # The proxy matcher of reqwest, so that -v and the errors show the route
 # that reqwest takes.
 hyper-util = { version = "0.1", default-features = false, features = ["client-proxy", "client-proxy-system"] }
+# The CPU time for --timings. process-wrap already depends on it.
+nix = { version = "0.31", default-features = false, features = ["resource"] }
 jsonschema = { version = "0.58.6", default-features = false }
 process-wrap = { version = "10", default-features = false, features = ["tokio1", "process-group", "kill-on-drop"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "system-proxy"] }
@@ -22,9 +25,14 @@ rmcp = { version = "=3.5.1", default-features = false, features = ["client", "tr
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+# The event type of the Streamable HTTP client trait of rmcp.
+sse-stream = "0.2"
 thiserror = "2.0.21"
 tokio = { version = "1", features = ["rt", "macros", "time", "sync", "process", "io-util", "io-std", "net", "signal"] }
 tokio-util = "0.7"
+# The connector layer of reqwest, to time each new connection.
+tower-layer = "0.3"
+tower-service = "0.3"
 url = "2.5.8"
 
 # Pure Rust, so the static musl build needs no libdbus. zbus with async-io

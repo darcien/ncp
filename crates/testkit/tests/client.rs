@@ -95,6 +95,7 @@ impl Setup {
             connect_limit: self.connect_limit,
             server_log: &client::stdio::ServerLog::Inherit,
             cancel: &self.cancel,
+            observer: &client::observe::Observer::default(),
         })
         .await
     }

@@ -12,6 +12,7 @@
 //! not wait forever.
 
 pub mod http;
+pub mod observe;
 pub mod stdio;
 
 use std::{fmt, time::Duration};
@@ -24,6 +25,7 @@ use rmcp::{
         ServerPeerInfo, ServerResult, Tool,
     },
     service::{ClientInitializeError, PeerRequestOptions, RunningService, ServiceError},
+    transport::async_rw::AsyncRwTransport,
 };
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -67,6 +69,8 @@ pub struct Launch<'a> {
     pub server_log: &'a stdio::ServerLog,
     /// Fires on Ctrl-C. The connect then stops with no cancel request.
     pub cancel: &'a CancellationToken,
+    /// Gets the messages and the times of the connection.
+    pub observer: &'a observe::Observer,
 }
 
 /// The handshake step that failed.
@@ -260,6 +264,7 @@ async fn handshake(
     let (service, process) = match &launch.server.transport {
         Transport::Stdio(server) => {
             let env = stdio::child_env(launch.base_env, &launch.values.env);
+            let started = Instant::now();
             let (process, stdout, stdin) =
                 stdio::spawn(server, &env, launch.server_log).map_err(|source| {
                     ConnectError::Spawn {
@@ -276,7 +281,14 @@ async fn handshake(
                         source,
                     }
                 })?;
-            let serve = info.serve_with_lifecycle((stdout, stdin), lifecycle);
+            launch.observer.emit(&observe::Event::ServerStart {
+                elapsed: started.elapsed(),
+            });
+            let transport = observe::Observed::new(
+                AsyncRwTransport::new_client(stdout, stdin),
+                launch.observer.clone(),
+            );
+            let serve = info.serve_with_lifecycle(transport, lifecycle);
             // The handshake future owns stdin. It ends with the race, so
             // stdin is closed before the stop steps.
             match race(serve, deadline, launch.cancel).await {
@@ -288,7 +300,8 @@ async fn handshake(
             }
         }
         Transport::Http(server) => {
-            let transport = http::transport(launch.http, server, &launch.values.headers)?;
+            let transport =
+                http::transport(launch.http, server, &launch.values.headers, launch.observer)?;
             let serve = info.serve_with_lifecycle(transport, lifecycle);
             match race(serve, deadline, launch.cancel).await {
                 Ended::Done(service) => (service.map_err(failed)?, None),

@@ -103,25 +103,34 @@ fn key(name: &str) -> Result<CredentialKey, Failure> {
 /// authorization failure when the native store cannot answer and the file
 /// does not have the name.
 pub(super) async fn resolve(context: &Context<'_>, server: &Server) -> Result<Values, Failure> {
-    let missing: Vec<&str> = server
+    let name_of_server = server.name.as_str();
+    let (set, missing): (Vec<&str>, Vec<&str>) = server
         .value_names()
         .into_iter()
-        .filter(|name| !context.env.contains_key(*name))
-        .collect();
+        .partition(|name| context.env.contains_key(*name));
+    for name in set {
+        context.ui.debug(
+            Some(name_of_server),
+            &format!("{name} from the environment"),
+        );
+    }
     let mut values: Env = context.env.clone();
     if !missing.is_empty() {
         let mut native = native(context).await;
         let file = file(context);
         for name in missing {
-            let secret = find(context, name, &mut native, &file)
+            let (secret, place) = find(context, name, &mut native, &file)
                 .await
-                .map_err(|failure| failure.server(server.name.as_str()))?;
+                .map_err(|failure| failure.server(name_of_server))?;
+            context
+                .ui
+                .debug(Some(name_of_server), &format!("{name} from {place}"));
             values.insert(name.to_string(), secret.expose().to_string());
         }
     }
     server
         .expand_values(&values)
-        .map_err(|error| Failure::usage(error.to_string()).server(server.name.as_str()))
+        .map_err(|error| Failure::usage(error.to_string()).server(name_of_server))
 }
 
 /// True for an error of the whole store, not of one item.
@@ -145,12 +154,12 @@ async fn find(
     name: &str,
     native: &mut Opened,
     file: &Arc<dyn CredentialStore>,
-) -> Result<Secret, Failure> {
+) -> Result<(Secret, &'static str), Failure> {
     let key = key(name)?;
     if let Ok(store) = native {
         let wanted = key.clone();
         match call(context, store, move |store| store.load(&wanted)).await {
-            Ok(Some(secret)) => return Ok(secret),
+            Ok(Some(secret)) => return Ok((secret, place_text(CredentialPlace::Native))),
             Ok(None) => {}
             Err(error) if store_is_down(&error) => *native = Err(error),
             Err(error) => return Err(store_failure(&error)),
@@ -164,7 +173,7 @@ async fn find(
         .await
         .map_err(|error| store_failure(&error))?
     {
-        return Ok(secret);
+        return Ok((secret, place_text(CredentialPlace::File)));
     }
     Err(match native {
         Ok(_) => Failure::usage(format!("{name} is not set and not stored"))

@@ -4,20 +4,23 @@
 use std::{
     io::ErrorKind,
     path::{Path, PathBuf},
-    time::Duration,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 
 use rmcp::service::ClientInitializeError;
 use tokio_util::sync::CancellationToken;
 
 use super::{
+    diagnostics,
     outcome::{Exit, Failure},
+    timings::Timings,
     ui::Ui,
 };
 use crate::{
     client::{self, ConnectError, Connection, Launch, RequestError, RequestLimits},
     config::{self, Config, EntryError, LookupError, Server, Target, Transport},
-    era::EraCache,
+    era::{Era, EraCache},
     era_file,
     expand::{Env, ExpandError},
     paths::Paths,
@@ -32,9 +35,25 @@ pub struct Context<'a> {
     /// Fires on Ctrl-C.
     pub cancel: CancellationToken,
     pub open_native: super::secrets::OpenNative,
+    /// Present with `--timings`.
+    pub timings: Option<Arc<Timings>>,
 }
 
 impl Context<'_> {
+    /// Runs the step, and adds its time to the timings.
+    pub fn timed<T>(
+        &self,
+        step: impl FnOnce(&mut super::timings::Record, Duration),
+        work: impl FnOnce() -> T,
+    ) -> T {
+        let started = Instant::now();
+        let result = work();
+        if let Some(timings) = &self.timings {
+            timings.update(|record| step(record, started.elapsed()));
+        }
+        result
+    }
+
     #[must_use]
     pub fn limits(&self) -> RequestLimits<'_> {
         RequestLimits {
@@ -169,15 +188,28 @@ fn entry_failure(name: &str, error: &EntryError, path: &Path) -> Failure {
 /// read or written gives a warning: `ncp` works the same with no cache.
 pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, Failure> {
     let name = server.name.as_str();
+    let ui = context.ui;
     let cache_path = &context.paths.era_cache;
     let cache = era_file::load(cache_path).unwrap_or_else(|error| {
-        context.ui.warning(None, &error.to_string());
+        ui.warning(None, &error.to_string());
         EraCache::default()
     });
     let target = server.target.clone();
     let cached = cache.lookup(&server.name, &target).cloned();
+    ui.debug(Some(name), &cached_era_text(cached.as_ref()));
+    let started = Instant::now();
     let values = super::secrets::resolve(context, server).await?;
-    let http = client::http::client(context.env)
+    if let Some(timings) = &context.timings {
+        timings.update(|record| record.credentials = Some(started.elapsed()));
+    }
+    if let Transport::Http(remote) = &server.transport {
+        ui.debug(Some(name), &route_text(context.env, server, remote));
+    }
+    let shown = server.clone();
+    let observer = diagnostics::observer(ui, name, context.timings.clone(), move |url| {
+        crate::redact::url(&hide_expanded_url(&shown, url.to_string()))
+    });
+    let http = client::http::client(context.env, &observer)
         .map_err(|error| Failure::protocol(error.to_string()).server(name))?;
     let launch = Launch {
         server,
@@ -187,19 +219,49 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
         http: &http,
         probe_timeout: client::PROBE_TIMEOUT,
         connect_limit: client::CONNECT_LIMIT,
-        server_log: &context.ui.server_log(name),
+        server_log: &ui.server_log(name),
         cancel: &context.cancel,
+        observer: &observer,
     };
-    let connection = client::connect(&launch)
+    // The connect future holds two transports with their observers. Boxed,
+    // it does not make each command future large.
+    let connection = Box::pin(client::connect(&launch))
         .await
         .map_err(|error| connect_failure(context.env, server, &error))?;
     if cached.as_ref() != Some(connection.era()) {
+        ui.debug(
+            Some(name),
+            &format!("saved the era: {}", era_text(connection.era())),
+        );
         let cache = cache.record(server.name.clone(), target, connection.era().clone());
         if let Err(error) = era_file::save(cache_path, &cache) {
-            context.ui.warning(None, &error.to_string());
+            ui.warning(None, &error.to_string());
         }
     }
     Ok(connection)
+}
+
+fn era_text(era: &Era) -> String {
+    match era {
+        Era::Modern { version } => format!("modern, protocol version {}", version.as_str()),
+        Era::Legacy { version } => format!("legacy, protocol version {}", version.as_str()),
+    }
+}
+
+fn cached_era_text(cached: Option<&Era>) -> String {
+    match cached {
+        Some(era) => format!("cached era: {}", era_text(era)),
+        None => "no cached era: probe with server/discover".to_string(),
+    }
+}
+
+/// The proxy route of the server URL, with its source.
+fn route_text(env: &Env, server: &Server, remote: &config::RemoteServer) -> String {
+    let shown = crate::redact::url(&hide_expanded_url(server, remote.url.as_str().to_string()));
+    match url::Url::parse(remote.url.as_str()) {
+        Ok(target) => format!("route to {shown}: {}", crate::proxy::route(env, &target)),
+        Err(_) => format!("route to {shown}: unknown"),
+    }
 }
 
 fn connect_failure(env: &Env, server: &Server, error: &ConnectError) -> Failure {
@@ -344,6 +406,7 @@ mod tests {
             "gh",
             Ui {
                 format: super::super::ui::Format::Json,
+                verbosity: super::super::ui::Verbosity::Normal,
             },
         )
         .unwrap_err();

@@ -31,9 +31,32 @@ impl Format {
     }
 }
 
+/// How much diagnostic output goes to stderr.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Verbosity {
+    Normal,
+    /// `-v`: where each value comes from, the proxy route, the era.
+    Verbose,
+    /// `-vv`: also the JSON-RPC messages and the HTTP requests.
+    Trace,
+}
+
+impl Verbosity {
+    /// The level for the count of `-v` flags.
+    #[must_use]
+    pub fn from_count(count: u8) -> Self {
+        match count {
+            0 => Self::Normal,
+            1 => Self::Verbose,
+            _ => Self::Trace,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Ui {
     pub format: Format,
+    pub verbosity: Verbosity,
 }
 
 impl Ui {
@@ -59,6 +82,19 @@ impl Ui {
 
     pub fn hint(self, server: Option<&str>, message: &str) {
         self.stderr(&note("hint", self.format, server, message));
+    }
+
+    /// A `-v` diagnostic. It never holds a secret value.
+    pub fn debug(self, server: Option<&str>, message: &str) {
+        if self.verbosity >= Verbosity::Verbose {
+            self.stderr(&note("debug", self.format, server, message));
+        }
+    }
+
+    /// A line that is ready for stderr, for example a `-vv` trace or the
+    /// timings.
+    pub fn diagnostic(self, line: &str) {
+        self.stderr(line);
     }
 
     pub fn error(self, failure: &Failure) {

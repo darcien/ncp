@@ -12,6 +12,7 @@ use rmcp::transport::{
     streamable_http_client::{StreamableHttpClientTransportConfig, StreamableHttpError},
 };
 
+use super::observe::{Observed, ObservedConnectLayer, ObservedHttp, ObservedResolver, Observer};
 use crate::{
     config::{Expanded, RemoteServer},
     expand::Env,
@@ -42,12 +43,22 @@ pub fn builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
 }
 
+/// The client of `ncp`. The observer gets the time of each DNS lookup and
+/// each new connection.
+///
 /// # Errors
 ///
 /// Returns an error when the file in `SSL_CERT_FILE` gives no root
 /// certificate, or when reqwest cannot make the client.
-pub fn client(env: &Env) -> Result<reqwest::Client, HttpError> {
-    Ok(with_cert_file(builder(), env)?.build()?)
+pub fn client(env: &Env, observer: &Observer) -> Result<reqwest::Client, HttpError> {
+    let builder = builder()
+        .dns_resolver(std::sync::Arc::new(ObservedResolver {
+            observer: observer.clone(),
+        }))
+        .connector_layer(ObservedConnectLayer {
+            observer: observer.clone(),
+        });
+    Ok(with_cert_file(builder, env)?.build()?)
 }
 
 /// Adds the roots in the file that `SSL_CERT_FILE` names to the system
@@ -98,6 +109,10 @@ fn header(
     Ok((header_name, header_value))
 }
 
+/// The transport of one connection. The observer gets each HTTP request
+/// and each message.
+pub type Transport = Observed<StreamableHttpClientTransport<ObservedHttp<reqwest::Client>>>;
+
 /// Makes the transport for one connection, with the expanded headers of the
 /// entry.
 ///
@@ -108,12 +123,17 @@ pub fn transport(
     http: &reqwest::Client,
     server: &RemoteServer,
     expanded: &BTreeMap<String, Expanded>,
-) -> Result<StreamableHttpClientTransport<reqwest::Client>, HttpError> {
+    observer: &Observer,
+) -> Result<Transport, HttpError> {
     let config = StreamableHttpClientTransportConfig::with_uri(server.url.as_str())
         .custom_headers(headers(expanded)?);
-    Ok(StreamableHttpClientTransport::with_client(
-        http.clone(),
-        config,
+    let client = ObservedHttp {
+        inner: http.clone(),
+        observer: observer.clone(),
+    };
+    Ok(Observed::new(
+        StreamableHttpClientTransport::with_client(client, config),
+        observer.clone(),
     ))
 }
 
@@ -163,7 +183,7 @@ mod tests {
 
     #[test]
     fn empty_cert_file_variable_is_ignored() {
-        assert!(client(&env(&[(CERT_FILE, "")])).is_ok());
+        assert!(client(&env(&[(CERT_FILE, "")]), &Observer::default()).is_ok());
     }
 
     #[test]
@@ -173,7 +193,9 @@ mod tests {
         let path = dir.join("empty.pem");
         std::fs::write(&path, "not a certificate\n").unwrap();
         let path = path.to_string_lossy().to_string();
-        let error = client(&env(&[(CERT_FILE, &path)])).unwrap_err().to_string();
+        let error = client(&env(&[(CERT_FILE, &path)]), &Observer::default())
+            .unwrap_err()
+            .to_string();
         assert!(
             error.contains(&path) && error.contains(CERT_FILE),
             "{error}"

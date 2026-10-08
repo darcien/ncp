@@ -49,6 +49,15 @@ pub struct GlobalOptions {
         value_parser = clap::value_parser!(u64).range(1..)
     )]
     pub timeout: u64,
+    /// Show diagnostics on stderr: where each value comes from (never the
+    /// value), the proxy route, the cached era. -vv also shows the JSON-RPC
+    /// messages and the HTTP requests, with secrets hidden.
+    #[arg(short, long, global = true, action = clap::ArgAction::Count)]
+    pub verbose: u8,
+    /// Show the time of each step on stderr: CPU, configuration,
+    /// credentials, server start, DNS, connect and each response.
+    #[arg(long, global = true)]
+    pub timings: bool,
 }
 
 #[derive(Debug, Subcommand)]

@@ -2,15 +2,21 @@
 
 pub mod args;
 mod commands;
+mod diagnostics;
 mod outcome;
 mod render;
 mod schema_check;
 pub mod secrets;
 mod session;
+mod timings;
 mod tool_args;
 mod ui;
 
-use std::{process::ExitCode, time::Duration};
+use std::{
+    process::ExitCode,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use clap::{Parser, error::ErrorKind};
 use tokio::signal::unix::{SignalKind, signal};
@@ -20,7 +26,8 @@ use self::{
     args::{Cli, Command},
     outcome::{Exit, Failure},
     session::Context,
-    ui::{Format, Ui},
+    timings::Timings,
+    ui::{Format, Ui, Verbosity},
 };
 use crate::{expand::Env, paths::Paths};
 
@@ -38,13 +45,20 @@ pub fn main() -> ExitCode {
 /// tests never use the real Keychain or Secret Service.
 #[must_use]
 pub fn main_with(open_native: secrets::OpenNative) -> ExitCode {
+    let started = Instant::now();
     let ui = Ui {
         format: Format::detect(),
+        verbosity: Verbosity::Normal,
     };
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) => return parse_failure(ui, &error),
     };
+    let ui = Ui {
+        verbosity: Verbosity::from_count(cli.options.verbose),
+        ..ui
+    };
+    let timings = cli.options.timings.then(|| Arc::new(Timings::new(started)));
     let env = process_env();
     let runtime = match runtime() {
         Ok(runtime) => runtime,
@@ -54,8 +68,11 @@ pub fn main_with(open_native: secrets::OpenNative) -> ExitCode {
             return failure.exit.into();
         }
     };
-    let exit = runtime.block_on(run(cli, &env, ui, open_native));
+    let exit = runtime.block_on(run(cli, &env, ui, timings.clone(), open_native));
     shut_down(runtime);
+    if let Some(timings) = timings {
+        ui.diagnostic(&timings.report(ui.format));
+    }
     exit.into()
 }
 
@@ -85,7 +102,13 @@ fn process_env() -> Env {
         .collect()
 }
 
-async fn run(cli: Cli, env: &Env, ui: Ui, open_native: secrets::OpenNative) -> Exit {
+async fn run(
+    cli: Cli,
+    env: &Env,
+    ui: Ui,
+    timings: Option<Arc<Timings>>,
+    open_native: secrets::OpenNative,
+) -> Exit {
     let result = async {
         let paths = Paths::from_env(env).map_err(|error| Failure::protocol(error.to_string()))?;
         let context = Context {
@@ -95,6 +118,7 @@ async fn run(cli: Cli, env: &Env, ui: Ui, open_native: secrets::OpenNative) -> E
             request_limit: Duration::from_secs(cli.options.timeout),
             cancel: interrupt_token(),
             open_native,
+            timings,
         };
         match cli.command {
             Command::Server(command) => commands::server(&context, command).await,

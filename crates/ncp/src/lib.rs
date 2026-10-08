@@ -10,5 +10,6 @@ pub mod expand;
 pub mod paths;
 mod private_file;
 pub mod proxy;
+pub mod redact;
 pub mod server;
 pub mod store;
