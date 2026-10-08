@@ -10,8 +10,9 @@
 # suite starts its servers on localhost. The proxy variables are removed,
 # because the suite uses localhost URLs.
 #
-# Each version runs twice: the frozen requirement set of the version, and
-# all scenarios of the version. expected-failures.yaml lists the known
+# Each version runs three times: the frozen requirement set of the
+# version, all scenarios of the version, and all scenarios again with the
+# era probe of ncp in place of the era that the adapter writes. expected-failures.yaml lists the known
 # failures with their reasons. The suite fails on a new failure and on an
 # entry that passes.
 set -eu
@@ -43,5 +44,8 @@ for version in 2025-11-25 2026-07-28; do
 	run --requirements "$version" -o "$results/requirements-$version" || status=1
 	echo "== all scenarios $version"
 	run --suite all --spec-version "$version" -o "$results/all-$version" || status=1
+	echo "== all scenarios $version, with the era probe of ncp"
+	NCP_CONFORMANCE_PROBE=1 run --suite all --spec-version "$version" \
+		-o "$results/probe-$version" || status=1
 done
 exit "$status"

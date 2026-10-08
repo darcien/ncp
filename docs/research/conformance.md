@@ -30,11 +30,14 @@ the command line as a black box:
   property. The schema scenario gets the input schema of its focal tool
   back, as `ncp tool list` shows it.
 - When `ncp` exits with 4, the adapter runs `auth login` and the command
-  again, as a user does after the hint. At most 3 logins.
+  again, as a user does after the hint. At most 3 logins. When `ncp` exits
+  with 3, the adapter fails, so that the suite shows the defect.
 - The suite says that a client derives the lifecycle from the protocol
   version that it gets. `ncp` finds the era itself, so the adapter writes
   the era of the version into the era cache before the first command. No
-  option of `ncp` is necessary.
+  option of `ncp` is necessary. A third run of all scenarios has no such
+  era: there `ncp` finds the era with its probe, as for a user
+  (`NCP_CONFORMANCE_PROBE`).
 
 ## Result
 
@@ -44,6 +47,8 @@ the command line as a black box:
 | All scenarios 2025-11-25 | 333 | 7 | Passed |
 | Requirements 2026-07-28 | 588 | 19 | Passed |
 | All scenarios 2026-07-28 | 532 | 4 | Passed |
+| All scenarios 2025-11-25, era probe | 345 | 7 | Passed |
+| All scenarios 2026-07-28, era probe | 532 | 4 | Passed |
 
 Each failure is in `harness/conformance/expected-failures.yaml` with its
 reason, or is an extension scenario:
@@ -74,6 +79,11 @@ The first run found these defects. Each one is fixed:
   parameters only from a listed tool, and `tool call` with
   `--no-validate` and a JSON object did not list the tools. Now `tool
   call` lists the tools first on an http server of the modern era (B5).
+
+A review found that the era written by the adapter hid one defect: the
+conformance server answers `server/discover` of the probe with an empty
+result, and `ncp` stopped with exit 3. `ncp` now treats such an answer as
+a legacy server (design B54), and the third run checks the probe.
 
 ## Not covered by the suite
 

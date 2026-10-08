@@ -32,6 +32,9 @@ const SERVER: &str = "conformance";
 /// The logins that one scenario can need: the first one and two step-ups.
 const MAX_LOGINS: usize = 3;
 
+/// Exit code 3 of `ncp`: a protocol, transport or local error.
+const PROTOCOL_ERROR: i32 = 3;
+
 /// Exit code 4 of `ncp`: the server needs a login or more scopes.
 const NEEDS_LOGIN: i32 = 4;
 
@@ -78,6 +81,11 @@ impl Run {
     fn with_login(&self, args: &[&str], logins: &mut usize) -> Result<Output, String> {
         loop {
             let output = self.ncp(args)?;
+            // A protocol or local error is a defect of ncp or of the server:
+            // the adapter fails, so that the suite shows it.
+            if output.status.code() == Some(PROTOCOL_ERROR) {
+                return Err(format!("ncp {} exited with 3", args.join(" ")));
+            }
             if output.status.code() != Some(NEEDS_LOGIN) || *logins >= MAX_LOGINS {
                 return Ok(output);
             }
@@ -169,6 +177,11 @@ fn configure(home: &Path, url: &str, version: &str, context: &Value) -> Result<(
     let config = json!({"mcpServers": {SERVER: entry}});
     std::fs::write(config_dir.join("mcp.json"), config.to_string())
         .map_err(|error| error.to_string())?;
+    // With NCP_CONFORMANCE_PROBE set, ncp finds the era itself, as it does
+    // for a user.
+    if std::env::var_os("NCP_CONFORMANCE_PROBE").is_some() {
+        return Ok(());
+    }
     let version = ProtocolVersion::parse(version).map_err(|error| error.to_string())?;
     let era = if version.is_modern() {
         Era::Modern { version }
