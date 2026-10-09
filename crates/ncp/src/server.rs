@@ -132,7 +132,9 @@ impl fmt::Display for ServerUrl {
     }
 }
 
-fn is_loopback(host: &Host<&str>) -> bool {
+/// True for a loopback host: `localhost` or a loopback IP address.
+#[must_use]
+pub fn is_loopback(host: &Host<&str>) -> bool {
     match host {
         Host::Domain(name) => name.eq_ignore_ascii_case("localhost"),
         Host::Ipv4(ip) => IpAddr::V4(*ip).is_loopback(),
@@ -140,9 +142,34 @@ fn is_loopback(host: &Host<&str>) -> bool {
     }
 }
 
+/// The rule for each URL that `ncp` sends a request to or opens: HTTPS,
+/// or HTTP to a loopback host (MCP 2025-11-25, basic/authorization,
+/// "Communication Security").
+#[must_use]
+pub fn is_secure_url(url: &Url) -> bool {
+    match (url.scheme(), url.host()) {
+        ("https", Some(_)) => true,
+        ("http", Some(host)) => is_loopback(&host),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secure_url_is_https_or_http_to_a_loopback_host() {
+        let secure = |text: &str| is_secure_url(&Url::parse(text).unwrap());
+        assert!(secure("https://example.com/x"));
+        assert!(secure("http://127.0.0.1:8080/x"));
+        assert!(secure("http://[::1]/x"));
+        assert!(secure("http://LOCALHOST/x"));
+        assert!(!secure("http://example.com/x"));
+        assert!(!secure("http://127.0.0.1.example.com/x"));
+        assert!(!secure("file:///etc/passwd"));
+        assert!(!secure("myapp://open"));
+    }
 
     #[test]
     fn url_without_query_keeps_the_path() {

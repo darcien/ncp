@@ -177,16 +177,7 @@ fn check_https(metadata: &AuthorizationMetadata) -> Result<(), Failure> {
 }
 
 fn is_secure(endpoint: &str) -> bool {
-    let Ok(url) = url::Url::parse(endpoint) else {
-        return false;
-    };
-    let loopback = match url.host() {
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
-        None => false,
-    };
-    url.scheme() == "https" || (url.scheme() == "http" && loopback)
+    url::Url::parse(endpoint).is_ok_and(|url| crate::server::is_secure_url(&url))
 }
 
 /// The issuer of the metadata. rmcp requires it when discovery can derive

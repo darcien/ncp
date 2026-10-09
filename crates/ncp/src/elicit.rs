@@ -554,16 +554,10 @@ pub fn result(action: &Action) -> Value {
 /// Returns the reason when the URL is not safe to open.
 pub fn safe_url(text: &str) -> Result<url::Url, String> {
     let url = url::Url::parse(text).map_err(|error| format!("the URL is not valid: {error}"))?;
-    let loopback = match url.host() {
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
-        None => false,
-    };
-    match url.scheme() {
-        "https" if url.host().is_some() => Ok(url),
-        "http" if loopback => Ok(url),
-        scheme => Err(format!("ncp opens only https pages, not {scheme}:")),
+    if crate::server::is_secure_url(&url) {
+        Ok(url)
+    } else {
+        Err(format!("ncp opens only https pages, not {}:", url.scheme()))
     }
 }
 
