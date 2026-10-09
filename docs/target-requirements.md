@@ -62,6 +62,7 @@ describes.
 | A3 | MUST | `resource` parameter (RFC 8707) in each authorization request and token request. | [auth] |
 | A4 | MUST | Validate `iss` in the authorization response (RFC 9207). | [auth] |
 | A5 | MUST | Keep client credentials for each issuer. Register again when the authorization server changes. A client secret goes only to the issuer that the configuration names, so that a changed or hostile MCP server cannot get it. | [reg] |
+| A13 | MUST | Each stored token set is bound to the server that it is for: the canonical URL of the MCP server (the RFC 8707 resource) and the issuer. Before `ncp` sends a stored token, and before a refresh, it compares the binding with the current entry and metadata. A different binding, or no binding, stops the command: `ncp` does not send the token, and the message says that the stop is on purpose. The user logs in again. Reason: a changed or hostile entry must not get a token that was issued for another server. | [auth] |
 | A6 | SHOULD | Client registration in the spec order: pre-registered client, then Client ID Metadata Document (CIMD), then Dynamic Client Registration (DCR). | [reg] |
 | A7 | SHOULD | `ncp` has a CIMD metadata document at a stable HTTPS URL, on the GitHub Pages site of the repository. The URL comes with the first release; until then, `ncp` uses no CIMD. A URL for each user comes only when a real user needs it. | [reg] |
 | A8 | MUST | Refresh tokens with no user action. | [auth] |
@@ -75,11 +76,15 @@ extension.
 
 ### 3.3 Credentials and local security
 
+`ncp` prevents accidental leaks of secrets. It does not protect against a
+hostile process of the same user: such a process can read the same files and
+ask the same credential store.
+
 | ID | Level | Requirement | Ref |
 |---|---|---|---|
 | S1 | MUST | Keep each secret that `ncp` stores in the OS credential store: Keychain on macOS, Secret Service on Linux. Secrets are access tokens, refresh tokens, client secrets and static tokens. A value that the user wrote in the configuration file stays there, because no reliable test can tell a secret from another value. | [auth] |
 | S2 | MUST | `ncp` writes no secret to a plain file by default. A `0600` file is permitted only after an explicit opt-in. With no credential store (for example Linux with no Secret Service), stop with an error that names this opt-in. | — |
-| S3 | MUST | No secret in process arguments or in logs. Verbose output hides secrets. | [sec] |
+| S3 | MUST | No secret in process arguments or in logs. Verbose output hides each value that `ncp` knows is a secret: values from `${NAME}` and the credential stores, credential headers of HTTP, and the tokens and credentials of OAuth. A literal value in the configuration shows as it is, because no reliable test can tell a secret from another value. | [sec] |
 | S4 | MUST | stdio servers get credentials through environment variables. `ncp` reads these values from the credential store. | [auth] |
 | S5 | SHOULD | A configuration file in a project directory starts stdio commands only after user approval. | — |
 | S6 | MUST | If a daemon exists, it listens only on a Unix socket that only the user can open. No network listener. | — |
@@ -93,7 +98,8 @@ extension.
 | N1 | MUST | Network access only to the configured MCP servers and their authorization servers. No telemetry, no download, no self-update. | — |
 | N2 | MUST | Proxy variables `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` (upper and lower case), with credentials in the proxy URL. When no variable is set, the manual HTTP and HTTPS proxy of the macOS system settings, as uv does. No exception for loopback hosts: `NO_PROXY` is the only exception list, as in curl and uv. This applies to MCP and OAuth requests. | — |
 | N3 | MUST | System root certificates, including roots that the company adds, with no extra setting. | — |
-| N4 | SHOULD | Optional CA file setting (`SSL_CERT_FILE`) for systems with no usable system store. `ncp` trusts the roots in the file in addition to the system store. | — |
+| N4 | SHOULD | Optional CA file setting (`SSL_CERT_FILE`). When it is set, `ncp` trusts only the roots in the file, on macOS and on Linux, as uv does. The file must hold each root that the user needs, for example the public roots and the root of the company. A file that `ncp` cannot read, that has no certificate, or an empty value, stops with an error. Reason: one rule on each OS. On Linux the system store reads this variable in place of the system roots, and `ncp` cannot change its own environment. | — |
+| N6 | MUST | The HTTP client of the MCP connection does not follow redirects. A `3xx` answer stops with an error that names the new location. Reason: the headers of an entry can hold credentials, and they go only to the URL of the entry. rmcp has the same default. | — |
 | N5 | MUST | stdio servers receive the proxy variables. | — |
 
 Not in scope: PAC files, and NTLM or Kerberos proxy authentication. Such
@@ -111,7 +117,7 @@ defaults, fast, and usable in scripts.
 | I3 | MUST | Defined exit codes: success, tool error (`isError`), protocol or transport error, authorization error, usage error, input required. | [tools] |
 | I4 | MUST | Tool arguments as JSON, as `key=value` pairs, or from stdin. | — |
 | I5 | SHOULD | Show the input schema of a tool. Validate arguments against the schema before the call. | [tools] |
-| I6 | MUST | Verbose output (`-vv`) shows JSON-RPC and HTTP traffic, with secrets hidden. | — |
+| I6 | MUST | Verbose output (`-vv`) shows JSON-RPC and HTTP traffic, with the secrets of S3 hidden. | — |
 | I7 | SHOULD | `NO_COLOR` support. Shell completions. | — |
 | I8 | MUST | MVP configuration: the common `mcpServers` JSON core (see below). | [cfg] |
 
