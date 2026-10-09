@@ -49,6 +49,15 @@ enum Decision {
     Cancel,
 }
 
+/// The answer to the last question of a form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FormDecision {
+    Send,
+    Change,
+    Decline,
+    Cancel,
+}
+
 /// How `ncp` asks: the output, the limit of each answer, and Ctrl-C.
 #[derive(Clone)]
 struct Asker {
@@ -101,6 +110,7 @@ impl Asker {
         }
     }
 
+    /// A yes or no question, for example to open a page.
     async fn decision(&self, question: &str) -> Result<Decision, Stop> {
         loop {
             self.say(&format!("{question} [y]es, [n]o, [c]ancel: "));
@@ -120,25 +130,86 @@ impl Asker {
         }
     }
 
+    /// The last question of a form. `y` also sends and `n` also declines,
+    /// as a person can type yes or no.
+    async fn form_decision(&self, server: &str) -> Result<FormDecision, Stop> {
+        loop {
+            self.say(&format!(
+                "Send these values to {server}? [s]end, c[h]ange a field, [d]ecline, [c]ancel: "
+            ));
+            match self
+                .line()
+                .await?
+                .trim()
+                .to_ascii_lowercase()
+                .chars()
+                .next()
+            {
+                Some('s' | 'y') => return Ok(FormDecision::Send),
+                Some('h') => return Ok(FormDecision::Change),
+                Some('d' | 'n') => return Ok(FormDecision::Decline),
+                Some('c') => return Ok(FormDecision::Cancel),
+                _ => self.say("Type s, h, d or c.\n"),
+            }
+        }
+    }
+
+    /// One field, until the answer passes the checks of the schema. `None`
+    /// for an optional field with no answer.
+    async fn field(&self, field: &elicit::Field) -> Result<Option<Value>, Stop> {
+        if let Some(description) = &field.description {
+            self.say(&format!("  {}\n", block(description)));
+        }
+        loop {
+            self.say(&format!("  {}: ", single(&elicit::hint(field))));
+            match elicit::answer(field, &self.line().await?) {
+                Ok(value) => return Ok(value),
+                // The problem can hold text of the server.
+                Err(problem) => self.say(&format!("  {}\n", block(&problem))),
+            }
+        }
+    }
+
     async fn form(&self, fields: &[elicit::Field]) -> Result<Map<String, Value>, Stop> {
         let mut content = Map::new();
         for field in fields {
-            if let Some(description) = &field.description {
-                self.say(&format!("  {}\n", block(description)));
-            }
-            loop {
-                self.say(&format!("  {}: ", single(&elicit::hint(field))));
-                match elicit::answer(field, &self.line().await?) {
-                    Ok(Some(value)) => {
-                        content.insert(field.name.clone(), value);
-                        break;
-                    }
-                    Ok(None) => break,
-                    Err(problem) => self.say(&format!("  {problem}\n")),
-                }
+            if let Some(value) = self.field(field).await? {
+                content.insert(field.name.clone(), value);
             }
         }
         Ok(content)
+    }
+
+    /// Asks which field to change, then asks that field again.
+    async fn change(
+        &self,
+        fields: &[elicit::Field],
+        content: &mut Map<String, Value>,
+    ) -> Result<(), Stop> {
+        for (number, field) in fields.iter().enumerate() {
+            let value = content
+                .get(&field.name)
+                .map_or_else(|| "(no value)".to_string(), Value::to_string);
+            self.say(&format!(
+                "  {}. {}: {}\n",
+                number + 1,
+                single(&field.name),
+                single(&value)
+            ));
+        }
+        let chosen = loop {
+            self.say(&format!("Field to change (1-{}): ", fields.len()));
+            let typed = self.line().await?;
+            match typed.trim().parse::<usize>() {
+                Ok(number) if (1..=fields.len()).contains(&number) => break &fields[number - 1],
+                _ => self.say(&format!("Type a number from 1 to {}.\n", fields.len())),
+            }
+        };
+        match self.field(chosen).await? {
+            Some(value) => content.insert(chosen.name.clone(), value),
+            None => content.remove(&chosen.name),
+        };
+        Ok(())
     }
 
     /// Asks the person, and gives the action.
@@ -155,17 +226,18 @@ impl Asker {
         match request {
             Request::Form { message, fields } => {
                 self.say(&format!("The server {server} asks: {}\n", block(&message)));
-                let content = self.form(&fields).await?;
-                Ok(
-                    match self
-                        .decision(&format!("Send these values to {server}?"))
-                        .await?
-                    {
-                        Decision::Yes => Action::Accept(content),
-                        Decision::No => Action::Decline,
-                        Decision::Cancel => Action::Cancel,
-                    },
-                )
+                let mut content = self.form(&fields).await?;
+                loop {
+                    match self.form_decision(server).await? {
+                        FormDecision::Send => return Ok(Action::Accept(content)),
+                        FormDecision::Change if !fields.is_empty() => {
+                            self.change(&fields, &mut content).await?;
+                        }
+                        FormDecision::Change => self.say("The form has no field.\n"),
+                        FormDecision::Decline => return Ok(Action::Decline),
+                        FormDecision::Cancel => return Ok(Action::Cancel),
+                    }
+                }
             }
             Request::Url { message, url } => {
                 let url = match elicit::safe_url(&url) {
@@ -182,6 +254,14 @@ impl Asker {
                     }
                 };
                 let host = url.host_str().unwrap_or_default();
+                if has_punycode_label(host) {
+                    self.ui.warning(
+                        Some(server),
+                        &format!(
+                            "the host {host} has a Punycode label (xn--): its name can look like another name"
+                        ),
+                    );
+                }
                 self.say(&format!(
                     "The server {server} asks you to open a page of {host}: {}\n  {}\n",
                     block(&message),
@@ -201,6 +281,13 @@ impl Asker {
             }
         }
     }
+}
+
+/// True when a label of the host is Punycode (RFC 3492): such a name can
+/// look like another name in Unicode.
+fn has_punycode_label(host: &str) -> bool {
+    host.split('.')
+        .any(|label| label.to_ascii_lowercase().starts_with("xn--"))
 }
 
 impl Asker {
@@ -349,5 +436,18 @@ pub async fn with_rounds<R: Rounds>(
         }
         continuation = Some(Continuation { responses, state });
         round += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_a_punycode_label_in_any_place_of_the_host() {
+        assert!(has_punycode_label("xn--pple-43d.com"));
+        assert!(has_punycode_label("login.XN--80ak6aa92e.com"));
+        assert!(!has_punycode_label("login.example.com"));
+        assert!(!has_punycode_label("axn--b.com"));
     }
 }

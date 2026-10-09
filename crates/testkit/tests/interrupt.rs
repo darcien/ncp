@@ -166,3 +166,32 @@ fn blocked_store_call_does_not_delay_the_exit_by_more_than_3_seconds() {
         start.elapsed()
     );
 }
+
+#[test]
+fn ctrl_c_during_a_question_exits_130() {
+    let home = Home::new("question");
+    let pid_file = home.path("server.pid");
+    home.configure(&json!({"fx": fixture("modern", &pid_file)}));
+    // A person at a TTY who does not answer: stdin stays open.
+    let mut child = Command::new(NCP)
+        .args(["tool", "call", "fx", "elicit", "text=x"])
+        .env_clear()
+        .env("HOME", &home.root)
+        .env("XDG_CONFIG_HOME", home.root.join("config"))
+        .env("NCP_TEST_TTY", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.take();
+    let server = wait_for_file(&pid_file);
+    // The question comes after the first round of the call.
+    std::thread::sleep(Duration::from_millis(500));
+    let (code, elapsed, stderr) = interrupt(child);
+    drop(stdin);
+    assert_eq!(code, 130, "{stderr}");
+    assert!(stderr.contains("Who are you?"), "{stderr}");
+    assert!(elapsed < Duration::from_secs(6), "{elapsed:?}");
+    assert!(!is_alive(&server), "server {server} is alive");
+}

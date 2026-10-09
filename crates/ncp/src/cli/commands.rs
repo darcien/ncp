@@ -162,7 +162,7 @@ async fn with_connection<T>(
     work: impl AsyncFn(&Connection) -> Result<T, Failure>,
 ) -> Result<T, Failure> {
     let connection = session::open(context, server).await?;
-    let result = work(&connection).await;
+    let result = asked(server, &connection, work(&connection).await);
     let authorized = connection.is_authorized();
     connection.close().await;
     match result {
@@ -171,12 +171,30 @@ async fn with_connection<T>(
             ..
         }) if !authorized => {
             let connection = session::open_with_login(context, server, Some(&challenge)).await?;
-            let result = work(&connection).await;
+            let result = asked(server, &connection, work(&connection).await);
             connection.close().await;
             result
         }
         other => other,
     }
+}
+
+/// Exit 5 when the server asked a question that `ncp` refused (design
+/// B63): the result is not the answer to the request of the user.
+fn asked<T>(
+    server: &Server,
+    connection: &Connection,
+    result: Result<T, Failure>,
+) -> Result<T, Failure> {
+    if connection.refused_a_question() {
+        return Err(Failure::new(
+            Exit::InputRequired,
+            "the server asked a question, and ncp cannot ask with no terminal",
+        )
+        .server(server.name.as_str())
+        .hint("run the command in a terminal to answer the question"));
+    }
+    result
 }
 
 async fn server_show(context: &Context<'_>, word: &str) -> Result<(), Failure> {

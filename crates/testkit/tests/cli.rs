@@ -2482,6 +2482,79 @@ fn elicitation_request_of_a_legacy_server_asks_on_the_tty() {
     assert_eq!(answer["content"], json!({"name": "Ada"}));
 }
 
+#[test]
+fn elicitation_lets_the_user_change_a_field_before_the_answer_goes_out() {
+    let home = Home::new("elicit-change").set("NCP_TEST_TTY", "1");
+    home.configure(&json!({"fx": stdio("modern")}));
+    // age takes the default, name is Ada; then change field 2 to Grace.
+    let run = home.run_with_stdin(
+        &["tool", "call", "fx", "elicit", "text=x"],
+        "\nAda\nh\n9\n2\nGrace\ns\n",
+    );
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let answer: Value = serde_json::from_str(text_of(&run.stdout())).unwrap();
+    assert_eq!(
+        answer,
+        json!({"action": "accept", "content": {"name": "Grace", "age": 30}})
+    );
+}
+
+#[test]
+fn elicitation_form_can_be_cancelled() {
+    let home = Home::new("elicit-cancel").set("NCP_TEST_TTY", "1");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let run = home.run_with_stdin(&["tool", "call", "fx", "elicit", "text=x"], "\nAda\nc\n");
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(text_of(&run.stdout()), r#"{"action":"cancel"}"#);
+}
+
+#[test]
+fn legacy_question_with_no_tty_gets_invalid_params_and_exit_5() {
+    let home = Home::new("elicit-legacy-no-tty");
+    home.configure(&json!({"fx": stdio("legacy")}));
+    let run = home.run(&["tool", "call", "fx", "elicit-legacy", "text=x"]);
+    assert_eq!(run.code(), 5, "{}", run.describe());
+    assert!(
+        run.error()["message"]
+            .as_str()
+            .unwrap()
+            .contains("cannot ask with no terminal")
+    );
+}
+
+#[test]
+fn wrong_answer_shows_server_text_with_escapes_also_with_json_output() {
+    let home = Home::new("elicit-escapes").set("NCP_TEST_TTY", "1");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let run = home.run_with_stdin(
+        &[
+            "--output-format",
+            "json",
+            "tool",
+            "call",
+            "fx",
+            "elicit-choice",
+            "text=x",
+        ],
+        "blue\nr\ns\n",
+    );
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(!run.0.stderr.contains(&0x1b), "{}", run.describe());
+    assert!(!run.0.stderr.contains(&0x07), "{}", run.describe());
+    let answer: Value = serde_json::from_str(text_of(&run.stdout())).unwrap();
+    assert_eq!(answer["content"], json!({"color": "r"}));
+}
+
+#[test]
+fn url_question_warns_about_a_punycode_host() {
+    let home = Home::new("elicit-punycode").set("NCP_TEST_TTY", "1");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let run = elicit_url(&home, "https://xn--pple-43d.test/login", "n\n");
+    let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
+    assert_eq!(run.code(), 0, "{stderr}");
+    assert!(stderr.contains("Punycode label"), "{stderr}");
+}
+
 fn elicit_url(home: &Home, url: &str, stdin: &str) -> Run {
     home.run_with_stdin(
         &["tool", "call", "fx", "elicit-url", &format!("text={url}")],

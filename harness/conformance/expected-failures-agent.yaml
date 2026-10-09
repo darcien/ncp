@@ -7,7 +7,9 @@ client:
   # release decision of the user, so CIMD is off.
   - auth/basic-cimd:cimd-client-id-used
   # With no TTY, ncp declares no elicitation and does not ask. An
-  # input_required result gives exit 5, so that an agent never waits on a
-  # question (design B63).
+  # input_required result gives exit 5. A legacy server that asks anyway
+  # (elicitation/create) gets the error -32602 (Invalid params), and the
+  # command then exits with 5. Thus an agent never waits on a question
+  # (design B63).
   - elicitation-sep1034-client-defaults
   - sep-2322-client-request-state

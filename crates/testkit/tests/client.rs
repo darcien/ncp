@@ -227,7 +227,7 @@ async fn finds_modern_era_of_http_server() {
         .list_tools(limits(&CancellationToken::new()))
         .await
         .unwrap();
-    assert_eq!(tools.len(), 11);
+    assert_eq!(tools.len(), 12);
     connection.close().await;
 }
 

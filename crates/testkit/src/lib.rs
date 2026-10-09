@@ -148,6 +148,27 @@ fn elicit_form(request: &CallToolRequestParams) -> Result<CallToolResponse, Erro
     }
 }
 
+/// A multi-round question with one choice. The title holds control
+/// characters, as a hostile server can send.
+fn elicit_choice(request: &CallToolRequestParams) -> CallToolResponse {
+    if let Some(answer) = answer_of(request, "c") {
+        return text_result(answer.to_string());
+    }
+    let input = json!({"c": {"method": "elicitation/create", "params": {
+        "mode": "form",
+        "message": "Pick a color",
+        "requestedSchema": {"type": "object", "properties": {
+            "color": {"type": "string", "oneOf": [
+                {"const": "r", "title": "Red\u{1b}[2J\u{7}"}
+            ]}
+        }, "required": ["color"]}
+    }}});
+    CallToolResponse::InputRequired(InputRequiredResult::new(
+        serde_json::from_value(input).ok(),
+        None,
+    ))
+}
+
 /// A multi-round URL question for the URL, or a sampling request for the
 /// text "sampling".
 fn elicit_url(request: &CallToolRequestParams, url: &str) -> CallToolResponse {
@@ -236,6 +257,11 @@ fn tools() -> Vec<Tool> {
         Tool::new(
             "needs-page",
             "Fail with the error that asks to open a page",
+            text_arg("text"),
+        ),
+        Tool::new(
+            "elicit-choice",
+            "Ask for a choice whose title has control characters",
             text_arg("text"),
         ),
         Tool::new(
@@ -493,6 +519,7 @@ impl ServerHandler for Fixture {
                 Ok(text_result("done"))
             }
             "elicit" => elicit_form(&request),
+            "elicit-choice" => Ok(elicit_choice(&request)),
             "elicit-url" => Ok(elicit_url(&request, argument(&arguments, "text"))),
             "elicit-legacy" => elicit_legacy(&context).await,
             "needs-page" => Err(needs_page(argument(&arguments, "text"))),

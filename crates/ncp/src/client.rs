@@ -305,6 +305,9 @@ struct Handler {
     /// at a time, so a notification out of that time is for no active
     /// request (the spec: a client SHOULD track active progress tokens).
     active: Arc<AtomicBool>,
+    /// True after `ncp` refused a question of a server, because it has no
+    /// one to ask.
+    refused: Arc<AtomicBool>,
 }
 
 /// Marks a request as active until the value is dropped, at each exit.
@@ -320,6 +323,18 @@ impl ActiveRequest {
 impl Drop for ActiveRequest {
     fn drop(&mut self) {
         self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+impl Handler {
+    fn new(launch: &Launch<'_>, info: ClientConfig) -> Self {
+        Self {
+            info,
+            progress: launch.progress.clone(),
+            elicitor: launch.elicitor.cloned(),
+            active: Arc::default(),
+            refused: Arc::default(),
+        }
     }
 }
 
@@ -350,12 +365,18 @@ impl rmcp::ClientHandler for Handler {
         request: rmcp::model::ElicitRequestParams,
         _context: rmcp::service::RequestContext<RoleClient>,
     ) -> Result<rmcp::model::ElicitResult, rmcp::ErrorData> {
-        let decline = || serde_json::json!({"action": "decline"});
-        let answer = match (&self.elicitor, serde_json::to_value(&request)) {
-            (Some(elicitor), Ok(params)) => elicitor(params).await,
-            _ => decline(),
+        let Some(elicitor) = &self.elicitor else {
+            // MCP 2025-11-25, client/elicitation: a request for a mode that
+            // the client did not declare gets "Invalid params".
+            self.refused.store(true, Ordering::SeqCst);
+            return Err(rmcp::ErrorData::invalid_params(
+                "the client declared no elicitation: it has no terminal to ask",
+                None,
+            ));
         };
-        serde_json::from_value(answer)
+        let params = serde_json::to_value(&request)
+            .map_err(|error| rmcp::ErrorData::internal_error(error.to_string(), None))?;
+        serde_json::from_value(elicitor(params).await)
             .map_err(|error| rmcp::ErrorData::internal_error(error.to_string(), None))
     }
 }
@@ -366,6 +387,8 @@ pub struct Connection {
     process: Option<stdio::Process>,
     /// True when the connection sends the OAuth token of a login.
     authorized: bool,
+    /// Set when `ncp` refused a question of the server.
+    refused: Arc<AtomicBool>,
 }
 
 /// Connects to the server, and finds its era.
@@ -403,13 +426,14 @@ async fn probe(
         preferred_versions.push(first_modern);
     }
     let lifecycle = ClientLifecycleMode::Discover { preferred_versions };
-    let attempt = handshake(
+    // Boxed: the handshake future is large, and the caller holds two.
+    let attempt = Box::pin(handshake(
         launch,
         lifecycle,
         client_info(launch.elicitor.is_some()),
         Phase::Discover,
         deadline,
-    );
+    ));
     // On a probe timeout the future is dropped. Its stdio process stops by
     // kill-on-drop, so a late answer cannot reach the next connection. When
     // the connect limit comes first, the handshake stops itself.
@@ -439,13 +463,13 @@ async fn initialize(
     deadline: Instant,
 ) -> Result<Connection, ConnectError> {
     let info = client_info(launch.elicitor.is_some()).with_protocol_version(to_rmcp(&version));
-    handshake(
+    Box::pin(handshake(
         launch,
         ClientLifecycleMode::Initialize,
         info,
         phase,
         deadline,
-    )
+    ))
     .await
 }
 
@@ -461,12 +485,8 @@ async fn handshake(
     phase: Phase,
     deadline: Instant,
 ) -> Result<Connection, ConnectError> {
-    let info = Handler {
-        info,
-        progress: launch.progress.clone(),
-        elicitor: launch.elicitor.cloned(),
-        active: Arc::default(),
-    };
+    let info = Handler::new(launch, info);
+    let refused = info.refused.clone();
     let failed = |source| ConnectError::Handshake {
         phase,
         source: Box::new(source),
@@ -564,6 +584,7 @@ async fn handshake(
         era,
         process,
         authorized: launch.authorized.is_some(),
+        refused,
     })
 }
 
@@ -712,6 +733,13 @@ impl Connection {
     #[must_use]
     pub fn is_authorized(&self) -> bool {
         self.authorized
+    }
+
+    /// True when the server asked a question that `ncp` refused, because
+    /// it has no one to ask.
+    #[must_use]
+    pub fn refused_a_question(&self) -> bool {
+        self.refused.load(Ordering::SeqCst)
     }
 
     /// What the server said about itself in the handshake.
