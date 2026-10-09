@@ -880,7 +880,10 @@ impl Connection {
         request: ClientRequest,
         limits: RequestLimits<'_>,
     ) -> Result<ServerResult, RequestError> {
-        let _active = ActiveRequest::start(&self.service.service().active);
+        // rmcp gives each notification to its own task. The runtime of
+        // `ncp` has one thread, so a notification task runs before or after
+        // this function, and the flag says which.
+        let active = ActiveRequest::start(&self.service.service().active);
         let mut handle = self
             .service
             .peer()
@@ -896,7 +899,9 @@ impl Connection {
             }
         };
         // The request has ended for the user. A failed or slow cancel
-        // request does not change that result.
+        // request does not change that result, and its progress no longer
+        // shows.
+        drop(active);
         let _ = tokio::time::timeout(CANCEL_LIMIT, handle.cancel(Some(reason.into()))).await;
         Err(error)
     }

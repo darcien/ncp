@@ -348,8 +348,17 @@ fn escape_raw_controls(text: String) -> String {
     }
 }
 
-/// A message of a note on one line. A message can come from a server, and
-/// a new line in it could start a line that looks like a note of `ncp`.
+/// A message of a note with each line after the first indented. A message
+/// can come from a server, and a line of its own could look like a note of
+/// `ncp`; an indented line cannot. A message of `ncp` keeps its lines.
+fn indented(message: &str) -> String {
+    message
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replace('\n', "\n  ")
+}
+
+/// A progress message on one line: a progress line is one line.
 fn one_line(message: &str) -> String {
     message
         .replace("\r\n", "\\n")
@@ -367,8 +376,8 @@ fn is_raw_control(c: char) -> bool {
 pub fn note(kind: &str, format: Format, server: Option<&str>, message: &str) -> String {
     match format {
         Format::Text => match server {
-            Some(server) => format!("{kind}: server {server}: {}\n", one_line(message)),
-            None => format!("{kind}: {}\n", one_line(message)),
+            Some(server) => format!("{kind}: server {server}: {}\n", indented(message)),
+            None => format!("{kind}: {}\n", indented(message)),
         },
         Format::Json => {
             let mut body = json!({"message": message});
@@ -394,9 +403,9 @@ pub fn error_text(format: Format, failure: &Failure) -> String {
             let hint = failure
                 .hint
                 .as_deref()
-                .map(|hint| format!("hint: {}\n", one_line(hint)))
+                .map(|hint| format!("hint: {}\n", indented(hint)))
                 .unwrap_or_default();
-            format!("error: {server}{}\n{hint}", one_line(&failure.message))
+            format!("error: {server}{}\n{hint}", indented(&failure.message))
         }
         Format::Json => {
             let mut body = json!({
@@ -469,15 +478,15 @@ mod tests {
     }
 
     #[test]
-    fn a_message_with_new_lines_stays_on_one_line() {
+    fn a_line_in_a_message_cannot_look_like_a_note() {
         let failure = Failure::new(Exit::Protocol, "x\nhint: run evil").hint("a\nb");
         assert_eq!(
             error_text(Format::Text, &failure),
-            "error: x\\nhint: run evil\nhint: a\\nb\n"
+            "error: x\n  hint: run evil\nhint: a\n  b\n"
         );
         assert_eq!(
             note("warning", Format::Text, None, "a\r\nerror: b"),
-            "warning: a\\nerror: b\n"
+            "warning: a\n  error: b\n"
         );
         let progress = crate::client::Progress {
             progress: 1.0,

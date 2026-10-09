@@ -2042,10 +2042,12 @@ fn progress_of_a_call_goes_to_stderr_unless_quiet() {
     let run = home.run(&["tool", "call", "fx", "progress", "text=x"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
     let steps = notes(&run, "progress");
-    // The steps come fast: the rate limit keeps the first and the last.
-    assert_eq!(steps.len(), 2, "{}", run.describe());
+    // The steps come fast: the rate limit keeps the first and the last. On
+    // a busy host the steps can come slower, so the middle one can show.
+    assert!((2..=3).contains(&steps.len()), "{}", run.describe());
+    assert_eq!(steps[0]["progress"], 1.0);
     assert_eq!(
-        steps[1],
+        steps[steps.len() - 1],
         json!({"server": "fx", "progress": 3.0, "total": 3.0, "message": "step 3"})
     );
     let quiet = home.run(&["-q", "tool", "call", "fx", "progress", "text=x"]);
@@ -2155,11 +2157,14 @@ fn refresh_gets_the_list_again_and_keeps_it() {
     assert_eq!(home.run(&["--refresh", "tool", "list", "fx"]).code(), 0);
     assert!(started.exists(), "--refresh must start the server");
     assert_ne!(std::fs::read_to_string(&cache).unwrap(), before);
+    // As in uv, --no-cache wins over --refresh: nothing is written.
+    let before = std::fs::read_to_string(&cache).unwrap();
     assert_eq!(
         home.run(&["--refresh", "--no-cache", "tool", "list", "fx"])
             .code(),
-        2
+        0
     );
+    assert_eq!(std::fs::read_to_string(&cache).unwrap(), before);
 }
 
 #[test]
@@ -2186,18 +2191,31 @@ fn bash_completion_offers_the_cached_tool_names_and_no_unsafe_name() {
         home.run(&["generate-shell-completion", "bash"]).0.stdout,
     )
     .unwrap();
-    let probe = format!(
-        "source {}; COMP_WORDS=(ncp tool call fx ''); COMP_CWORD=4; _ncp ncp '' fx; printf '%s\\n' \"${{COMPREPLY[@]}}\"",
-        script.display()
-    );
     let home = home.set("PATH", &format!("{}:/usr/bin:/bin", bin.display()));
-    let output = Command::new("bash")
-        .args(["-c", &probe])
-        .env_clear()
-        .envs(home.env.iter().cloned())
-        .output()
-        .unwrap();
-    let words = String::from_utf8_lossy(&output.stdout).to_string();
-    assert!(words.lines().any(|word| word == "echo"), "{words}");
+    let complete = |words: &str, cword: usize| {
+        let probe = format!(
+            "source {}; COMP_WORDS=({words}); COMP_CWORD={cword}; _ncp ncp \"${{COMP_WORDS[$COMP_CWORD]}}\" \"${{COMP_WORDS[$COMP_CWORD-1]}}\"; printf '%s\\n' \"${{COMPREPLY[@]}}\"",
+            script.display()
+        );
+        let output = Command::new("bash")
+            .args(["-c", &probe])
+            .env_clear()
+            .envs(home.env.iter().cloned())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).to_string()
+    };
+    let has = |words: &str, word: &str| words.lines().any(|line| line == word);
+    let words = complete("ncp tool call fx ''", 4);
+    assert!(has(&words, "echo"), "{words}");
+    let words = complete("ncp -v tool call fx ''", 5);
+    assert!(has(&words, "echo"), "an option first: {words}");
+    let words = complete("ncp tool call --output-format ''", 4);
+    assert!(
+        has(&words, "json") && !has(&words, "echo"),
+        "an option value: {words}"
+    );
+    let words = complete("ncp -v tool call ''", 4);
+    assert!(has(&words, "fx"), "the server after an option: {words}");
     assert!(!home.root.join("PWNED").exists());
 }

@@ -74,8 +74,8 @@ pub struct GlobalOptions {
     #[arg(long, global = true)]
     pub no_cache: bool,
     /// Read no cache, but write it: find the era and get the tool list
-    /// again.
-    #[arg(long, global = true, conflicts_with = "no_cache")]
+    /// again. --no-cache wins over it, as in uv.
+    #[arg(long, global = true)]
     pub refresh: bool,
     /// The output format. Default: text on a TTY, else JSON.
     #[arg(long, global = true, value_enum, value_name = "FORMAT")]

@@ -33,7 +33,7 @@ pub fn script(shell: CompletionShell) -> Result<(), Failure> {
         CompletionShell::Fish => Shell::Fish,
     };
     clap_complete::generate(generator, &mut command, BIN, &mut generated);
-    ui::write_stdout(&with_server_names(
+    ui::write_stdout(&with_dynamic_names(
         shell,
         &String::from_utf8_lossy(&generated),
     ))
@@ -52,6 +52,28 @@ pub const TOOLS_COMMAND: &str = "__complete-tools";
 
 /// The commands with a tool name as their second argument.
 const TOOL_COMMANDS: [(&str, &str); 2] = [("tool", "show"), ("tool", "call")];
+
+/// The bash lines that complete a tool name: when the words before the
+/// cursor, with no options and no option values, are the group, the
+/// command and the server. Word positions alone break when an option comes
+/// first.
+const BASH_TOOLS: &str = concat!(
+    "            if [[ ${cur} != -* ]] ; then\n",
+    "                local ncp_words=() ncp_skip=0 ncp_word\n",
+    "                for ncp_word in \"${COMP_WORDS[@]:1:COMP_CWORD-1}\"; do\n",
+    "                    if [[ ${ncp_skip} -eq 1 ]] ; then ncp_skip=0 ; continue ; fi\n",
+    "                    case \"${ncp_word}\" in\n",
+    "                        --timeout|--color|--output-format|--config-file) ncp_skip=1 ;;\n",
+    "                        -*) ;;\n",
+    "                        *) ncp_words+=(\"${ncp_word}\") ;;\n",
+    "                    esac\n",
+    "                done\n",
+    "                if [[ ${ncp_skip} -eq 0 && ${#ncp_words[@]} -eq 3 ]] ; then\n",
+    "                    COMPREPLY=( $(compgen -W \"$(ncp __complete-tools \"${ncp_words[2]}\" 2>/dev/null)\" -- \"${cur}\") )\n",
+    "                    return 0\n",
+    "                fi\n",
+    "            fi\n",
+);
 
 /// The commands with a server name as their first argument.
 const SERVER_COMMANDS: [(&str, &str); 11] = [
@@ -79,7 +101,7 @@ const ZSH_TOOL: &str = "tool -- The tool name:";
 /// clap writes no value list for an argument with no fixed choices, so
 /// the script runs [`SERVERS`] at that place.
 #[must_use]
-pub fn with_server_names(shell: CompletionShell, script: &str) -> String {
+pub fn with_dynamic_names(shell: CompletionShell, script: &str) -> String {
     match shell {
         // In the block of each command, the words of `opts` complete the
         // first argument.
@@ -94,7 +116,8 @@ pub fn with_server_names(shell: CompletionShell, script: &str) -> String {
                         script.replace(&block, &format!("{block}$({SERVERS}) "))
                     });
             // The word after the server is the tool: its names come from
-            // the list cache of that server.
+            // the list cache of that server. The words before the cursor
+            // with no options (and no option values) give the place.
             TOOL_COMMANDS
                 .iter()
                 .fold(script, |script, (group, command)| {
@@ -103,12 +126,13 @@ pub fn with_server_names(shell: CompletionShell, script: &str) -> String {
                         return script;
                     };
                     let check = "            fi\n";
-                    let Some(end) = script[start..].find(check).map(|at| start + at + check.len())
+                    let Some(end) = script[start..]
+                        .find(check)
+                        .map(|at| start + at + check.len())
                     else {
                         return script;
                     };
-                    let tools = "            if [[ ${COMP_CWORD} -eq 4 ]] ; then\n                COMPREPLY=( $(compgen -W \"$(ncp __complete-tools \"${COMP_WORDS[3]}\" 2>/dev/null)\" -- \"${cur}\") )\n                return 0\n            fi\n";
-                    format!("{}{tools}{}", &script[..end], &script[end..])
+                    format!("{}{BASH_TOOLS}{}", &script[..end], &script[end..])
                 })
         }
         // The server argument gets an action that lists the names. The
@@ -146,9 +170,12 @@ pub fn with_server_names(shell: CompletionShell, script: &str) -> String {
             TOOL_COMMANDS
                 .iter()
                 .fold(script, |script, (group, command)| {
+                    // The words with no options: an option before the
+                    // server does not move the place.
+                    let words = "(string match -v -- '-*' (commandline -opc))";
                     script
                         + &format!(
-                            "complete -c {BIN} -n \"__fish_ncp_using_subcommand {group}; and __fish_seen_subcommand_from {command}; and test (count (commandline -opc)) -eq 4\" -f -a \"(ncp __complete-tools (commandline -opc)[4] 2>/dev/null)\"\n"
+                            "complete -c {BIN} -n \"__fish_ncp_using_subcommand {group}; and __fish_seen_subcommand_from {command}; and test (count {words}) -eq 4\" -f -a \"(ncp __complete-tools {words}[4] 2>/dev/null)\"\n"
                         )
                 })
         }
@@ -190,7 +217,9 @@ pub fn servers(env: &Env) {
 /// the spec names for tool names. A tool name comes from a server, and a
 /// shell reads the list of names as words again.
 fn is_plain_name(name: &str) -> bool {
+    // A name that starts with `-` would read as an option.
     !name.is_empty()
+        && !name.starts_with('-')
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
@@ -228,11 +257,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bash_skips_each_option_that_takes_a_value() {
+        let mut options: Vec<String> = Cli::command()
+            .get_arguments()
+            .filter(|argument| {
+                argument.get_action().takes_values() && argument.get_long().is_some()
+            })
+            .filter_map(|argument| argument.get_long().map(|long| format!("--{long}")))
+            .collect();
+        options.sort();
+        let mut listed: Vec<String> = "--timeout|--color|--output-format|--config-file"
+            .split('|')
+            .map(str::to_string)
+            .collect();
+        listed.sort();
+        assert_eq!(options, listed);
+        assert!(BASH_TOOLS.contains("--timeout|--color|--output-format|--config-file)"));
+    }
+
+    #[test]
+    fn scripts_of_each_shell_complete_tool_names() {
+        let script = |shell| {
+            let mut command = Cli::command();
+            let mut generated = Vec::new();
+            clap_complete::generate(shell, &mut command, BIN, &mut generated);
+            String::from_utf8_lossy(&generated).to_string()
+        };
+        let bash = with_dynamic_names(CompletionShell::Bash, &script(Shell::Bash));
+        assert_eq!(bash.matches("ncp __complete-tools").count(), 2);
+        let zsh = with_dynamic_names(CompletionShell::Zsh, &script(Shell::Zsh));
+        assert_eq!(zsh.matches(":_ncp_tools'").count(), 2);
+        let fish = with_dynamic_names(CompletionShell::Fish, &script(Shell::Fish));
+        assert_eq!(fish.matches("ncp __complete-tools").count(), 2);
+    }
+
+    #[test]
     fn only_plain_tool_names_complete() {
         assert!(is_plain_name("search_issues"));
         assert!(is_plain_name("a.b-c"));
         assert!(!is_plain_name("$(touch x)"));
         assert!(!is_plain_name("a b"));
         assert!(!is_plain_name(""));
+        assert!(!is_plain_name("--config-file"));
     }
 }
