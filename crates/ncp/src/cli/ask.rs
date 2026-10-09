@@ -62,14 +62,12 @@ struct Asker {
 /// Text of the server in a block: escapes, and each line after the first
 /// indented, so that no line can look like a question or a note of `ncp`.
 fn block(text: &str) -> String {
-    ui::printable(text)
-        .replace("\r\n", "\n")
-        .replace('\n', "\n  ")
+    ui::printable(&ui::indented(text)).into_owned()
 }
 
 /// Text of the server on one line: a label, a title, a default, a URL.
 fn single(text: &str) -> String {
-    ui::printable(&text.replace('\n', "\\n").replace('\r', "\\r")).into_owned()
+    ui::printable(&ui::one_line(text)).into_owned()
 }
 
 impl Asker {

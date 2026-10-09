@@ -208,12 +208,15 @@ pub fn write_stdout(text: &str) -> Result<(), Failure> {
 }
 
 /// The text with each control character as an escape, except new line,
-/// tab, and the carriage return of a CRLF line end. A server or a configuration file can contain terminal escape
-/// sequences, which can change the terminal title, write the clipboard, or
-/// hide lines.
+/// tab, and the carriage return of a CRLF line end. A server or a
+/// configuration file can contain terminal escape sequences, which can
+/// change the terminal title, write the clipboard, or hide lines. The
+/// characters that change the direction of text or have no width also
+/// show as escapes: they can put the parts of a URL or a message in a
+/// different order on the screen.
 #[must_use]
 pub fn printable(text: &str) -> Cow<'_, str> {
-    let unsafe_char = |c: char| c.is_control() && c != '\n' && c != '\t';
+    let unsafe_char = |c: char| (c.is_control() && c != '\n' && c != '\t') || invisible_format(c);
     if text.chars().any(unsafe_char) {
         // A CRLF line end is a normal line end on a terminal.
         Cow::Owned(
@@ -231,6 +234,22 @@ pub fn printable(text: &str) -> Cow<'_, str> {
     } else {
         Cow::Borrowed(text)
     }
+}
+
+/// A Unicode format character that changes the order of text or has no
+/// width: bidirectional marks, embeddings, overrides and isolates,
+/// zero-width characters, the soft hyphen and the byte order mark.
+fn invisible_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{ad}'
+            | '\u{61c}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{feff}'
+    )
 }
 
 /// The shortest time between two progress lines.
@@ -351,15 +370,18 @@ fn escape_raw_controls(text: String) -> String {
 /// A message of a note with each line after the first indented. A message
 /// can come from a server, and a line of its own could look like a note of
 /// `ncp`; an indented line cannot. A message of `ncp` keeps its lines.
-fn indented(message: &str) -> String {
+#[must_use]
+pub fn indented(message: &str) -> String {
     message
         .replace("\r\n", "\n")
         .replace('\r', "\n")
         .replace('\n', "\n  ")
 }
 
-/// A progress message on one line: a progress line is one line.
-fn one_line(message: &str) -> String {
+/// A message on one line, for a progress line or a table cell: a new line
+/// shows as `\n`.
+#[must_use]
+pub fn one_line(message: &str) -> String {
     message
         .replace("\r\n", "\\n")
         .replace('\n', "\\n")
@@ -470,6 +492,15 @@ mod tests {
         assert_eq!(line, "{\"m\":\"a\\u007fb\\u009bc\\u001b\"}\n");
         let value: Value = serde_json::from_str(&line).unwrap();
         assert_eq!(value["m"], "a\u{7f}b\u{9b}c\u{1b}");
+    }
+
+    #[test]
+    fn printable_text_escapes_direction_and_zero_width_characters() {
+        assert_eq!(
+            printable("a\u{202e}b\u{200b}c\u{2066}"),
+            "a\\u{202e}b\\u{200b}c\\u{2066}"
+        );
+        assert_eq!(printable("é ü 日本"), "é ü 日本");
     }
 
     #[test]

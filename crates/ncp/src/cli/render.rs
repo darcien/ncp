@@ -47,9 +47,19 @@ pub fn shell_word(word: &str) -> String {
     }
 }
 
-/// Rows with the columns aligned. The last column is not padded.
+/// Rows with the columns aligned. The last column is not padded. Each
+/// cell is escaped before the columns are measured, so that the escapes of
+/// the output do not move the columns.
 #[must_use]
 pub fn table(rows: &[Vec<String>]) -> String {
+    let rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|cell| super::ui::printable(&super::ui::one_line(cell)).into_owned())
+                .collect()
+        })
+        .collect();
     let widths: Vec<usize> = rows.iter().fold(Vec::new(), |widths, row| {
         row.iter()
             .enumerate()
@@ -514,6 +524,16 @@ mod tests {
             vec!["long".to_string(), "http".to_string(), "y".to_string()],
         ];
         assert_eq!(table(&rows), "a     stdio  x\nlong  http   y\n");
+    }
+
+    #[test]
+    fn table_measures_cells_after_the_escapes() {
+        let rows = vec![
+            vec!["a\u{1b}".to_string(), "x".to_string()],
+            vec!["b\nc".to_string(), "y".to_string()],
+            vec!["long-name".to_string(), "z".to_string()],
+        ];
+        assert_eq!(table(&rows), "a\\u{1b}    x\nb\\nc       y\nlong-name  z\n");
     }
 
     #[test]
