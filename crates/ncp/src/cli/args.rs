@@ -70,6 +70,9 @@ pub struct GlobalOptions {
     )]
     #[arg(long, global = true, value_enum, value_name = "WHEN", default_value_t = ColorChoice::Auto)]
     pub color: ColorChoice,
+    /// Read and write no cache: no cached era and no cached tool list.
+    #[arg(long, global = true)]
+    pub no_cache: bool,
     /// The output format. Default: text on a TTY, else JSON.
     #[arg(long, global = true, value_enum, value_name = "FORMAT")]
     pub output_format: Option<OutputFormat>,

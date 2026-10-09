@@ -162,6 +162,7 @@ async fn run(
             open_native: platform.open_native,
             open_browser: platform.open_browser,
             timings,
+            use_cache: !cli.options.no_cache,
         };
         match cli.command {
             Command::Server(command) => commands::server(&context, command).await,

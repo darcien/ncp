@@ -23,6 +23,7 @@ use super::{
 use crate::{
     client::{Answer, Connection, RequestError},
     config::{EntryError, Server},
+    list_cache,
 };
 
 pub async fn server(context: &Context<'_>, command: ServerCommand) -> Result<(), Failure> {
@@ -213,8 +214,11 @@ async fn list(
     server: &Server,
     connection: &Connection,
 ) -> Result<Vec<Tool>, Failure> {
-    match connection.list_tools(context.limits()).await {
-        Ok(tools) => Ok(tools),
+    match connection.list_tools_fresh_for(context.limits()).await {
+        Ok((tools, ttl_ms)) => {
+            keep_tools(context, server, &tools, ttl_ms);
+            Ok(tools)
+        }
         Err(error) => {
             super::auth::remember_scopes(context, server, &error).await;
             Err(session::request_failure(server, "tools/list", &error))
@@ -222,9 +226,62 @@ async fn list(
     }
 }
 
+/// Keeps the tools in the cache while the server says that they are fresh
+/// (`ttlMs`). A list with no time removes the old file. A cache that
+/// cannot be written gives a warning: `ncp` works the same with no cache.
+fn keep_tools(context: &Context<'_>, server: &Server, tools: &[Tool], ttl_ms: Option<u64>) {
+    if !context.use_cache {
+        return;
+    }
+    let path = list_cache::path(&context.paths.cache_dir(), &server.name);
+    match ttl_ms.filter(|ttl| *ttl > 0) {
+        Some(ttl_ms) => {
+            let cached = list_cache::CachedTools {
+                target: server.target.clone(),
+                fetched_at_ms: list_cache::now_ms(),
+                ttl_ms,
+                tools: tools.to_vec(),
+            };
+            if let Err(error) = list_cache::save(&path, &cached) {
+                context.ui.warning(
+                    None,
+                    &format!("cannot write the list cache {}: {error}", path.display()),
+                );
+            }
+        }
+        None => list_cache::remove(&path),
+    }
+}
+
+/// The tools of the cache when they are fresh, so that the command needs
+/// no server start.
+fn cached_tools(context: &Context<'_>, server: &Server) -> Option<Vec<Tool>> {
+    if !context.use_cache {
+        return None;
+    }
+    let cached = list_cache::load(&list_cache::path(&context.paths.cache_dir(), &server.name))?;
+    let now = list_cache::now_ms();
+    let tools = cached.fresh_for(&server.target, now)?.to_vec();
+    context.ui.debug(
+        Some(server.name.as_str()),
+        &format!(
+            "tools from the list cache, {} s old",
+            cached.age(now).as_secs()
+        ),
+    );
+    Some(tools)
+}
+
 async fn tool_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
     let loaded = load(context)?;
     let server = select(context, &loaded, word, show_fix)?;
+    if let Some(tools) = cached_tools(context, server) {
+        let name = server.name.as_str();
+        return context.ui.result(
+            || render::tool_list(&tools),
+            || json!({"server": name, "tools": tools}),
+        );
+    }
     let (tools, has_instructions) = with_connection(context, server, async |connection| {
         let tools = list(context, server, connection).await?;
         let has_instructions = connection
@@ -288,10 +345,15 @@ async fn tool_show(context: &Context<'_>, word: &str, tool: Option<&str>) -> Res
     let server = select(context, &loaded, word, show_fix)?;
     let name = server.name.as_str();
     let tool_name = tool_word(name, tool)?;
-    let tool = with_connection(context, server, async |connection| {
-        find_tool(name, list(context, server, connection).await?, tool_name)
-    })
-    .await?;
+    let tool = match cached_tools(context, server) {
+        Some(tools) => find_tool(name, tools, tool_name)?,
+        None => {
+            with_connection(context, server, async |connection| {
+                find_tool(name, list(context, server, connection).await?, tool_name)
+            })
+            .await?
+        }
+    };
     show_tool(context, name, &tool)
 }
 
@@ -337,8 +399,15 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
     let needs_tool = call.help || !call.no_validate || tool_args::needs_schema(&input);
     let name = server.name.as_str();
     with_connection(context, server, async |connection| {
-        let tools = if needs_tool || mirrors_parameters(server, connection) {
+        // rmcp mirrors parameters only for a tool that it listed in this
+        // session, so that case lists again; else a fresh cache serves.
+        let tools = if mirrors_parameters(server, connection) {
             Some(list(context, server, connection).await?)
+        } else if needs_tool {
+            match cached_tools(context, server) {
+                Some(tools) => Some(tools),
+                None => Some(list(context, server, connection).await?),
+            }
         } else {
             None
         };

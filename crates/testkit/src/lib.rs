@@ -8,6 +8,7 @@
 //! - `modern-only`: answers at once, and rejects `initialize`.
 //! - `slow-modern-only-N`: answers after N ms, and rejects `initialize`.
 //! - `tools-only`: as `modern`, with no resources and no prompts.
+//! - `cached`: as `modern`, and the tool list is fresh for 60 s (`ttlMs`).
 //! - `repeat-cursor`: as `modern`, and `prompts/list` gives the same cursor
 //!   for ever, as a broken server can.
 //!
@@ -58,6 +59,7 @@ pub enum Mode {
     SlowModernOnly(Duration),
     ToolsOnly,
     RepeatCursor,
+    Cached,
 }
 
 impl Mode {
@@ -70,6 +72,7 @@ impl Mode {
             "legacy" => Ok(Self::Legacy),
             "modern-only" => Ok(Self::ModernOnly),
             "tools-only" => Ok(Self::ToolsOnly),
+            "cached" => Ok(Self::Cached),
             "repeat-cursor" => Ok(Self::RepeatCursor),
             other => {
                 let millis = |prefix: &str| {
@@ -186,9 +189,11 @@ impl ServerHandler for Fixture {
         let mode = self.mode.clone();
         async move {
             match mode {
-                Mode::Modern | Mode::ModernOnly | Mode::ToolsOnly | Mode::RepeatCursor => {
-                    Ok(result)
-                }
+                Mode::Modern
+                | Mode::ModernOnly
+                | Mode::ToolsOnly
+                | Mode::RepeatCursor
+                | Mode::Cached => Ok(result),
                 Mode::Legacy => Err(ErrorData::new(
                     ErrorCode::METHOD_NOT_FOUND,
                     "Method not found",
@@ -207,7 +212,12 @@ impl ServerHandler for Fixture {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListToolsResult, ErrorData>> + MaybeSendFuture + '_ {
-        std::future::ready(Ok(ListToolsResult::with_all_items(tools())))
+        let result = ListToolsResult::with_all_items(tools());
+        std::future::ready(Ok(if self.mode == Mode::Cached {
+            result.with_ttl_ms(60_000)
+        } else {
+            result
+        }))
     }
 
     fn list_resources(

@@ -18,6 +18,14 @@ pub struct Paths {
 pub struct NoHome;
 
 impl Paths {
+    /// The folder of the caches of `ncp`.
+    #[must_use]
+    pub fn cache_dir(&self) -> PathBuf {
+        self.era_cache
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+    }
+
     /// # Errors
     ///
     /// Returns an error when an XDG variable is not set and `HOME` is not an

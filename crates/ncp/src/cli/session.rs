@@ -38,6 +38,8 @@ pub struct Context<'a> {
     pub open_browser: super::auth::OpenBrowser,
     /// Present with `--timings`.
     pub timings: Option<Arc<Timings>>,
+    /// False with `--no-cache`: no cache is read or written.
+    pub use_cache: bool,
 }
 
 impl Context<'_> {
@@ -335,10 +337,14 @@ struct Prepared {
 async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Failure> {
     let name = server.name.as_str();
     let ui = context.ui;
-    let cache = era_file::load(&context.paths.era_cache).unwrap_or_else(|error| {
-        ui.warning(None, &error.to_string());
+    let cache = if context.use_cache {
+        era_file::load(&context.paths.era_cache).unwrap_or_else(|error| {
+            ui.warning(None, &error.to_string());
+            EraCache::default()
+        })
+    } else {
         EraCache::default()
-    });
+    };
     let cached = cache.lookup(&server.name, &server.target).cloned();
     ui.debug(Some(name), &cached_era_text(cached.as_ref()));
     let values = super::secrets::resolve(context, server).await?;
@@ -391,7 +397,7 @@ impl Prepared {
     /// Saves the era when it changed. A cache that cannot be written gives
     /// a warning: `ncp` works the same with no cache.
     fn save_era(self, context: &Context<'_>, server: &Server, era: &Era) {
-        if self.cached.as_ref() == Some(era) {
+        if !context.use_cache || self.cached.as_ref() == Some(era) {
             return;
         }
         let ui = context.ui;

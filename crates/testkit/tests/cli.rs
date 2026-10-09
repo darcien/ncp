@@ -2050,3 +2050,34 @@ fn progress_of_a_call_goes_to_stderr_unless_quiet() {
     let quiet = home.run(&["-q", "tool", "call", "fx", "progress", "text=x"]);
     assert!(notes(&quiet, "progress").is_empty(), "{}", quiet.describe());
 }
+
+#[test]
+fn fresh_tool_list_comes_from_the_cache_with_no_server_start() {
+    let home = Home::new("list-cache");
+    let started = home.root.join("server.pid");
+    home.configure(&json!({"fx": {"command": FIXTURE, "args": ["cached"],
+        "env": {"NCP_FIXTURE_PID_FILE": started.display().to_string()}}}));
+    let first = home.run(&["tool", "list", "fx"]);
+    assert_eq!(first.code(), 0, "{}", first.describe());
+    assert!(started.exists());
+    let cache = home.root.join("cache/ncp/lists/fx.json");
+    let mode = std::fs::metadata(&cache).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    std::fs::remove_file(&started).unwrap();
+    let second = home.run(&["tool", "list", "fx"]);
+    assert_eq!(second.stdout(), first.stdout());
+    let show = home.run(&["tool", "show", "fx", "echo"]);
+    assert_eq!(show.code(), 0, "{}", show.describe());
+    assert!(!started.exists(), "a server started for a fresh list");
+    let run = home.run(&["--no-cache", "tool", "list", "fx"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(started.exists(), "--no-cache must start the server");
+}
+
+#[test]
+fn tool_list_with_no_time_to_live_is_not_cached() {
+    let home = Home::new("no-list-cache");
+    home.configure(&json!({"fx": stdio("modern")}));
+    assert_eq!(home.run(&["tool", "list", "fx"]).code(), 0);
+    assert!(!home.root.join("cache/ncp/lists/fx.json").exists());
+}

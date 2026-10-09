@@ -613,15 +613,38 @@ impl Connection {
     /// Returns an error when a `tools/list` request fails, is cancelled or
     /// passes its time limit.
     pub async fn list_tools(&self, limits: RequestLimits<'_>) -> Result<Vec<Tool>, RequestError> {
-        self.pages(
-            limits,
-            |params| ClientRequest::ListToolsRequest(ListToolsRequest::with_param(params)),
-            |result| match result {
-                ServerResult::ListToolsResult(page) => Some((page.tools, page.next_cursor)),
-                _ => None,
-            },
-        )
-        .await
+        Ok(self.list_tools_fresh_for(limits).await?.0)
+    }
+
+    /// Lists all tools, with the time that the list stays fresh: the
+    /// shortest `ttlMs` of the pages, or `None` when a page has none.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a `tools/list` request fails.
+    pub async fn list_tools_fresh_for(
+        &self,
+        limits: RequestLimits<'_>,
+    ) -> Result<(Vec<Tool>, Option<u64>), RequestError> {
+        let mut ttl: Option<Option<u64>> = None;
+        let tools = self
+            .pages(
+                limits,
+                |params| ClientRequest::ListToolsRequest(ListToolsRequest::with_param(params)),
+                |result| match result {
+                    ServerResult::ListToolsResult(page) => {
+                        let page_ttl = page.ttl_ms;
+                        ttl = Some(match ttl {
+                            None => page_ttl,
+                            Some(earlier) => earlier.zip(page_ttl).map(|(a, b)| a.min(b)),
+                        });
+                        Some((page.tools, page.next_cursor))
+                    }
+                    _ => None,
+                },
+            )
+            .await?;
+        Ok((tools, ttl.flatten()))
     }
 
     /// Lists all resources.
@@ -737,7 +760,7 @@ impl Connection {
         &self,
         limits: RequestLimits<'_>,
         request: impl Fn(PaginatedRequestParams) -> ClientRequest,
-        page: impl Fn(ServerResult) -> Option<(Vec<T>, Option<Cursor>)>,
+        mut page: impl FnMut(ServerResult) -> Option<(Vec<T>, Option<Cursor>)>,
     ) -> Result<Vec<T>, RequestError> {
         let mut items = Vec::new();
         let mut cursor = None;
