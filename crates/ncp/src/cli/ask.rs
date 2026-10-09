@@ -269,9 +269,13 @@ impl Asker {
                 ));
                 Ok(match self.decision("Open it in the browser?").await? {
                     Decision::Yes => {
+                        // The person said yes and has the URL on the screen,
+                        // so the answer stays yes when no browser opens.
                         if let Err(error) = (self.open_browser)(url.as_str()) {
-                            self.ui
-                                .warning(Some(server), &format!("cannot open a browser: {error}"));
+                            self.ui.warning(
+                                Some(server),
+                                &format!("cannot open a browser: {error}; open the URL above"),
+                            );
                         }
                         Action::Opened
                     }

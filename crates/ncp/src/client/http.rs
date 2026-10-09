@@ -224,7 +224,7 @@ pub fn configured(env: &Env, observer: &Observer) -> Result<reqwest::ClientBuild
 }
 
 /// Replaces the system roots with the roots in the file that
-/// `SSL_CERT_FILE` names, on each OS, as uv does (requirement N4). On Linux
+/// `SSL_CERT_FILE` names, on each OS, as uv does. On Linux
 /// the system store reads the variable in place of the system roots, so a
 /// merge would give a different rule on each OS. A file that `ncp` cannot
 /// use is an error, because a silent fallback gives a TLS error that does
