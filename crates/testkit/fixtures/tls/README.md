@@ -5,6 +5,10 @@ Test only. These files are not secret, and no system trusts them.
 - `ca.pem`: a test CA ("ncp test CA"). Its key was removed after use.
 - `server.pem` and `server.key`: a server certificate from the test CA for
   `localhost`, `127.0.0.1` and `::1`.
+- `other-ca.pem`: a second test CA ("ncp other test CA") that issued no
+  certificate. Its key was removed after use. Tests use it as a file of
+  roots that does not hold the root of the server. It was made as `ca.pem`,
+  with `-subj "/CN=ncp other test CA"`.
 
 The certificates are valid from 2019-06-01 to 2126-01-01. macOS rejects a
 TLS server certificate that is issued after 2019-07-01 and is valid for

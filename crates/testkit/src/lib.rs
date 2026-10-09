@@ -666,6 +666,9 @@ const WELL_KNOWN_RESOURCE: &str = "/.well-known/oauth-protected-resource";
 /// The test CA that signed the certificate of [`serve_https`].
 pub const TEST_CA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/tls/ca.pem");
 
+/// A test CA that issued no certificate of the fixtures.
+pub const OTHER_CA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/tls/other-ca.pem");
+
 /// Starts a Streamable HTTP fixture over TLS, with a certificate from
 /// [`TEST_CA`] for `127.0.0.1`. No system trusts this CA.
 ///

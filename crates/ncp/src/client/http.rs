@@ -1,10 +1,13 @@
 //! The HTTP client and the Streamable HTTP transport.
 //!
 //! `ncp` gives rmcp its own `reqwest::Client`. The client reads the proxy
-//! variables, uses the system root certificates and the roots in
-//! `SSL_CERT_FILE`, and keeps connections for the next request.
+//! variables, uses the system root certificates or, when it is set, only
+//! the roots in `SSL_CERT_FILE`, and keeps connections for the next request.
 
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::{Arc, Mutex},
+};
 
 use reqwest::header::{HeaderName, HeaderValue};
 use rmcp::transport::{
@@ -54,8 +57,11 @@ pub fn builder() -> reqwest::ClientBuilder {
 /// The client follows no redirect: the headers of an entry can hold
 /// credentials, and reqwest removes only the standard credential headers
 /// at a redirect to another host. rmcp has the same default, so that
-/// custom headers do not go to the target of a redirect. rmcp keeps only
-/// the status of the answer, so the record gets the new location.
+/// custom headers do not go to the target of a redirect.
+///
+/// rmcp keeps only the text of a transport error, with no cause. The notes
+/// get the new location of a redirect and a certificate of an unknown
+/// issuer, so that the error can name them.
 ///
 /// # Errors
 ///
@@ -64,17 +70,24 @@ pub fn builder() -> reqwest::ClientBuilder {
 pub fn client(
     env: &Env,
     observer: &Observer,
-    record: &RedirectRecord,
+    notes: &ConnectNotes,
 ) -> Result<reqwest::Client, HttpError> {
-    let record = record.clone();
+    let redirects = notes.clone();
     let stop = reqwest::redirect::Policy::custom(move |attempt| {
-        record.keep(Redirected {
-            status: attempt.status().as_u16(),
-            location: crate::redact::url(attempt.url().as_str()),
+        redirects.update(|notes| {
+            notes.redirect = Some(Redirected {
+                status: attempt.status().as_u16(),
+                location: crate::redact::url(attempt.url().as_str()),
+            });
         });
         attempt.stop()
     });
-    Ok(configured(env, observer)?.redirect(stop).build()?)
+    Ok(configured(env, observer)?
+        .connector_layer(NotedConnectLayer {
+            notes: notes.clone(),
+        })
+        .redirect(stop)
+        .build()?)
 }
 
 /// A redirect of the MCP connection. The location shows with its secrets
@@ -86,21 +99,109 @@ pub struct Redirected {
     pub location: String,
 }
 
-/// The last redirect that the client did not follow.
-#[derive(Debug, Clone, Default)]
-pub struct RedirectRecord(std::sync::Arc<std::sync::Mutex<Option<Redirected>>>);
+/// What the HTTP client saw that a transport error of rmcp does not say.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Notes {
+    /// The last redirect that the client did not follow.
+    pub redirect: Option<Redirected>,
+    /// A TLS connection failed: the certificate of the server has an
+    /// issuer that no trusted root names.
+    pub unknown_issuer: bool,
+}
 
-impl RedirectRecord {
-    fn keep(&self, redirected: Redirected) {
-        if let Ok(mut last) = self.0.lock() {
-            *last = Some(redirected);
+/// The notes of one client.
+#[derive(Debug, Clone, Default)]
+pub struct ConnectNotes(Arc<Mutex<Notes>>);
+
+impl ConnectNotes {
+    fn update(&self, change: impl FnOnce(&mut Notes)) {
+        if let Ok(mut notes) = self.0.lock() {
+            change(&mut notes);
         }
     }
 
     #[must_use]
-    pub fn last(&self) -> Option<Redirected> {
-        self.0.lock().ok().and_then(|last| last.clone())
+    pub fn get(&self) -> Notes {
+        self.0.lock().map(|notes| notes.clone()).unwrap_or_default()
     }
+}
+
+/// A layer on the reqwest connector that notes a certificate of an unknown
+/// issuer.
+#[derive(Clone)]
+struct NotedConnectLayer {
+    notes: ConnectNotes,
+}
+
+impl<S> tower_layer::Layer<S> for NotedConnectLayer {
+    type Service = NotedConnect<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        NotedConnect {
+            inner,
+            notes: self.notes.clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct NotedConnect<S> {
+    inner: S,
+    notes: ConnectNotes,
+}
+
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+impl<S, R> tower_service::Service<R> for NotedConnect<S>
+where
+    S: tower_service::Service<R, Error = BoxError>,
+    S::Future: Send + 'static,
+{
+    type Response = S::Response;
+    type Error = BoxError;
+    type Future = std::pin::Pin<Box<dyn Future<Output = Result<S::Response, BoxError>> + Send>>;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, request: R) -> Self::Future {
+        let notes = self.notes.clone();
+        let connect = self.inner.call(request);
+        Box::pin(async move {
+            let result = connect.await;
+            if let Err(error) = &result
+                && is_unknown_issuer(error.as_ref())
+            {
+                notes.update(|notes| notes.unknown_issuer = true);
+            }
+            result
+        })
+    }
+}
+
+/// True when the error or a cause is the rustls error for a certificate of
+/// an unknown issuer. An `io::Error` hides its inner error from `source`,
+/// so the search goes into it.
+fn is_unknown_issuer(error: &(dyn std::error::Error + 'static)) -> bool {
+    std::iter::successors(Some(error), |error| {
+        error
+            .downcast_ref::<std::io::Error>()
+            .and_then(std::io::Error::get_ref)
+            .map(|inner| inner as &(dyn std::error::Error + 'static))
+            .or_else(|| error.source())
+    })
+    .any(|error| {
+        matches!(
+            error.downcast_ref::<rustls::Error>(),
+            Some(rustls::Error::InvalidCertificate(
+                rustls::CertificateError::UnknownIssuer
+            ))
+        )
+    })
 }
 
 /// The builder with the settings of each client of `ncp`: the proxy, the
@@ -122,8 +223,10 @@ pub fn configured(env: &Env, observer: &Observer) -> Result<reqwest::ClientBuild
     with_cert_file(builder, env)
 }
 
-/// Adds the roots in the file that `SSL_CERT_FILE` names to the system
-/// roots, for a host with no usable system store. A file that `ncp` cannot
+/// Replaces the system roots with the roots in the file that
+/// `SSL_CERT_FILE` names, on each OS, as uv does (requirement N4). On Linux
+/// the system store reads the variable in place of the system roots, so a
+/// merge would give a different rule on each OS. A file that `ncp` cannot
 /// use is an error, because a silent fallback gives a TLS error that does
 /// not name the cause.
 fn with_cert_file(
@@ -151,7 +254,7 @@ fn with_cert_file(
     if roots.is_empty() {
         return Err(failed("the file has no PEM certificate".to_string()));
     }
-    Ok(builder.tls_certs_merge(roots))
+    Ok(builder.tls_certs_only(roots))
 }
 
 /// The expanded headers of the entry. A value from `${NAME}` is marked
@@ -331,7 +434,7 @@ mod tests {
         let error = client(
             &env(&[(CERT_FILE, "")]),
             &Observer::default(),
-            &RedirectRecord::default(),
+            &ConnectNotes::default(),
         )
         .unwrap_err();
         assert!(error.to_string().contains("SSL_CERT_FILE"), "{error}");
@@ -347,7 +450,7 @@ mod tests {
         let error = client(
             &env(&[(CERT_FILE, &path)]),
             &Observer::default(),
-            &RedirectRecord::default(),
+            &ConnectNotes::default(),
         )
         .unwrap_err()
         .to_string();

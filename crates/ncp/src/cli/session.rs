@@ -246,7 +246,7 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
                     context.env,
                     server,
                     &error,
-                    prepared.redirects.last(),
+                    &prepared.notes.get(),
                 ));
             };
             let launch = Launch {
@@ -257,7 +257,7 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
         }
         (result, ..) => result,
     }
-    .map_err(|error| connect_failure(context.env, server, &error, prepared.redirects.last()))?;
+    .map_err(|error| connect_failure(context.env, server, &error, &prepared.notes.get()))?;
     prepared.save_era(context, server, connection.era());
     Ok(connection)
 }
@@ -324,7 +324,7 @@ pub async fn open_with_login(
     };
     let connection = Box::pin(client::connect(&launch))
         .await
-        .map_err(|error| connect_failure(context.env, server, &error, prepared.redirects.last()))?;
+        .map_err(|error| connect_failure(context.env, server, &error, &prepared.notes.get()))?;
     prepared.save_era(context, server, connection.era());
     Ok(connection)
 }
@@ -360,8 +360,8 @@ struct Prepared {
     values: crate::config::Values,
     observer: client::observe::Observer,
     http: Option<reqwest::Client>,
-    /// The redirect that the HTTP client did not follow.
-    redirects: client::http::RedirectRecord,
+    /// What the HTTP client saw that a transport error does not say.
+    notes: client::http::ConnectNotes,
     server_log: client::stdio::ServerLog,
     progress: client::ProgressSink,
     elicitor: Option<client::Elicitor>,
@@ -389,7 +389,7 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
     let observer = diagnostics::observer(ui, name, context.timings.clone(), shown_url(&shown));
     // Only an http server needs the HTTP client. Thus a bad SSL_CERT_FILE
     // does not stop a stdio server.
-    let redirects = client::http::RedirectRecord::default();
+    let notes = client::http::ConnectNotes::default();
     let http = match &server.transport {
         Transport::Http(remote) => {
             // The route costs a read of the system settings on macOS.
@@ -397,7 +397,7 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
                 ui.debug(Some(name), &route_text(context.env, server, remote));
             }
             Some(
-                client::http::client(context.env, &observer, &redirects)
+                client::http::client(context.env, &observer, &notes)
                     .map_err(|error| Failure::protocol(error.to_string()).server(name))?,
             )
         }
@@ -409,7 +409,7 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
         values,
         observer,
         http,
-        redirects,
+        notes,
         server_log: ui.server_log(name),
         progress: ui.progress(name),
         elicitor: context
@@ -484,15 +484,31 @@ fn connect_failure(
     env: &Env,
     server: &Server,
     error: &ConnectError,
-    redirected: Option<client::http::Redirected>,
+    notes: &client::http::Notes,
 ) -> Failure {
     if let Some(text) = error.token_store_error() {
         return token_store_failure(server, &text);
     }
-    if let Some(redirected) = redirected.filter(|_| !error.needs_authorization()) {
+    if let Some(redirected) = notes
+        .redirect
+        .as_ref()
+        .filter(|_| !error.needs_authorization())
+    {
         return Failure::protocol(redirected.to_string())
             .hint("put the new URL in the entry when you trust it")
             .server(server.name.as_str());
+    }
+    if notes.unknown_issuer {
+        let failure = Failure::protocol(format!(
+            "{}: the certificate of the server has an issuer that no trusted root names",
+            hide_expanded_url(server, error.to_string())
+        ))
+        .server(server.name.as_str());
+        return if env.contains_key("SSL_CERT_FILE") {
+            failure.hint("SSL_CERT_FILE replaces the system roots: the file must hold each root that you need, also the public roots")
+        } else {
+            failure
+        };
     }
     let exit = match error {
         ConnectError::Cancelled => return interrupted().server(server.name.as_str()),

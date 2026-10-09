@@ -919,6 +919,40 @@ async fn https_server_with_an_unknown_ca_fails_without_ssl_cert_file() {
     assert_eq!(run.code(), 3, "{}", run.describe());
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn ssl_cert_file_without_the_root_of_the_server_fails_with_a_hint() {
+    let fixture = ncp_testkit::serve_https(Mode::Modern).await.unwrap();
+    let home = Home::new("other-cert-file").set("SSL_CERT_FILE", ncp_testkit::OTHER_CA);
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 3, "{}", run.describe());
+    let hint = run.error()["hint"].as_str().unwrap_or_default().to_string();
+    assert!(
+        hint.contains("SSL_CERT_FILE") && hint.contains("each root"),
+        "{}",
+        run.describe()
+    );
+}
+
+/// On Linux the system store reads `SSL_CERT_DIR`, so a root there is a
+/// system root. The file of `SSL_CERT_FILE` replaces it.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn ssl_cert_file_replaces_the_system_roots_on_linux() {
+    let fixture = ncp_testkit::serve_https(Mode::Modern).await.unwrap();
+    let home = Home::new("cert-file-replaces");
+    let system = home.root.join("system-roots");
+    std::fs::create_dir_all(&system).unwrap();
+    std::fs::copy(ncp_testkit::TEST_CA, system.join("ca.pem")).unwrap();
+    let home = home.set("SSL_CERT_DIR", &system.display().to_string());
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
+    let trusted = home.run(&["tool", "list", "web"]);
+    assert_eq!(trusted.code(), 0, "{}", trusted.describe());
+    let home = home.set("SSL_CERT_FILE", ncp_testkit::OTHER_CA);
+    let replaced = home.run(&["tool", "list", "web"]);
+    assert_eq!(replaced.code(), 3, "{}", replaced.describe());
+}
+
 #[test]
 fn unreadable_ssl_cert_file_gives_a_local_error_that_names_the_variable() {
     let home = Home::new("bad-cert-file");
