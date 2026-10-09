@@ -2161,3 +2161,43 @@ fn refresh_gets_the_list_again_and_keeps_it() {
         2
     );
 }
+
+#[test]
+fn bash_completion_offers_the_cached_tool_names_and_no_unsafe_name() {
+    let home = Home::new("completion-tools");
+    cached_server(&home, &json!({}));
+    assert_eq!(home.run(&["tool", "list", "fx"]).code(), 0);
+    let path = home.root.join("cache/ncp/lists/fx.json");
+    let mut cached: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let mut unsafe_tool = cached["tools"][0].clone();
+    unsafe_tool["name"] = json!("$(touch PWNED)");
+    cached["tools"].as_array_mut().unwrap().push(unsafe_tool);
+    std::fs::write(&path, cached.to_string()).unwrap();
+    let names = home.run(&["__complete-tools", "fx"]);
+    let names = String::from_utf8_lossy(&names.0.stdout).to_string();
+    assert!(names.lines().any(|name| name == "echo"), "{names}");
+    assert!(!names.contains("PWNED"), "{names}");
+    let bin = home.root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink(NCP, bin.join("ncp")).unwrap();
+    let script = home.root.join("ncp.bash");
+    std::fs::write(
+        &script,
+        home.run(&["generate-shell-completion", "bash"]).0.stdout,
+    )
+    .unwrap();
+    let probe = format!(
+        "source {}; COMP_WORDS=(ncp tool call fx ''); COMP_CWORD=4; _ncp ncp '' fx; printf '%s\\n' \"${{COMPREPLY[@]}}\"",
+        script.display()
+    );
+    let home = home.set("PATH", &format!("{}:/usr/bin:/bin", bin.display()));
+    let output = Command::new("bash")
+        .args(["-c", &probe])
+        .env_clear()
+        .envs(home.env.iter().cloned())
+        .output()
+        .unwrap();
+    let words = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(words.lines().any(|word| word == "echo"), "{words}");
+    assert!(!home.root.join("PWNED").exists());
+}

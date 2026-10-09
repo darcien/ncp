@@ -63,9 +63,22 @@ pub fn main_with(platform: Platform) -> ExitCode {
     // The completion scripts run this at each tab. It is not part of the
     // grammar, so that the scripts do not offer it, and it is fast and
     // silent, also with no HOME or a broken configuration.
-    if std::env::args_os().nth(1).as_deref() == Some(completion::SERVERS_COMMAND.as_ref()) {
-        completion::servers(&process_env());
-        return ExitCode::SUCCESS;
+    // `args_os`: `args` stops the program on a word that is not UTF-8.
+    let word = |index| {
+        std::env::args_os()
+            .nth(index)
+            .and_then(|word| word.into_string().ok())
+    };
+    match word(1).as_deref() {
+        Some(completion::SERVERS_COMMAND) => {
+            completion::servers(&process_env());
+            return ExitCode::SUCCESS;
+        }
+        Some(completion::TOOLS_COMMAND) => {
+            completion::tools(&process_env(), &word(2).unwrap_or_default());
+            return ExitCode::SUCCESS;
+        }
+        _ => {}
     }
     let ui = Ui {
         format: Format::detect(),
