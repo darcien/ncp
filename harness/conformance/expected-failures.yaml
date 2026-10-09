@@ -5,6 +5,3 @@ client:
   # A Client ID Metadata Document needs a stable HTTPS URL. Its place is a
   # release decision of the user, so CIMD is off.
   - auth/basic-cimd:cimd-client-id-used
-  # The configuration reads only oauth.clientId (design C4). A client
-  # secret in the configuration file would be a secret in a plain file.
-  - auth/pre-registration:pre-registration-auth

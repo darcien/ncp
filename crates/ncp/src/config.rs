@@ -17,8 +17,9 @@ use crate::{
 const SERVERS_KEY: &str = "mcpServers";
 const STDIO_KEYS: [&str; 5] = ["type", "command", "args", "env", "cwd"];
 const REMOTE_KEYS: [&str; 4] = ["type", "url", "headers", "oauth"];
-/// The MVP reads only `clientId` of the `oauth` object (design C4).
-const OAUTH_KEYS: [&str; 1] = ["clientId"];
+/// The keys of the `oauth` object that the MVP reads (design C4, B68).
+/// `authorizationServer` is the key of Claude Desktop for the issuer.
+const OAUTH_KEYS: [&str; 4] = ["clientId", "clientSecret", "issuer", "authorizationServer"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Server {
@@ -164,7 +165,57 @@ pub struct RemoteServer {
     pub headers: BTreeMap<String, Template>,
     /// `oauth.clientId`: a client that the user registered with the
     /// authorization server. With it, `ncp` does no registration.
-    pub oauth_client_id: Option<String>,
+    pub oauth_client: Option<PreRegisteredClient>,
+}
+
+/// A client that the user registered with an authorization server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreRegisteredClient {
+    pub client_id: String,
+    pub kind: ClientKind,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub enum ClientKind {
+    /// A client with no secret. A configured issuer binds it.
+    Public { issuer: Option<String> },
+    /// A client with a secret. The secret goes only to its issuer, so that
+    /// a changed or hostile MCP server cannot get it.
+    Confidential { secret: Template, issuer: String },
+}
+
+impl PreRegisteredClient {
+    /// The issuer that the user registered the client with.
+    #[must_use]
+    pub fn issuer(&self) -> Option<&str> {
+        match &self.kind {
+            ClientKind::Public { issuer } => issuer.as_deref(),
+            ClientKind::Confidential { issuer, .. } => Some(issuer),
+        }
+    }
+
+    /// The secret as the file writes it: a literal value or `${NAME}`.
+    #[must_use]
+    pub fn secret(&self) -> Option<&Template> {
+        match &self.kind {
+            ClientKind::Public { .. } => None,
+            ClientKind::Confidential { secret, .. } => Some(secret),
+        }
+    }
+}
+
+/// The secret can be a literal value, so `Debug` hides it.
+impl std::fmt::Debug for ClientKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Public { issuer } => f.debug_struct("Public").field("issuer", issuer).finish(),
+            Self::Confidential { issuer, .. } => f
+                .debug_struct("Confidential")
+                .field("secret", &"<hidden>")
+                .field("issuer", issuer)
+                .finish(),
+        }
+    }
 }
 
 /// An unknown key. `server` is `None` for a key at the top level.
@@ -218,6 +269,18 @@ pub enum EntryError {
     Url(#[from] UrlError),
     #[error("\"{field}\": {error}")]
     Variable { field: String, error: ExpandError },
+    #[error("\"oauth.{0}\" needs \"oauth.clientId\"")]
+    WithoutClientId(&'static str),
+    /// The URL is the expanded `url` of the entry, so that `auth login`
+    /// can find the issuer that the server names.
+    #[error(
+        "\"oauth.clientSecret\" needs \"oauth.issuer\": the issuer of the authorization server where you registered the client"
+    )]
+    SecretWithoutIssuer { url: ServerUrl },
+    #[error("\"oauth.issuer\" and \"oauth.authorizationServer\" do not agree")]
+    IssuersDisagree,
+    #[error("\"oauth.clientSecret\" is not a valid ${{NAME}} reference")]
+    BadClientSecret,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -460,26 +523,85 @@ fn stdio(object: &Map<String, Value>, env: &Env) -> Result<StdioServer, EntryErr
 
 fn remote(object: &Map<String, Value>, env: &Env) -> Result<RemoteServer, EntryError> {
     let url = string(object, "url", env)?.ok_or(EntryError::Missing("url"))?;
+    let url = ServerUrl::parse(&url)?;
     Ok(RemoteServer {
-        url: ServerUrl::parse(&url)?,
         headers: template_map(object, "headers")?,
-        oauth_client_id: oauth_client_id(object)?,
+        oauth_client: oauth_client(object, &url)?,
+        url,
     })
 }
 
-/// `oauth.clientId`, as the file writes it. A client ID is not a secret,
-/// so it has no `${NAME}`.
-fn oauth_client_id(object: &Map<String, Value>) -> Result<Option<String>, EntryError> {
+/// The pre-registered client of the `oauth` object (design B68). A client
+/// ID and an issuer are not secrets, so they have no `${NAME}`.
+fn oauth_client(
+    object: &Map<String, Value>,
+    url: &ServerUrl,
+) -> Result<Option<PreRegisteredClient>, EntryError> {
     let Some(oauth) = object.get("oauth") else {
         return Ok(None);
     };
     let oauth = oauth
         .as_object()
         .ok_or_else(|| wrong_type("oauth", "an object"))?;
-    match oauth.get("clientId") {
+    let text = |key: &str| match oauth.get(key) {
         None => Ok(None),
-        Some(Value::String(id)) if !id.is_empty() => Ok(Some(id.clone())),
-        Some(_) => Err(wrong_type("oauth.clientId", "a string that is not empty")),
+        Some(Value::String(text)) if !text.is_empty() => Ok(Some(text.clone())),
+        Some(_) => Err(wrong_type(
+            &format!("oauth.{key}"),
+            "a string that is not empty",
+        )),
+    };
+    let client_id = text("clientId")?;
+    let secret = text("clientSecret")?;
+    let issuer = configured_issuer(text("issuer")?, oauth.get("authorizationServer"))?;
+    let Some(client_id) = client_id else {
+        return match (&secret, &issuer) {
+            (Some(_), _) => Err(EntryError::WithoutClientId("clientSecret")),
+            (None, Some(_)) => Err(EntryError::WithoutClientId("issuer")),
+            (None, None) => Ok(None),
+        };
+    };
+    let kind = match (secret, issuer) {
+        (None, issuer) => ClientKind::Public { issuer },
+        (Some(_), None) => return Err(EntryError::SecretWithoutIssuer { url: url.clone() }),
+        // The error does not show the value: a literal secret can be in it.
+        (Some(secret), Some(issuer)) => ClientKind::Confidential {
+            secret: Template::parse(&secret).map_err(|_| EntryError::BadClientSecret)?,
+            issuer,
+        },
+    };
+    Ok(Some(PreRegisteredClient { client_id, kind }))
+}
+
+/// `oauth.issuer`, else `oauth.authorizationServer`: a string, or an array
+/// with one string. One issuer, because a client is registered at one
+/// authorization server.
+fn configured_issuer(
+    issuer: Option<String>,
+    authorization_server: Option<&Value>,
+) -> Result<Option<String>, EntryError> {
+    let other = match authorization_server {
+        None => None,
+        Some(Value::String(text)) if !text.is_empty() => Some(text.clone()),
+        Some(Value::Array(items)) => match items.as_slice() {
+            [Value::String(text)] if !text.is_empty() => Some(text.clone()),
+            _ => {
+                return Err(wrong_type(
+                    "oauth.authorizationServer",
+                    "a string or an array with one string",
+                ));
+            }
+        },
+        Some(_) => {
+            return Err(wrong_type(
+                "oauth.authorizationServer",
+                "a string or an array with one string",
+            ));
+        }
+    };
+    match (issuer, other) {
+        (Some(issuer), Some(other)) if issuer != other => Err(EntryError::IssuersDisagree),
+        (issuer, other) => Ok(issuer.or(other)),
     }
 }
 
@@ -587,7 +709,7 @@ mod tests {
             Transport::Http(RemoteServer {
                 url: ServerUrl::parse("https://example.com/mcp").unwrap(),
                 headers: BTreeMap::from([("X-Org".into(), Template::parse("o").unwrap())]),
-                oauth_client_id: None,
+                oauth_client: None,
             })
         );
         assert_eq!(config.warnings(), &[]);
@@ -650,13 +772,109 @@ mod tests {
         let Transport::Http(remote) = &config.server("r").unwrap().transport else {
             panic!("not http")
         };
-        assert_eq!(remote.oauth_client_id.as_deref(), Some("c1"));
+        assert_eq!(
+            remote
+                .oauth_client
+                .as_ref()
+                .map(|client| client.client_id.as_str()),
+            Some("c1")
+        );
         let text: Vec<String> = config.warnings().iter().map(ToString::to_string).collect();
         assert_eq!(
             text,
             ["server r: unknown key \"oauth.callbackPort\" ignored"]
         );
         assert!(config.server("bad").is_err());
+    }
+
+    fn oauth_entry(oauth: &str) -> Result<Option<PreRegisteredClient>, EntryError> {
+        let config = load(&format!(
+            r#"{{"mcpServers": {{"r": {{"type": "http", "url": "https://x/mcp", "oauth": {oauth}}}}}}}"#
+        ));
+        config.server("r").map_err(|error| match error {
+            LookupError::Invalid { error, .. } => error,
+            LookupError::NotFound(_) => panic!("no entry"),
+        })?;
+        match &config.server("r").unwrap().transport {
+            Transport::Http(remote) => Ok(remote.oauth_client.clone()),
+            _ => panic!("not http"),
+        }
+    }
+
+    #[test]
+    fn reads_a_client_secret_with_its_issuer() {
+        let client = oauth_entry(
+            r#"{"clientId": "c1", "clientSecret": "${CLIENT_SECRET}", "issuer": "https://as.test"}"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(client.issuer(), Some("https://as.test"));
+        assert_eq!(client.secret().unwrap().names(), ["CLIENT_SECRET"]);
+        let literal = oauth_entry(
+            r#"{"clientId": "c1", "clientSecret": "s3cr3t", "issuer": "https://as.test"}"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(literal.secret().unwrap().as_str(), "s3cr3t");
+        assert!(!format!("{literal:?}").contains("s3cr3t"));
+    }
+
+    #[test]
+    fn refuses_a_client_secret_without_a_client_id_or_an_issuer() {
+        assert_eq!(
+            oauth_entry(r#"{"clientSecret": "s", "issuer": "https://as.test"}"#),
+            Err(EntryError::WithoutClientId("clientSecret"))
+        );
+        assert_eq!(
+            oauth_entry(r#"{"issuer": "https://as.test"}"#),
+            Err(EntryError::WithoutClientId("issuer"))
+        );
+        assert!(matches!(
+            oauth_entry(r#"{"clientId": "c1", "clientSecret": "s"}"#),
+            Err(EntryError::SecretWithoutIssuer { .. })
+        ));
+    }
+
+    #[test]
+    fn reads_the_issuer_from_authorization_server_when_issuer_is_absent() {
+        let issuer = |oauth: &str| {
+            oauth_entry(oauth).map(|client| client.and_then(|c| c.issuer().map(str::to_string)))
+        };
+        assert_eq!(
+            issuer(r#"{"clientId": "c", "authorizationServer": "https://a"}"#),
+            Ok(Some("https://a".into()))
+        );
+        assert_eq!(
+            issuer(r#"{"clientId": "c", "authorizationServer": ["https://a"]}"#),
+            Ok(Some("https://a".into()))
+        );
+        assert_eq!(
+            issuer(
+                r#"{"clientId": "c", "issuer": "https://a", "authorizationServer": "https://a"}"#
+            ),
+            Ok(Some("https://a".into()))
+        );
+        assert_eq!(
+            issuer(
+                r#"{"clientId": "c", "issuer": "https://a", "authorizationServer": "https://b"}"#
+            ),
+            Err(EntryError::IssuersDisagree)
+        );
+        assert!(
+            issuer(r#"{"clientId": "c", "authorizationServer": ["https://a", "https://b"]}"#)
+                .is_err()
+        );
+        assert_eq!(issuer(r#"{"clientId": "c"}"#), Ok(None));
+    }
+
+    #[test]
+    fn shows_no_part_of_a_client_secret_that_is_not_a_valid_reference() {
+        let error = oauth_entry(
+            r#"{"clientId": "c", "clientSecret": "ab${x-y}cd", "issuer": "https://a"}"#,
+        )
+        .unwrap_err();
+        assert_eq!(error, EntryError::BadClientSecret);
+        assert!(!error.to_string().contains("x-y"));
     }
 
     #[test]

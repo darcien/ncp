@@ -50,7 +50,7 @@ fn http_server(url: &str, headers: &[(&str, &str)]) -> Server {
                 .iter()
                 .map(|(k, v)| (k.to_string(), Template::parse(v).unwrap()))
                 .collect(),
-            oauth_client_id: None,
+            oauth_client: None,
         }),
     )
 }
@@ -604,7 +604,7 @@ async fn rejects_sse_server() {
         Transport::Sse(RemoteServer {
             url: ServerUrl::parse("http://localhost:1/sse").unwrap(),
             headers: BTreeMap::new(),
-            oauth_client_id: None,
+            oauth_client: None,
         }),
     );
     let error = Setup::new(server).connect().await.err().unwrap();

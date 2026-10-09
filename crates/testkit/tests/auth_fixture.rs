@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use base64::Engine as _;
 use ncp_testkit::{
     Mode, StepUp,
-    auth_server::{AuthServer, AuthSettings, CallbackIss, Decision, serve_auth},
+    auth_server::{AuthServer, AuthSettings, CallbackIss, Decision, Registration, serve_auth},
     metadata_url, serve_http_with_oauth,
 };
 use serde_json::{Value, json};
@@ -278,7 +278,7 @@ async fn refresh_rotates_the_tokens_unless_rejected() {
 #[tokio::test]
 async fn registered_client_with_a_secret_must_send_it() {
     let server = serve_auth(AuthSettings {
-        register_with_secret: true,
+        registration: Registration::WithSecret,
         ..AuthSettings::default()
     })
     .await

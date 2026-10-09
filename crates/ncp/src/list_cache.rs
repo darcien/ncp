@@ -71,8 +71,9 @@ pub fn keep_for(ttl_ms: Option<u64>, private: bool, used_credentials: bool) -> O
     (!private || !used_credentials).then_some(ttl.min(MAX_TTL_MS))
 }
 
-/// The digest of the entry: the target and the `env`, `headers` and
-/// `oauth.clientId` as the file writes them. It holds no expanded value.
+/// The digest of the entry: the target and the `env`, `headers`,
+/// `oauth.clientId` and `oauth.issuer` as the file writes them. It holds no
+/// expanded value.
 #[must_use]
 pub fn entry_digest(server: &crate::config::Server) -> u64 {
     use std::hash::{DefaultHasher, Hash, Hasher};
@@ -82,7 +83,12 @@ pub fn entry_digest(server: &crate::config::Server) -> u64 {
         crate::config::Transport::Stdio(stdio) => format!("{:?}", stdio.env).hash(&mut hasher),
         crate::config::Transport::Http(remote) | crate::config::Transport::Sse(remote) => {
             format!("{:?}", remote.headers).hash(&mut hasher);
-            remote.oauth_client_id.hash(&mut hasher);
+            // The secret is left out: a literal value is a secret.
+            remote
+                .oauth_client
+                .as_ref()
+                .map(|client| (&client.client_id, client.issuer()))
+                .hash(&mut hasher);
         }
     }
     hasher.finish()

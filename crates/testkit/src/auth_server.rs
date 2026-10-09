@@ -42,6 +42,18 @@ pub enum Decision {
     Deny,
 }
 
+/// Dynamic Client Registration (RFC 7591).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Registration {
+    /// A new client has no secret.
+    Public,
+    /// A new client gets a client secret.
+    WithSecret,
+    /// The metadata names no registration endpoint, and the endpoint
+    /// registers nothing.
+    Closed,
+}
+
 /// The behavior of the server. Tests can change it while the server runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthSettings {
@@ -54,12 +66,13 @@ pub struct AuthSettings {
     pub expires_in: u64,
     /// The refresh grant fails with `invalid_grant`.
     pub reject_refresh: bool,
-    /// Dynamic Client Registration gives a client secret.
-    pub register_with_secret: bool,
+    pub registration: Registration,
     /// The path of the issuer after the host, for example `/b`. A new
     /// path makes a new issuer on the same server.
     pub issuer_path: String,
     pub scopes_supported: Vec<String>,
+    /// The metadata field `service_documentation`.
+    pub service_documentation: Option<String>,
 }
 
 impl Default for AuthSettings {
@@ -70,9 +83,10 @@ impl Default for AuthSettings {
             decision: Decision::Approve,
             expires_in: 3600,
             reject_refresh: false,
-            register_with_secret: false,
+            registration: Registration::Public,
             issuer_path: String::new(),
             scopes_supported: vec!["a".into(), "b".into()],
+            service_documentation: None,
         }
     }
 }
@@ -95,6 +109,8 @@ pub struct AuthRecord {
     pub token_resource: Option<String>,
     /// The `client_id` of the last token request.
     pub token_client_id: Option<String>,
+    /// The last token request sent its client with HTTP Basic.
+    pub token_basic: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -317,22 +333,25 @@ fn metadata(state: &AuthState) -> Response {
     let settings = guard.settings.clone();
     drop(guard);
     let origin = &state.origin;
-    json_response(
-        http::StatusCode::OK,
-        &json!({
-            "issuer": format!("{origin}{}", settings.issuer_path),
-            "authorization_endpoint": format!("{origin}/authorize"),
-            "token_endpoint": format!("{origin}/token"),
-            "registration_endpoint": format!("{origin}/register"),
-            "response_types_supported": ["code"],
-            "grant_types_supported": ["authorization_code", "refresh_token"],
-            "code_challenge_methods_supported": ["S256"],
-            "token_endpoint_auth_methods_supported":
-                ["none", "client_secret_post", "client_secret_basic"],
-            "authorization_response_iss_parameter_supported": settings.announce_iss,
-            "scopes_supported": settings.scopes_supported,
-        }),
-    )
+    let mut body = json!({
+        "issuer": format!("{origin}{}", settings.issuer_path),
+        "authorization_endpoint": format!("{origin}/authorize"),
+        "token_endpoint": format!("{origin}/token"),
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "code_challenge_methods_supported": ["S256"],
+        "token_endpoint_auth_methods_supported":
+            ["none", "client_secret_post", "client_secret_basic"],
+        "authorization_response_iss_parameter_supported": settings.announce_iss,
+        "scopes_supported": settings.scopes_supported,
+    });
+    if settings.registration != Registration::Closed {
+        body["registration_endpoint"] = json!(format!("{origin}/register"));
+    }
+    if let Some(page) = settings.service_documentation {
+        body["service_documentation"] = json!(page);
+    }
+    json_response(http::StatusCode::OK, &body)
 }
 
 /// A loopback redirect URI matches with any port (RFC 8252 §7.3).
@@ -499,6 +518,7 @@ fn token(state: &AuthState, headers: &http::HeaderMap, form: &HashMap<String, St
     guard.record.token_resource = form.get("resource").cloned();
     let (client_id, secret) = client_credentials(headers, form);
     guard.record.token_client_id.clone_from(&client_id);
+    guard.record.token_basic = headers.contains_key(http::header::AUTHORIZATION);
     let client_id = client_id.unwrap_or_default();
     let Some(client) = guard.clients.get(&client_id).cloned() else {
         return oauth_error(http::StatusCode::UNAUTHORIZED, "invalid_client");
@@ -544,6 +564,9 @@ fn token(state: &AuthState, headers: &http::HeaderMap, form: &HashMap<String, St
 fn register(state: &AuthState, body: &[u8]) -> Response {
     let mut guard = state.lock();
     guard.record.register_calls += 1;
+    if guard.settings.registration == Registration::Closed {
+        return text(http::StatusCode::NOT_FOUND, "no registration");
+    }
     let Ok(request) = serde_json::from_slice::<Value>(body) else {
         return oauth_error(http::StatusCode::BAD_REQUEST, "invalid_client_metadata");
     };
@@ -561,10 +584,8 @@ fn register(state: &AuthState, body: &[u8]) -> Response {
     }
     let n = guard.next();
     let client_id = format!("client-{n}");
-    let secret = guard
-        .settings
-        .register_with_secret
-        .then(|| format!("secret-{n}"));
+    let secret =
+        (guard.settings.registration == Registration::WithSecret).then(|| format!("secret-{n}"));
     guard.clients.insert(
         client_id.clone(),
         Client {

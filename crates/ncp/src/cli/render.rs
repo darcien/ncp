@@ -534,7 +534,7 @@ mod tests {
             Transport::Http(RemoteServer {
                 url: ServerUrl::parse("https://example.com/mcp").unwrap(),
                 headers: BTreeMap::new(),
-                oauth_client_id: None,
+                oauth_client: None,
             }),
         );
         assert_eq!(target(&http), "https://example.com/mcp");

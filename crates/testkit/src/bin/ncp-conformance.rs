@@ -195,6 +195,12 @@ fn configure(home: &Path, url: &str, version: &str, context: &Value) -> Result<(
     let mut entry = json!({"type": "http", "url": url});
     if let Some(client_id) = context["client_id"].as_str() {
         entry["oauth"] = json!({"clientId": client_id});
+        if let Some(secret) = context["client_secret"].as_str() {
+            entry["oauth"]["clientSecret"] = json!(secret);
+        }
+        if let Some(issuer) = context["issuer"].as_str() {
+            entry["oauth"]["issuer"] = json!(issuer);
+        }
     }
     let config = json!({"mcpServers": {SERVER: entry}});
     std::fs::write(config_dir.join("mcp.json"), config.to_string())

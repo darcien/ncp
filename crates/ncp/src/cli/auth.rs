@@ -24,7 +24,7 @@ use super::{
 };
 use crate::{
     client::RequestError,
-    config::{RemoteServer, Server, Transport},
+    config::{EntryError, LookupError, PreRegisteredClient, RemoteServer, Server, Transport},
     credential::CredentialKey,
     oauth::{
         callback::{self, RedirectUri},
@@ -223,7 +223,7 @@ async fn login(
     place: CredentialPlace,
 ) -> Result<ServerName, Failure> {
     let loaded = session::load_config(&context.paths.config_file, context.env)?;
-    let server = session::select(&loaded, word, context.ui)?;
+    let server = select(context, &loaded, word).await?;
     let name = server.name.as_str();
     let remote = remote(server)?;
     let store = place_store(context, name, place).await?;
@@ -249,7 +249,12 @@ async fn login(
     context
         .ui
         .debug(Some(name), &format!("authorization server: {issuer}"));
-    manager.set_metadata(metadata);
+    // Before the browser opens: the user must not log in at an issuer that
+    // the entry does not name.
+    if let Some(client) = &remote.oauth_client {
+        check_issuer(name, client, &metadata)?;
+    }
+    manager.set_metadata(metadata.clone());
     manager.set_credential_store(TokenStore::new(server.name.clone(), store.clone()).fresh());
     let listener = TcpListener::bind(("127.0.0.1", 0))
         .await
@@ -265,7 +270,7 @@ async fn login(
         remote,
         &mut manager,
         (&store, place),
-        &issuer,
+        &metadata,
         &redirect,
     )
     .await
@@ -424,6 +429,16 @@ pub(super) async fn stored_login(
     let metadata = discover(&manager, challenge)
         .await
         .map_err(|failure| failure.server(name))?;
+    // The configured client of the tokens. Its issuer is checked before
+    // rmcp reads the tokens, because rmcp removes the tokens of another
+    // issuer, and before any refresh sends the secret.
+    let configured = remote
+        .oauth_client
+        .as_ref()
+        .filter(|client| client.client_id == client_id);
+    if let Some(client) = configured {
+        check_issuer(name, client, &metadata)?;
+    }
     manager.set_metadata(metadata);
     let usable = manager
         .initialize_from_store()
@@ -433,7 +448,21 @@ pub(super) async fn stored_login(
         return Ok(None);
     }
     // rmcp configures only the client ID from the tokens. A refresh of a
-    // confidential client needs the secret of the client item too.
+    // confidential client needs its secret too (RFC 6749 §6).
+    if let Some(client) = configured {
+        if let Some(template) = client.secret() {
+            let secret = secrets::client_secret(context, name, template).await?;
+            let config = OAuthClientConfig::new(client_id, RedirectUri::new(0).to_string())
+                .with_client_secret(secret.expose());
+            manager
+                .configure_client(config)
+                .map_err(|error| auth_failure("OAuth setup", &error).server(name))?;
+        }
+        return Ok(Some(AuthClient::new(
+            crate::client::http::observed(http, observer),
+            manager,
+        )));
+    }
     let client_key = CredentialKey::OAuthClient(server.name.clone());
     let started = std::time::Instant::now();
     let client = secrets::call(context, &store, move |store| store.load(&client_key)).await;
@@ -727,26 +756,35 @@ async fn remove_old_tokens(
     Ok(())
 }
 
-/// The client for the login, in the order of the spec:
-/// the `oauth.clientId` of the configuration, then the stored client of
-/// the same issuer, then a new registration. A Client ID Metadata Document
-/// waits for a release decision: it needs a stable HTTPS URL.
+/// The client for the login, in the order of the spec (design B67): the
+/// `oauth.clientId` of the configuration, then the stored client of the
+/// same issuer, then a new registration. A Client ID Metadata Document
+/// comes with the first release: it needs a stable HTTPS URL.
 async fn client_request(
     context: &Context<'_>,
     server: &Server,
     remote: &RemoteServer,
     manager: &mut AuthorizationManager,
     (store, place): (&Arc<dyn CredentialStore>, CredentialPlace),
-    issuer: &str,
+    metadata: &AuthorizationMetadata,
     redirect: &RedirectUri,
 ) -> Result<AuthorizationRequest, Failure> {
+    let name = server.name.as_str();
+    let issuer = issuer_of(metadata);
     let selected = manager.select_scopes(None, &[]);
     let scopes = login_scopes(context, server, (store, place), &selected).await;
     let request = AuthorizationRequest::new(redirect.to_string())
         .with_client_name(CLIENT_NAME)
         .with_scopes(scopes.clone());
-    if let Some(client_id) = &remote.oauth_client_id {
-        return Ok(request.with_preregistered_client(client_id.clone()));
+    if let Some(client) = &remote.oauth_client {
+        let request = request.with_preregistered_client(client.client_id.clone());
+        return Ok(match client.secret() {
+            Some(template) => {
+                let secret = secrets::client_secret(context, name, template).await?;
+                request.with_client_secret(secret.expose())
+            }
+            None => request,
+        });
     }
     let key = CredentialKey::OAuthClient(server.name.clone());
     let stored = secrets::call(context, store, {
@@ -758,10 +796,13 @@ async fn client_request(
     .map(|secret| ClientItem::from_secret(&secret))
     .transpose()
     .map_err(|error| Failure::protocol(error.to_string()))?;
-    let client = if let Some(item) = stored.filter(|item| item.is_for(issuer)) {
+    let client = if let Some(item) = stored.filter(|item| item.is_for(&issuer)) {
         item
     } else {
-        let item = register(manager, issuer, redirect, &scopes).await?;
+        if metadata.registration_endpoint.is_none() {
+            return Err(no_registration(name, metadata));
+        }
+        let item = register(manager, &issuer, redirect, &scopes).await?;
         let secret = item
             .to_secret()
             .map_err(|error| Failure::protocol(error.to_string()))?;
@@ -769,7 +810,7 @@ async fn client_request(
             .await
             .map_err(|error| secrets::store_failure(&error))?;
         context.ui.debug(
-            Some(server.name.as_str()),
+            Some(name),
             &format!("registered the client {} at {issuer}", item.client_id),
         );
         item
@@ -779,6 +820,132 @@ async fn client_request(
         Some(secret) => request.with_client_secret(secret),
         None => request,
     })
+}
+
+/// The page of the authorization server that tells how to register a
+/// client (RFC 8414 §2 `service_documentation`), when it is safe to show.
+fn registration_page(metadata: &AuthorizationMetadata) -> Option<String> {
+    metadata
+        .additional_fields
+        .get("service_documentation")
+        .and_then(Value::as_str)
+        .and_then(|text| crate::elicit::safe_url(text).ok())
+        .map(String::from)
+}
+
+/// The words "register a client at ISSUER", with the page that tells how.
+fn register_there(metadata: &AuthorizationMetadata) -> String {
+    let issuer = issuer_of(metadata);
+    match registration_page(metadata) {
+        Some(page) => format!("register a client at {issuer} (see {page})"),
+        None => format!("register a client at {issuer}"),
+    }
+}
+
+/// The stop when the authorization server has no Dynamic Client
+/// Registration and the entry names no client.
+fn no_registration(name: &str, metadata: &AuthorizationMetadata) -> Failure {
+    Failure::new(
+        Exit::Auth,
+        format!(
+            "the authorization server {} does not register clients, and the entry names no client",
+            issuer_of(metadata)
+        ),
+    )
+    .hint(format!(
+        "{}, then set \"clientId\", \"clientSecret\" and \"issuer\" in the \"oauth\" object of {name}",
+        register_there(metadata)
+    ))
+}
+
+/// Stops when the authorization server is not the issuer that the entry
+/// names. The compare is exact, as for the `iss` parameter (RFC 9207 §2.4).
+/// MCP 2026-07-28 client registration, Authorization Server Binding:
+/// pre-registered credentials are bound to their issuer.
+fn check_issuer(
+    name: &str,
+    client: &PreRegisteredClient,
+    metadata: &AuthorizationMetadata,
+) -> Result<(), Failure> {
+    let actual = issuer_of(metadata);
+    let Some(expected) = client.issuer().filter(|expected| *expected != actual) else {
+        return Ok(());
+    };
+    let not_sent = if client.secret().is_some() {
+        " ncp did not send the client secret."
+    } else {
+        ""
+    };
+    let keys = if client.secret().is_some() {
+        "\"clientId\", \"clientSecret\" and \"issuer\""
+    } else {
+        "\"clientId\" and \"issuer\""
+    };
+    let moved = if metadata.registration_endpoint.is_some() {
+        format!(
+            "remove {keys} from the \"oauth\" object of {name}, then run: ncp auth login {name}"
+        )
+    } else {
+        format!(
+            "{}, then change {keys} in the \"oauth\" object of {name}",
+            register_there(metadata)
+        )
+    };
+    Err(Failure::new(
+        Exit::Auth,
+        format!(
+            "ncp stopped on purpose: the server names the authorization server {actual}, and the entry names {expected}.{not_sent}"
+        ),
+    )
+    .hint(format!(
+        "if the server moved on purpose, {moved}; if not, keep the configuration and tell the owner of the server"
+    ))
+    .server(name))
+}
+
+/// The server of the login. For an entry with a client secret and no
+/// issuer, the failure names the issuer of the server.
+async fn select<'a>(
+    context: &Context<'_>,
+    loaded: &'a session::Loaded,
+    word: &str,
+) -> Result<&'a Server, Failure> {
+    let failure = match session::select(loaded, word, context.ui) {
+        Ok(server) => return Ok(server),
+        Err(failure) => failure,
+    };
+    Err(match loaded.config.server(word) {
+        Err(LookupError::Invalid {
+            error: EntryError::SecretWithoutIssuer { url },
+            ..
+        }) => with_server_issuer(context, failure, word, &url).await,
+        _ => failure,
+    })
+}
+
+/// Adds the issuer that the server names to the failure of an entry with
+/// a client secret and no issuer. Discovery sends no secret.
+async fn with_server_issuer(
+    context: &Context<'_>,
+    failure: Failure,
+    name: &str,
+    url: &crate::server::ServerUrl,
+) -> Failure {
+    let Ok(http) = OAuthHttp::new(context.env, &crate::client::observe::Observer::default()) else {
+        return failure;
+    };
+    let Ok(manager) =
+        AuthorizationManager::new_with_oauth_http_client(url.without_query(), Arc::new(http)).await
+    else {
+        return failure;
+    };
+    match discover(&manager, None).await {
+        Ok(metadata) => failure.hint(format!(
+            "when you registered the client at {issuer}, add \"issuer\": \"{issuer}\" to the \"oauth\" object of {name}",
+            issuer = issuer_of(&metadata)
+        )),
+        Err(_) => failure,
+    }
 }
 
 /// A new client by Dynamic Client Registration (RFC 7591), with the

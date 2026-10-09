@@ -12,7 +12,11 @@ use std::{
     process::{Command, Output, Stdio},
 };
 
-use ncp_testkit::{Mode, auth_server::AuthSettings, serve_http, serve_http_with};
+use ncp_testkit::{
+    Mode,
+    auth_server::{AuthSettings, Registration},
+    serve_http, serve_http_with,
+};
 use serde_json::{Value, json};
 
 const NCP: &str = env!("CARGO_BIN_EXE_ncp-cli");
@@ -1141,6 +1145,129 @@ async fn login_uses_the_configured_client_id_and_registers_nothing() {
     let record = auth.record();
     assert_eq!(record.register_calls, 0);
     assert_eq!(record.token_client_id.as_deref(), Some("pre-1"));
+}
+
+/// A server with no Dynamic Client Registration and a client with a
+/// secret that the user registered there.
+async fn pre_registered(
+    test: &str,
+    oauth: impl FnOnce(&str) -> Value,
+) -> (
+    ncp_testkit::auth_server::AuthServer,
+    ncp_testkit::HttpFixture,
+    Home,
+) {
+    let (auth, fixture) = oauth_fixture(AuthSettings {
+        registration: Registration::Closed,
+        expires_in: 5,
+        service_documentation: Some("https://as.test/register-a-client".into()),
+        ..AuthSettings::default()
+    })
+    .await;
+    auth.add_client("pre-2", Some("s3cr3t-value"));
+    let home = oauth_home(test, &fixture.url).set("PRE_SECRET", "s3cr3t-value");
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url,
+        "oauth": oauth(&auth.issuer())}}));
+    (auth, fixture, home)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_and_refresh_send_the_configured_client_secret_to_its_issuer() {
+    let (auth, fixture) = oauth_fixture(AuthSettings {
+        registration: Registration::Closed,
+        expires_in: 5,
+        ..AuthSettings::default()
+    })
+    .await;
+    auth.add_client("pre-2", Some("s3cr3t-value"));
+    let home = oauth_home("login-secret", &fixture.url).set("PRE_SECRET", "s3cr3t-value");
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url,
+        "oauth": {"clientId": "pre-2", "clientSecret": "${PRE_SECRET}", "issuer": auth.issuer()}}}));
+    let run = home.run(&["-vv", "auth", "login", "web", "--credential-store", "file"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(!run.describe().contains("s3cr3t-value"));
+    let record = auth.record();
+    assert_eq!(record.register_calls, 0);
+    assert_eq!(record.token_client_id.as_deref(), Some("pre-2"));
+    assert!(record.token_basic, "HTTP Basic is the default method");
+    // rmcp refreshes a token that ends in less than 30 s.
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(auth.record().refresh_grants >= 1, "{:?}", auth.record());
+    assert!(auth.record().token_basic);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_stops_before_the_browser_when_the_server_names_another_issuer() {
+    let (auth, _fixture, home) = pre_registered("login-other-issuer", |_| {
+        json!({"clientId": "pre-2", "clientSecret": "${PRE_SECRET}",
+            "issuer": "https://as.example"})
+    })
+    .await;
+    let run = home.run(&LOGIN_TO_FILE);
+    assert_eq!(run.code(), 4, "{}", run.describe());
+    let error = run.error();
+    let message = error["message"].as_str().unwrap();
+    assert!(message.contains("on purpose"), "{message}");
+    assert!(message.contains(&auth.issuer()) && message.contains("https://as.example"));
+    assert!(
+        message.contains("did not send the client secret"),
+        "{message}"
+    );
+    let hint = error["hint"].as_str().unwrap();
+    assert!(hint.contains("https://as.test/register-a-client"), "{hint}");
+    assert!(hint.contains("tell the owner of the server"), "{hint}");
+    let record = auth.record();
+    assert_eq!((record.authorize_calls, record.code_grants), (0, 0));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_with_no_registration_and_no_client_names_the_registration_page() {
+    let (_auth, _fixture, home) = pre_registered("login-no-dcr", |_| json!({})).await;
+    let run = home.run(&LOGIN_TO_FILE);
+    assert_eq!(run.code(), 4, "{}", run.describe());
+    let hint = run.error()["hint"].as_str().unwrap().to_string();
+    assert!(hint.contains("https://as.test/register-a-client"), "{hint}");
+    assert!(hint.contains("\"clientSecret\""), "{hint}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_with_a_client_secret_and_no_issuer_names_the_issuer_of_the_server() {
+    let (auth, _fixture, home) = pre_registered(
+        "login-no-issuer",
+        |_| json!({"clientId": "pre-2", "clientSecret": "s3cr3t-value"}),
+    )
+    .await;
+    let run = home.run(&LOGIN_TO_FILE);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    let hint = run.error()["hint"].as_str().unwrap().to_string();
+    assert!(hint.contains(&auth.issuer()), "{hint}");
+    assert!(!run.describe().contains("s3cr3t-value"));
+    assert_eq!(auth.record().authorize_calls, 0);
+    let other = home.run(&["tool", "list", "web"]);
+    assert_eq!(other.code(), 2, "{}", other.describe());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn refresh_stops_and_keeps_the_tokens_when_the_issuer_changes() {
+    let (auth, _fixture, home) = pre_registered(
+        "refresh-other-issuer",
+        |issuer| json!({"clientId": "pre-2", "clientSecret": "${PRE_SECRET}", "issuer": issuer}),
+    )
+    .await;
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    auth.settings(|settings| settings.issuer_path = "/b".into());
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 4, "{}", run.describe());
+    assert!(
+        run.error()["message"]
+            .as_str()
+            .unwrap()
+            .contains("did not send the client secret")
+    );
+    assert_eq!(auth.record().refresh_grants, 0);
+    let file = std::fs::read_to_string(home.root.join("state/ncp/credentials.json")).unwrap();
+    assert!(file.contains("oauth/web/tokens"), "the tokens stay");
 }
 
 #[tokio::test(flavor = "multi_thread")]

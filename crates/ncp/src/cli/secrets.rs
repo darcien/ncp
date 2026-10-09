@@ -19,9 +19,9 @@ use super::{
     session::{self, Context},
 };
 use crate::{
-    config::{Server, Values},
+    config::{EntryError, Server, Values},
     credential::{CredentialKey, Secret, SecretName},
-    expand::Env,
+    expand::{Env, Template},
     store::{self, CredentialStore, FileStore, StoreError},
 };
 
@@ -104,15 +104,47 @@ fn key(name: &str) -> Result<CredentialKey, Failure> {
 /// does not have the name.
 pub(super) async fn resolve(context: &Context<'_>, server: &Server) -> Result<Values, Failure> {
     let name_of_server = server.name.as_str();
-    let (set, missing): (Vec<&str>, Vec<&str>) = server
-        .value_names()
+    let values = values_of(context, name_of_server, server.value_names()).await?;
+    server
+        .expand_values(&values)
+        .map_err(|error| Failure::usage(error.to_string()).server(name_of_server))
+}
+
+/// The expanded `oauth.clientSecret`, from the same places as a `headers`
+/// value. No error shows the value.
+///
+/// # Errors
+///
+/// Returns the failure of [`resolve`] for a name of the template.
+pub(super) async fn client_secret(
+    context: &Context<'_>,
+    server: &str,
+    template: &Template,
+) -> Result<Secret, Failure> {
+    let values = values_of(context, server, template.names().into_iter().collect()).await?;
+    template.expand(&values).map(Secret::new).map_err(|error| {
+        let error = EntryError::Variable {
+            field: "oauth.clientSecret".into(),
+            error,
+        };
+        Failure::usage(error.to_string()).server(server)
+    })
+}
+
+/// The environment with the value of each name that it does not have,
+/// from the stores.
+async fn values_of(
+    context: &Context<'_>,
+    server: &str,
+    names: BTreeSet<&str>,
+) -> Result<Env, Failure> {
+    let (set, missing): (Vec<&str>, Vec<&str>) = names
         .into_iter()
         .partition(|name| context.env.contains_key(*name));
     for name in set {
-        context.ui.debug(
-            Some(name_of_server),
-            &format!("{name} from the environment"),
-        );
+        context
+            .ui
+            .debug(Some(server), &format!("{name} from the environment"));
     }
     let mut values: Env = context.env.clone();
     if !missing.is_empty() {
@@ -124,16 +156,14 @@ pub(super) async fn resolve(context: &Context<'_>, server: &Server) -> Result<Va
             timings
                 .update(|record| super::timings::add(&mut record.credentials, started.elapsed()));
         }
-        for (name, secret, place) in found.map_err(|failure| failure.server(name_of_server))? {
+        for (name, secret, place) in found.map_err(|failure| failure.server(server))? {
             context
                 .ui
-                .debug(Some(name_of_server), &format!("{name} from {place}"));
+                .debug(Some(server), &format!("{name} from {place}"));
             values.insert(name.to_string(), secret.expose().to_string());
         }
     }
-    server
-        .expand_values(&values)
-        .map_err(|error| Failure::usage(error.to_string()).server(name_of_server))
+    Ok(values)
 }
 
 /// The values of the names from the stores, with the place of each one.
