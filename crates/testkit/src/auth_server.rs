@@ -244,9 +244,27 @@ impl AuthServer {
 ///
 /// Returns an error when no loopback port is free.
 pub async fn serve_auth(settings: AuthSettings) -> std::io::Result<AuthServer> {
+    serve_auth_with(settings, None).await
+}
+
+/// The authorization server over HTTPS, with the certificate of the test
+/// CA ([`crate::TEST_CA`]).
+///
+/// # Errors
+///
+/// Returns an error when no loopback port is free.
+pub async fn serve_auth_tls(settings: AuthSettings) -> std::io::Result<AuthServer> {
+    serve_auth_with(settings, Some(crate::test_tls()?)).await
+}
+
+async fn serve_auth_with(
+    settings: AuthSettings,
+    tls: Option<tokio_rustls::TlsAcceptor>,
+) -> std::io::Result<AuthServer> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let scheme = if tls.is_some() { "https" } else { "http" };
     let state = AuthState {
-        origin: format!("http://{}", listener.local_addr()?),
+        origin: format!("{scheme}://{}", listener.local_addr()?),
         state: Arc::new(Mutex::new(State {
             settings,
             ..State::default()
@@ -264,14 +282,27 @@ pub async fn serve_auth(settings: AuthSettings) -> std::io::Result<AuthServer> {
                 () = accept_stop.cancelled() => return,
             };
             let state = shared.clone();
+            let tls = tls.clone();
             tokio::spawn(async move {
                 let handler = hyper::service::service_fn(move |request| {
                     let state = state.clone();
                     async move { Ok::<_, Infallible>(handle(&state, request).await) }
                 });
-                let _ = hyper::server::conn::http1::Builder::new()
-                    .serve_connection(hyper_util::rt::TokioIo::new(stream), handler)
-                    .await;
+                let builder = hyper::server::conn::http1::Builder::new();
+                match tls {
+                    Some(tls) => {
+                        if let Ok(stream) = tls.accept(stream).await {
+                            let _ = builder
+                                .serve_connection(hyper_util::rt::TokioIo::new(stream), handler)
+                                .await;
+                        }
+                    }
+                    None => {
+                        let _ = builder
+                            .serve_connection(hyper_util::rt::TokioIo::new(stream), handler)
+                            .await;
+                    }
+                }
             });
         }
     });

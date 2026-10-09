@@ -44,7 +44,10 @@ fn http_line(
     shown_url: &dyn Fn(&str) -> String,
 ) -> String {
     let url = shown_url(&exchange.url);
-    let outcome = hide_url_in(&exchange.outcome, &exchange.url, &url);
+    let outcome = shown_url(&hide_url_in(&exchange.outcome, &exchange.url, &url));
+    // OAuth bodies can hold the server URL, for example in `resource`.
+    let request_body = exchange.request_body.as_deref().map(shown_url);
+    let response_body = exchange.response_body.as_deref().map(shown_url);
     match format {
         Format::Text => {
             let headers: Vec<String> = exchange
@@ -63,8 +66,8 @@ fn http_line(
                 headers.join(", "),
                 outcome,
                 ms(exchange.elapsed),
-                body("request", &exchange.request_body),
-                body("response", &exchange.response_body),
+                body("request", &request_body),
+                body("response", &response_body),
             )
         }
         Format::Json => {
@@ -80,10 +83,10 @@ fn http_line(
                 "outcome": outcome,
                 "ms": ms(exchange.elapsed),
             });
-            if let Some(body) = &exchange.request_body {
+            if let Some(body) = &request_body {
                 http["requestBody"] = json!(body);
             }
-            if let Some(body) = &exchange.response_body {
+            if let Some(body) = &response_body {
                 http["responseBody"] = json!(body);
             }
             json_line(&json!({"trace": {"server": server, "http": http}}))
@@ -152,8 +155,14 @@ mod tests {
 
     use super::*;
 
-    fn hidden(url: &str) -> String {
-        crate::redact::url(url)
+    /// As the closure of a session: a URL with its secrets hidden, and
+    /// other text as it is.
+    fn hidden(text: &str) -> String {
+        if text.starts_with("http") && !text.contains(' ') {
+            crate::redact::url(text)
+        } else {
+            text.to_string()
+        }
     }
 
     #[test]

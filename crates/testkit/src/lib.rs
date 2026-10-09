@@ -714,7 +714,7 @@ pub async fn serve_https(mode: Mode) -> std::io::Result<HttpFixture> {
     serve(mode, Access::Open, Some(test_tls()?)).await
 }
 
-fn test_tls() -> std::io::Result<tokio_rustls::TlsAcceptor> {
+pub(crate) fn test_tls() -> std::io::Result<tokio_rustls::TlsAcceptor> {
     use tokio_rustls::rustls::{
         self,
         pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},

@@ -286,7 +286,13 @@ async fn stored_login(
         Box::pin(super::auth::stored_login(context, login, found)),
     )
     .await
-    .map_err(|failure| with_tls_hint(context.env, &login.notes.get(), failure))
+    .map_err(|failure| {
+        let failure = Failure {
+            message: hide_expanded_url(login.server, failure.message.clone()),
+            ..failure
+        };
+        with_tls_hint(context.env, &login.notes.get(), failure)
+    })
 }
 
 /// Connects with the stored login of an http server. A server that let a
@@ -587,15 +593,30 @@ fn through_proxy(env: &Env, url: &crate::server::ServerUrl, failure: Failure) ->
 /// writes it; each other URL, for example of OAuth, with its secrets
 /// hidden. An expanded value of the server URL can also be in an OAuth
 /// URL, for example in `resource`.
+///
+/// A text that is not a URL, for example a body or an error of a trace,
+/// gets only the hidden `${NAME}` values: rmcp puts the server URL into
+/// OAuth bodies and errors, also percent-encoded.
 pub fn shown_url(server: &Server) -> impl Fn(&str) -> String + Send + Sync + 'static {
     let server = server.clone();
-    move |url| crate::redact::url(&hide_expanded_url(&server, url.to_string()))
+    move |text| {
+        let hidden = hide_expanded_url(&server, text.to_string());
+        // "error: ..." is a valid URL with the scheme "error", so only a
+        // web URL counts.
+        let is_url = (text.starts_with("http://") || text.starts_with("https://"))
+            && !text.contains(char::is_whitespace);
+        if is_url {
+            crate::redact::url(&hidden)
+        } else {
+            hidden
+        }
+    }
 }
 
 /// The message with the expanded URL replaced by the URL as the file writes
 /// it, with its secret query values and user information hidden. HTTP
 /// errors hold the URL, and a query parameter can hold a key.
-fn hide_expanded_url(server: &Server, message: String) -> String {
+pub(super) fn hide_expanded_url(server: &Server, message: String) -> String {
     match (&server.transport, &server.target) {
         (Transport::Http(remote) | Transport::Sse(remote), Target::Remote { url }) => {
             let shown = crate::redact::url(url);

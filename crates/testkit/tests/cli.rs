@@ -2494,7 +2494,8 @@ fn elicitation_lets_the_user_change_a_field_before_the_answer_goes_out() {
     // age takes the default, name is Ada; then change field 2 to Grace.
     let run = home.run_with_stdin(
         &["tool", "call", "fx", "elicit", "text=x"],
-        "\nAda\nh\n9\n2\nGrace\ns\n",
+        // Whole words count: "change" is not "cancel".
+        "\nAda\nchange\n9\n2\nGrace\nsend\n",
     );
     assert_eq!(run.code(), 0, "{}", run.describe());
     let answer: Value = serde_json::from_str(text_of(&run.stdout())).unwrap();
@@ -2851,4 +2852,68 @@ async fn login_logout_and_a_secret_change_remove_the_cached_lists() {
         !list_file(&home, "web").exists(),
         "a change of a secret removes the lists"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_to_an_authorization_server_with_an_unknown_issuer_gives_the_ssl_cert_file_hint() {
+    let auth = ncp_testkit::auth_server::serve_auth_tls(AuthSettings::default())
+        .await
+        .unwrap();
+    let fixture = ncp_testkit::serve_http_with_oauth(Mode::Modern, &auth, None)
+        .await
+        .unwrap();
+    let home = oauth_home("login-unknown-issuer", &fixture.url)
+        .set("SSL_CERT_FILE", ncp_testkit::OTHER_CA);
+    let run = home.run(&LOGIN_TO_FILE);
+    assert_ne!(run.code(), 0, "{}", run.describe());
+    let hint = run.error()["hint"].as_str().unwrap_or_default().to_string();
+    assert!(hint.contains("SSL_CERT_FILE"), "{}", run.describe());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn oauth_trace_hides_a_value_in_the_url_path() {
+    let (_auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    // The fixture serves only its own path, so the value is that path.
+    let base = fixture.url.trim_end_matches("/mcp").to_string();
+    let home = Home::new("oauth-path-value")
+        .set("NCP_TEST_BROWSER", "follow")
+        .set("TENANT_KEY", "mcp");
+    home.configure(&json!({"web": {"type": "http", "url": format!("{base}/${{TENANT_KEY}}")}}));
+    let run = home.run(&["-vv", "auth", "login", "web", "--credential-store", "file"]);
+    let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
+    assert_eq!(run.code(), 0, "{stderr}");
+    // The URL to open must be whole, so only the traces count. They show
+    // the resource in the metadata and in the token request.
+    let traces: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.starts_with("{\"trace\""))
+        .collect();
+    assert!(
+        traces.iter().any(|line| line.contains("resource")),
+        "{stderr}"
+    );
+    assert!(traces.iter().all(|line| !line.contains("/mcp")), "{stderr}");
+}
+
+#[test]
+fn issuer_lookup_of_a_slow_server_keeps_the_usage_error() {
+    // A server that takes connections and never answers.
+    let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/mcp", silent.local_addr().unwrap());
+    let home = Home::new("issuer-lookup-slow");
+    home.configure(&json!({"web": {"type": "http", "url": url,
+        "oauth": {"clientId": "c", "clientSecret": "s3cr3t-value"}}}));
+    let started = std::time::Instant::now();
+    let run = home.run(&[
+        "--timeout",
+        "4",
+        "auth",
+        "login",
+        "web",
+        "--credential-store",
+        "file",
+    ]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(started.elapsed() < std::time::Duration::from_secs(4));
+    drop(silent);
 }

@@ -90,7 +90,7 @@ pub(super) async fn command(context: &Context<'_>, command: AuthCommand) -> Resu
                 )),
             )
             .await
-            .map_err(|failure| session::with_tls_hint(context.env, &notes.get(), failure))?;
+            .map_err(|failure| login_failure(context, &server, &notes, failure))?;
             // After the limit of the login: the tokens are saved, and the
             // cleanup has its own short limit.
             remove_old_tokens(context, &name, credential_store).await
@@ -98,6 +98,30 @@ pub(super) async fn command(context: &Context<'_>, command: AuthCommand) -> Resu
         AuthCommand::Logout { server } => logout(context, &server).await,
         AuthCommand::Status { server } => status(context, server.as_deref()).await,
     }
+}
+
+/// The failure of a login as it shows: rmcp puts URLs that it makes from
+/// the server URL in its errors, so each `${NAME}` value of the URL is
+/// hidden. With `SSL_CERT_FILE`, a certificate of an unknown issuer gets
+/// its hint.
+fn login_failure(
+    context: &Context<'_>,
+    word: &str,
+    notes: &crate::client::http::ConnectNotes,
+    failure: Failure,
+) -> Failure {
+    let loaded = session::load_config(&context.paths.config_file, context.env).ok();
+    let failure = match loaded
+        .as_ref()
+        .and_then(|loaded| loaded.config.server(word).ok())
+    {
+        Some(server) => Failure {
+            message: session::hide_expanded_url(server, failure.message.clone()),
+            ..failure
+        },
+        None => failure,
+    };
+    session::with_tls_hint(context.env, &notes.get(), failure)
 }
 
 /// Runs the OAuth steps until they end, the limit passes, or Ctrl-C. Each
@@ -473,7 +497,7 @@ pub(super) async fn stored_login(
         issuer: issuer_of(&metadata),
     };
     items::check_binding(stored_binding.as_ref(), &current)
-        .map_err(|mismatch| binding_failure(name, &mismatch))?;
+        .map_err(|mismatch| binding_failure(server, &mismatch))?;
     manager.set_metadata(metadata);
     let usable = manager
         .initialize_from_store()
@@ -527,10 +551,21 @@ pub(super) async fn stored_login(
 }
 
 /// The stop when the stored tokens are for another server (design B70).
-fn binding_failure(name: &str, mismatch: &items::BindingMismatch) -> Failure {
+///
+/// A URL with a `${NAME}` value does not show: the stored URL can hold an
+/// old value that `ncp` cannot hide.
+fn binding_failure(server: &Server, mismatch: &items::BindingMismatch) -> Failure {
+    let name = server.name.as_str();
+    let has_values = match &server.transport {
+        Transport::Http(remote) | Transport::Sse(remote) => !remote.url_values.is_empty(),
+        Transport::Stdio(_) => false,
+    };
     let reason = match mismatch {
         items::BindingMismatch::Missing => {
             "the tokens do not name the server that they are for".to_string()
+        }
+        items::BindingMismatch::Resource { .. } if has_values => {
+            "the tokens are for another URL than the entry names".to_string()
         }
         items::BindingMismatch::Resource { stored, current } => {
             format!("the tokens are for {stored}, and the entry names {current}")
@@ -1008,8 +1043,9 @@ async fn select<'a>(
     })
 }
 
-/// The limit of the issuer lookup for the hint of an entry with a client
-/// secret and no issuer.
+/// The longest issuer lookup for the hint of an entry with a client secret
+/// and no issuer. It gets at most half of the limit of the login, so that
+/// the usage error comes before the login limit.
 const ISSUER_LOOKUP_LIMIT: Duration = Duration::from_secs(10);
 
 /// Adds the issuer that the server names to the failure of an entry with
@@ -1035,7 +1071,8 @@ async fn with_server_issuer(
     };
     // The lookup only adds a hint: a slow server must not hide the usage
     // error behind the limit of the login.
-    match tokio::time::timeout(ISSUER_LOOKUP_LIMIT, discover(&manager, None)).await {
+    let limit = ISSUER_LOOKUP_LIMIT.min(context.request_limit / 2);
+    match tokio::time::timeout(limit, discover(&manager, None)).await {
         Ok(Ok(metadata)) => failure.hint(format!(
             "when you registered the client at {issuer}, add \"issuer\": \"{issuer}\" to the \"oauth\" object of {name}",
             issuer = issuer_of(&metadata)
