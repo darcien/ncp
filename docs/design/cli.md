@@ -245,6 +245,9 @@ Error object on stderr:
 `code` values: `tool`, `usage`, `protocol`, `auth`, `input_required`,
 `interrupted`. Each value has one exit code (section 3).
 
+`server` and `hint` are optional. An `input_required` error for pages that
+the user must open has `pages`: `[{"url": "...", "message": "..."}]` (B65).
+
 Timings (`--timings`) on stderr, in JSON mode:
 
 ```json
