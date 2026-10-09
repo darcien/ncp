@@ -416,7 +416,8 @@ pub(super) async fn stored_login(
     manager.set_credential_store(
         TokenStore::new(server.name.clone(), store.clone())
             .with_item(item)
-            .with_refresh_lock(refresh_lock(context, &server.name)),
+            .with_refresh_lock(refresh_lock(context, &server.name))
+            .with_timer(credentials_timer(context)),
     );
     // The challenge can name the protected resource metadata (RFC 9728
     // §5.1). With metadata in place, rmcp does no discovery of its own.
@@ -434,8 +435,12 @@ pub(super) async fn stored_login(
     // rmcp configures only the client ID from the tokens. A refresh of a
     // confidential client needs the secret of the client item too.
     let client_key = CredentialKey::OAuthClient(server.name.clone());
-    let client = secrets::call(context, &store, move |store| store.load(&client_key))
-        .await
+    let started = std::time::Instant::now();
+    let client = secrets::call(context, &store, move |store| store.load(&client_key)).await;
+    if let Some(timer) = credentials_timer(context) {
+        timer(started.elapsed());
+    }
+    let client = client
         .map_err(|error| secrets::store_failure(&error).server(name))?
         .and_then(|secret| ClientItem::from_secret(&secret).ok());
     if let Some(ClientItem {
@@ -455,6 +460,15 @@ pub(super) async fn stored_login(
         crate::client::http::observed(http, observer),
         manager,
     )))
+}
+
+/// Adds the time of a call to the store to `credentialsMs`, with
+/// `--timings`: a refresh reads and writes the tokens again.
+fn credentials_timer(context: &Context<'_>) -> Option<crate::oauth::store::StoreTimer> {
+    let timings = context.timings.clone()?;
+    Some(Arc::new(move |elapsed| {
+        timings.update(|record| super::timings::add(&mut record.credentials, elapsed));
+    }))
 }
 
 /// Keeps the scopes that the server asked for in a `403` answer in the

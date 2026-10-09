@@ -39,7 +39,12 @@ pub struct TokenStore {
     required_scopes: Mutex<Option<Value>>,
     /// The lock file that one refresh at a time holds, across processes.
     refresh_lock: Option<PathBuf>,
+    /// Gets the time of each read and write of the store, for `--timings`.
+    timer: Option<StoreTimer>,
 }
+
+/// Gets the time of one call to the credential store.
+pub type StoreTimer = Arc<dyn Fn(Duration) + Send + Sync>;
 
 /// The longest wait for a refresh of another process. A refresh is one
 /// token request with a limit of 30 s.
@@ -54,6 +59,19 @@ impl TokenStore {
             copy: Mutex::new(Cached::Unread),
             required_scopes: Mutex::new(None),
             refresh_lock: None,
+            timer: None,
+        }
+    }
+
+    /// The adapter that gives the time of each call to the store.
+    #[must_use]
+    pub fn with_timer(self, timer: Option<StoreTimer>) -> Self {
+        Self { timer, ..self }
+    }
+
+    fn time(&self, started: std::time::Instant) {
+        if let Some(timer) = &self.timer {
+            timer(started.elapsed());
         }
     }
 
@@ -159,9 +177,10 @@ impl RmcpStore for TokenStore {
             return Ok(tokens.as_ref().clone());
         }
         let (store, key) = (self.store.clone(), self.key.clone());
-        let secret = store::run_blocking(store::CALL_LIMIT, move || store.load(&key))
-            .await
-            .map_err(|error| store_error(&error))?;
+        let started = std::time::Instant::now();
+        let secret = store::run_blocking(store::CALL_LIMIT, move || store.load(&key)).await;
+        self.time(started);
+        let secret = secret.map_err(|error| store_error(&error))?;
         let item = secret
             .map(|secret| parse_item(&secret))
             .transpose()
@@ -185,9 +204,10 @@ impl RmcpStore for TokenStore {
         let secret =
             items::to_secret("tokens", &json).map_err(|error| failed(error.to_string()))?;
         let (store, key) = (self.store.clone(), self.key.clone());
-        store::run_blocking(store::CALL_LIMIT, move || store.save(&key, &secret))
-            .await
-            .map_err(|error| store_error(&error))?;
+        let started = std::time::Instant::now();
+        let saved = store::run_blocking(store::CALL_LIMIT, move || store.save(&key, &secret)).await;
+        self.time(started);
+        saved.map_err(|error| store_error(&error))?;
         *self.copy.lock().await = Cached::Read(Box::new(Some(credentials)));
         Ok(())
     }
@@ -281,6 +301,22 @@ mod tests {
         assert_eq!(loaded.granted_scopes, ["a"]);
         let account = backing.inner.keys().unwrap()[0].account();
         assert_eq!(account, "oauth/web/tokens");
+    }
+
+    #[tokio::test]
+    async fn each_read_and_write_of_the_store_gives_its_time() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counted = calls.clone();
+        let timer: StoreTimer = Arc::new(move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+        });
+        let adapter =
+            TokenStore::new(server(), Arc::new(MemoryStore::default())).with_timer(Some(timer));
+        assert!(adapter.load().await.unwrap().is_none());
+        adapter.save(tokens("c1")).await.unwrap();
+        // The copy in memory answers this load: no call to the store.
+        adapter.load().await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
