@@ -235,7 +235,9 @@ pub fn printable(text: &str) -> Cow<'_, str> {
 /// line and paragraph separators, Hangul fillers, the supplementary
 /// variation selectors and tag characters. Text in tag characters is
 /// invisible, and a server can hide instructions in it. The variation
-/// selectors U+FE00 to U+FE0F stay: many emoji have one.
+/// selectors U+FE00 to U+FE0F stay: many emoji have one. The zero width
+/// joiner U+200D stays too: it joins the parts of many emoji, and it does
+/// not change the order of text.
 fn invisible_format(c: char) -> bool {
     matches!(
         c,
@@ -245,7 +247,10 @@ fn invisible_format(c: char) -> bool {
             | '\u{115f}'
             | '\u{1160}'
             | '\u{180e}'
-            | '\u{200b}'..='\u{200f}'
+            | '\u{200b}'
+            | '\u{200c}'
+            | '\u{200e}'
+            | '\u{200f}'
             | '\u{2028}'..='\u{202e}'
             | '\u{2060}'..='\u{2064}'
             | '\u{2066}'..='\u{2069}'
@@ -490,6 +495,10 @@ mod tests {
             "a\\u{202e}b\\u{200b}c\\u{2066}"
         );
         assert_eq!(printable("é ü 日本"), "é ü 日本");
+        // A family emoji: four people joined with U+200D.
+        let family = "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466}";
+        assert_eq!(printable(family), family);
+        assert_eq!(printable("a\u{200c}b"), "a\\u{200c}b");
         assert_eq!(printable("a\u{e0041}"), "a\\u{e0041}");
         let line = json_line(&json!({"m": "a\u{202e}b\u{e0041}"}));
         assert_eq!(line, "{\"m\":\"a\\u202eb\\udb40\\udc41\"}\n");
