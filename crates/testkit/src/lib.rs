@@ -114,6 +114,77 @@ fn schema(value: serde_json::Value) -> Arc<JsonObject> {
     }
 }
 
+fn answer_of<'a>(request: &'a CallToolRequestParams, key: &str) -> Option<&'a serde_json::Value> {
+    request
+        .input_responses
+        .as_ref()
+        .and_then(|answers| answers.get(key))
+}
+
+/// A multi-round form question with a request state.
+fn elicit_form(request: &CallToolRequestParams) -> Result<CallToolResponse, ErrorData> {
+    match answer_of(request, "q") {
+        // The client must echo the state as it is.
+        Some(_) if request.request_state.as_deref() != Some("state-e") => Err(
+            ErrorData::invalid_params("the request state is not echoed", None),
+        ),
+        Some(answer) => Ok(text_result(answer.to_string())),
+        None => Ok(CallToolResponse::InputRequired(InputRequiredResult::new(
+            serde_json::from_value(json!({"q": {"method": "elicitation/create", "params": {
+                "mode": "form",
+                "message": "Who are you?",
+                "requestedSchema": {"type": "object", "properties": {
+                    "name": {"type": "string"},
+                    "age": {"type": "integer", "default": 30}
+                }, "required": ["name"]}
+            }}}))
+            .ok(),
+            Some("state-e".into()),
+        ))),
+    }
+}
+
+/// A multi-round URL question for the URL, or a sampling request for the
+/// text "sampling".
+fn elicit_url(request: &CallToolRequestParams, url: &str) -> CallToolResponse {
+    if let Some(answer) = answer_of(request, "u") {
+        return text_result(answer.to_string());
+    }
+    let input = if url == "sampling" {
+        json!({"u": {"method": "sampling/createMessage", "params": {
+            "messages": [], "maxTokens": 1}}})
+    } else {
+        json!({"u": {"method": "elicitation/create", "params": {
+            "mode": "url", "message": "Sign in", "url": url, "elicitationId": "e1"}}})
+    };
+    CallToolResponse::InputRequired(InputRequiredResult::new(
+        serde_json::from_value(input).ok(),
+        None,
+    ))
+}
+
+/// A form question as a request of the server, as before 2026-07-28.
+async fn elicit_legacy(
+    context: &RequestContext<RoleServer>,
+) -> Result<CallToolResponse, ErrorData> {
+    let params = serde_json::from_value(json!({
+        "mode": "form",
+        "message": "Who are you?",
+        "requestedSchema": {"type": "object", "properties": {
+            "name": {"type": "string"}
+        }, "required": ["name"]}
+    }))
+    .map_err(|error| ErrorData::internal_error(error.to_string(), None))?;
+    let answer = context
+        .peer
+        .create_elicitation(params)
+        .await
+        .map_err(|error| ErrorData::internal_error(error.to_string(), None))?;
+    Ok(text_result(
+        serde_json::to_string(&answer).unwrap_or_default(),
+    ))
+}
+
 fn tools() -> Vec<Tool> {
     let text_arg =
         |name: &str| schema(json!({"type": "object", "properties": {name: {"type": "string"}}}));
@@ -129,6 +200,11 @@ fn tools() -> Vec<Tool> {
         Tool::new(
             "elicit",
             "Ask for a name and an age, as a multi-round request",
+            text_arg("text"),
+        ),
+        Tool::new(
+            "elicit-url",
+            "Ask to open the URL of the text (or ask for sampling)",
             text_arg("text"),
         ),
         Tool::new(
@@ -340,7 +416,7 @@ impl ServerHandler for Fixture {
         request: GetPromptRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<GetPromptResponse, ErrorData>> + MaybeSendFuture + '_ {
-        let arguments = request.arguments.unwrap_or_default();
+        let arguments = request.arguments.clone().unwrap_or_default();
         std::future::ready(match (request.name.as_str(), arguments.get("name")) {
             ("ask", _) => Ok(GetPromptResponse::InputRequired(
                 InputRequiredResult::from_request_state("state-p"),
@@ -364,7 +440,7 @@ impl ServerHandler for Fixture {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        let arguments = request.arguments.unwrap_or_default();
+        let arguments = request.arguments.clone().unwrap_or_default();
         match request.name.as_ref() {
             "echo" => Ok(text_result(argument(&arguments, "text"))),
             "fail" => Ok(CallToolResult::error(vec![ContentBlock::text(argument(
@@ -382,47 +458,9 @@ impl ServerHandler for Fixture {
                 }
                 Ok(text_result("done"))
             }
-            "elicit" => Ok(
-                match request
-                    .input_responses
-                    .as_ref()
-                    .and_then(|answers| answers.get("q"))
-                {
-                    Some(answer) => text_result(answer.to_string()),
-                    None => CallToolResponse::InputRequired(InputRequiredResult::new(
-                        serde_json::from_value(
-                            json!({"q": {"method": "elicitation/create", "params": {
-                                "mode": "form",
-                                "message": "Who are you?",
-                                "requestedSchema": {"type": "object", "properties": {
-                                    "name": {"type": "string"},
-                                    "age": {"type": "integer", "default": 30}
-                                }, "required": ["name"]}
-                            }}}),
-                        )
-                        .ok(),
-                        Some("state-e".into()),
-                    )),
-                },
-            ),
-            "elicit-legacy" => {
-                let params = serde_json::from_value(json!({
-                    "mode": "form",
-                    "message": "Who are you?",
-                    "requestedSchema": {"type": "object", "properties": {
-                        "name": {"type": "string"}
-                    }, "required": ["name"]}
-                }))
-                .map_err(|error| ErrorData::internal_error(error.to_string(), None))?;
-                let answer = context
-                    .peer
-                    .create_elicitation(params)
-                    .await
-                    .map_err(|error| ErrorData::internal_error(error.to_string(), None))?;
-                Ok(text_result(
-                    serde_json::to_string(&answer).unwrap_or_default(),
-                ))
-            }
+            "elicit" => elicit_form(&request),
+            "elicit-url" => Ok(elicit_url(&request, argument(&arguments, "text"))),
+            "elicit-legacy" => elicit_legacy(&context).await,
             "ask" => Ok(CallToolResponse::InputRequired(
                 InputRequiredResult::from_request_state("state-1"),
             )),

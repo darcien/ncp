@@ -404,7 +404,7 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
         progress: ui.progress(name),
         elicitor: context
             .interactive
-            .then(|| super::ask::elicitor(ui, name, context.open_browser, &context.cancel)),
+            .then(|| super::ask::elicitor(context, name)),
     })
 }
 

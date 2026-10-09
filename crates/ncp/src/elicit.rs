@@ -59,7 +59,10 @@ pub struct Choice {
 /// The answer of the user to the whole request.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
+    /// The values of a form.
     Accept(Map<String, Value>),
+    /// The user opened the URL: an accept with no content.
+    Opened,
     Decline,
     Cancel,
 }
@@ -305,7 +308,11 @@ pub fn answer(field: &Field, typed: &str) -> Result<Option<Value>, String> {
             Ok(Some(json!(value)))
         }
         Kind::Number { minimum, maximum } => {
-            let value: f64 = typed.parse().map_err(|_| "type a number".to_string())?;
+            let value: f64 = typed
+                .parse()
+                .ok()
+                .filter(|value: &f64| value.is_finite())
+                .ok_or_else(|| "type a number".to_string())?;
             in_range(value, *minimum, *maximum)?;
             Ok(Some(json!(value)))
         }
@@ -330,15 +337,32 @@ pub fn answer(field: &Field, typed: &str) -> Result<Option<Value>, String> {
 pub fn result(action: &Action) -> Value {
     match action {
         Action::Accept(content) => json!({"action": "accept", "content": content}),
+        Action::Opened => json!({"action": "accept"}),
         Action::Decline => json!({"action": "decline"}),
         Action::Cancel => json!({"action": "cancel"}),
     }
 }
 
-/// The host of a URL, to show the user where the link goes.
-#[must_use]
-pub fn host_of(url: &str) -> Option<String> {
-    url::Url::parse(url).ok()?.host_str().map(str::to_string)
+/// The URL of a URL-mode request when it is safe to open: `https`, or
+/// `http` to a loopback host. Another scheme (`file:`, `smb:`, a custom
+/// one) starts a program, not a page.
+///
+/// # Errors
+///
+/// Returns the reason when the URL is not safe to open.
+pub fn safe_url(text: &str) -> Result<url::Url, String> {
+    let url = url::Url::parse(text).map_err(|error| format!("the URL is not valid: {error}"))?;
+    let loopback = match url.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
+        None => false,
+    };
+    match url.scheme() {
+        "https" if url.host().is_some() => Ok(url),
+        "http" if loopback => Ok(url),
+        scheme => Err(format!("ncp opens only https pages, not {scheme}:")),
+    }
 }
 
 #[cfg(test)]
@@ -427,6 +451,14 @@ mod tests {
         assert_eq!(answer(&field("age"), "41"), Ok(Some(json!(41))));
         assert!(answer(&field("age"), "200").is_err());
         assert!(answer(&field("age"), "x").is_err());
+        let number = Field {
+            kind: Kind::Number {
+                minimum: None,
+                maximum: None,
+            },
+            ..field("age")
+        };
+        assert!(answer(&number, "nan").is_err() && answer(&number, "inf").is_err());
         assert!(answer(&field("name"), "").is_err());
         assert_eq!(answer(&field("subscribe"), ""), Ok(None));
         assert_eq!(answer(&field("subscribe"), "yes"), Ok(Some(json!(true))));
@@ -445,6 +477,20 @@ mod tests {
         );
         assert_eq!(result(&Action::Decline), json!({"action": "decline"}));
         assert_eq!(result(&Action::Cancel), json!({"action": "cancel"}));
-        assert_eq!(host_of("https://a.test:8/x"), Some("a.test".into()));
+        assert_eq!(result(&Action::Opened), json!({"action": "accept"}));
+        assert_eq!(
+            result(&Action::Accept(Map::new())),
+            json!({"action": "accept", "content": {}})
+        );
+    }
+
+    #[test]
+    fn only_https_or_loopback_http_urls_open() {
+        assert!(safe_url("https://a.test/x").is_ok());
+        assert!(safe_url("http://127.0.0.1:8/x").is_ok());
+        assert!(safe_url("http://a.test/x").is_err());
+        assert!(safe_url("file:///Applications/Calculator.app").is_err());
+        assert!(safe_url("-aCalculator").is_err());
+        assert!(safe_url("smb://host/share").is_err());
     }
 }

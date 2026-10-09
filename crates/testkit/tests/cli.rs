@@ -2267,3 +2267,40 @@ fn elicitation_request_of_a_legacy_server_asks_on_the_tty() {
     assert_eq!(answer["action"], "accept");
     assert_eq!(answer["content"], json!({"name": "Ada"}));
 }
+
+fn elicit_url(home: &Home, url: &str, stdin: &str) -> Run {
+    home.run_with_stdin(
+        &["tool", "call", "fx", "elicit-url", &format!("text={url}")],
+        stdin,
+    )
+}
+
+#[test]
+fn url_elicitation_opens_only_https_and_only_after_a_yes() {
+    let home = Home::new("elicit-url").set("NCP_TEST_TTY", "1");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let no = elicit_url(&home, "https://login.example.test/x", "n\n");
+    assert_eq!(no.code(), 0, "{}", no.describe());
+    assert_eq!(text_of(&no.stdout()), r#"{"action":"decline"}"#);
+    let stderr = String::from_utf8_lossy(&no.0.stderr).to_string();
+    assert!(stderr.contains("a page of login.example.test"), "{stderr}");
+    // The test has no browser: a warning, and the answer is still yes.
+    let yes = elicit_url(&home, "https://login.example.test/x", "y\n");
+    assert_eq!(text_of(&yes.stdout()), r#"{"action":"accept"}"#);
+    let file = elicit_url(&home, "file:///Applications/Calculator.app", "y\n");
+    assert_eq!(text_of(&file.stdout()), r#"{"action":"decline"}"#);
+    assert!(!notes(&file, "warning").is_empty(), "{}", file.describe());
+}
+
+#[test]
+fn input_that_ncp_cannot_give_or_no_answer_ends_the_rounds() {
+    let home = Home::new("elicit-ends").set("NCP_TEST_TTY", "1");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let sampling = elicit_url(&home, "sampling", "");
+    assert_eq!(sampling.code(), 5, "{}", sampling.describe());
+    assert_eq!(sampling.stdout()["resultType"], "input_required");
+    // The end of stdin cancels the question.
+    let ended = home.run_with_stdin(&["tool", "call", "fx", "elicit", "text=x"], "");
+    assert_eq!(ended.code(), 0, "{}", ended.describe());
+    assert_eq!(text_of(&ended.stdout()), r#"{"action":"cancel"}"#);
+}
