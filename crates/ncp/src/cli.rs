@@ -162,7 +162,11 @@ async fn run(
             open_native: platform.open_native,
             open_browser: platform.open_browser,
             timings,
-            use_cache: !cli.options.no_cache,
+            cache: match (cli.options.no_cache, cli.options.refresh) {
+                (true, _) => session::CacheUse::Off,
+                (false, true) => session::CacheUse::WriteOnly,
+                (false, false) => session::CacheUse::ReadWrite,
+            },
         };
         match cli.command {
             Command::Server(command) => commands::server(&context, command).await,

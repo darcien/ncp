@@ -2135,3 +2135,24 @@ fn tool_call_lists_again_when_the_cached_list_does_not_have_the_tool() {
     let run = home.run(&["tool", "show", "fx", "echo"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
 }
+
+#[test]
+fn refresh_gets_the_list_again_and_keeps_it() {
+    let home = Home::new("cache-refresh");
+    let started = home.root.join("server.pid");
+    home.configure(&json!({"fx": {"command": FIXTURE, "args": ["cached"],
+        "env": {"NCP_FIXTURE_PID_FILE": started.display().to_string()}}}));
+    assert_eq!(home.run(&["tool", "list", "fx"]).code(), 0);
+    let cache = home.root.join("cache/ncp/lists/fx.json");
+    let before = std::fs::read_to_string(&cache).unwrap();
+    std::fs::remove_file(&started).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    assert_eq!(home.run(&["--refresh", "tool", "list", "fx"]).code(), 0);
+    assert!(started.exists(), "--refresh must start the server");
+    assert_ne!(std::fs::read_to_string(&cache).unwrap(), before);
+    assert_eq!(
+        home.run(&["--refresh", "--no-cache", "tool", "list", "fx"])
+            .code(),
+        2
+    );
+}

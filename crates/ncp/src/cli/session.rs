@@ -26,6 +26,28 @@ use crate::{
     paths::Paths,
 };
 
+/// What `ncp` does with its caches (the era cache and the list cache).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheUse {
+    ReadWrite,
+    /// `--refresh`: get fresh data, and keep it.
+    WriteOnly,
+    /// `--no-cache`.
+    Off,
+}
+
+impl CacheUse {
+    #[must_use]
+    pub fn reads(self) -> bool {
+        self == Self::ReadWrite
+    }
+
+    #[must_use]
+    pub fn writes(self) -> bool {
+        self != Self::Off
+    }
+}
+
 /// The inputs that each command shares.
 pub struct Context<'a> {
     pub env: &'a Env,
@@ -38,8 +60,8 @@ pub struct Context<'a> {
     pub open_browser: super::auth::OpenBrowser,
     /// Present with `--timings`.
     pub timings: Option<Arc<Timings>>,
-    /// False with `--no-cache`: no cache is read or written.
-    pub use_cache: bool,
+    /// What `ncp` does with its caches.
+    pub cache: CacheUse,
 }
 
 impl Context<'_> {
@@ -337,7 +359,7 @@ struct Prepared {
 async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Failure> {
     let name = server.name.as_str();
     let ui = context.ui;
-    let cache = if context.use_cache {
+    let cache = if context.cache.writes() {
         era_file::load(&context.paths.era_cache).unwrap_or_else(|error| {
             ui.warning(None, &error.to_string());
             EraCache::default()
@@ -345,7 +367,11 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
     } else {
         EraCache::default()
     };
-    let cached = cache.lookup(&server.name, &server.target).cloned();
+    let cached = context
+        .cache
+        .reads()
+        .then(|| cache.lookup(&server.name, &server.target).cloned())
+        .flatten();
     ui.debug(Some(name), &cached_era_text(cached.as_ref()));
     let values = super::secrets::resolve(context, server).await?;
     let shown = server.clone();
@@ -397,7 +423,7 @@ impl Prepared {
     /// Saves the era when it changed. A cache that cannot be written gives
     /// a warning: `ncp` works the same with no cache.
     fn save_era(self, context: &Context<'_>, server: &Server, era: &Era) {
-        if !context.use_cache || self.cached.as_ref() == Some(era) {
+        if !context.cache.writes() || self.cached.as_ref() == Some(era) {
             return;
         }
         let ui = context.ui;

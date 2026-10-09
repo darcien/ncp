@@ -232,7 +232,7 @@ async fn list(
 /// A list that `ncp` must not keep removes the old file. A cache that
 /// cannot be written gives a warning: `ncp` works the same with no cache.
 fn keep_tools(context: &Context<'_>, server: &Server, tools: &[Tool], ttl_ms: Option<u64>) {
-    if !context.use_cache {
+    if !context.cache.writes() {
         return;
     }
     let path = list_cache::path(&context.paths.cache_dir, &server.name);
@@ -259,7 +259,7 @@ fn keep_tools(context: &Context<'_>, server: &Server, tools: &[Tool], ttl_ms: Op
 /// The tools of the cache when they are fresh, so that the command needs
 /// no server start.
 fn cached_tools(context: &Context<'_>, server: &Server) -> Option<Vec<Tool>> {
-    if !context.use_cache {
+    if !context.cache.reads() {
         return None;
     }
     let cached = list_cache::load(&list_cache::path(&context.paths.cache_dir, &server.name))?;
