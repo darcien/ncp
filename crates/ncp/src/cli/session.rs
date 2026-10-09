@@ -329,6 +329,7 @@ struct Prepared {
     observer: client::observe::Observer,
     http: Option<reqwest::Client>,
     server_log: client::stdio::ServerLog,
+    progress: client::ProgressSink,
 }
 
 async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Failure> {
@@ -365,6 +366,7 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
         observer,
         http,
         server_log: ui.server_log(name),
+        progress: ui.progress(name),
     })
 }
 
@@ -382,6 +384,7 @@ impl Prepared {
             cancel: &context.cancel,
             observer: &self.observer,
             authorized: None,
+            progress: &self.progress,
         }
     }
 

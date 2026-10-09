@@ -2034,3 +2034,19 @@ fn color_marks_only_the_labels_of_text_output_on_request() {
     let json = home.run(&["--color", "always", "server", "list"]);
     assert!(!json.0.stderr.contains(&0x1b), "{}", json.describe());
 }
+
+#[test]
+fn progress_of_a_call_goes_to_stderr_unless_quiet() {
+    let home = Home::new("progress");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let run = home.run(&["tool", "call", "fx", "progress", "text=x"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let steps = notes(&run, "progress");
+    assert_eq!(steps.len(), 3, "{}", run.describe());
+    assert_eq!(
+        steps[2],
+        json!({"server": "fx", "progress": 3.0, "total": 3.0, "message": "step 3"})
+    );
+    let quiet = home.run(&["-q", "tool", "call", "fx", "progress", "text=x"]);
+    assert!(notes(&quiet, "progress").is_empty(), "{}", quiet.describe());
+}

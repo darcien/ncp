@@ -98,6 +98,7 @@ impl Setup {
             cancel: &self.cancel,
             observer: &client::observe::Observer::default(),
             authorized: None,
+            progress: &client::ProgressSink::default(),
         })
         .await
     }
@@ -220,7 +221,7 @@ async fn finds_modern_era_of_http_server() {
         .list_tools(limits(&CancellationToken::new()))
         .await
         .unwrap();
-    assert_eq!(tools.len(), 6);
+    assert_eq!(tools.len(), 7);
     connection.close().await;
 }
 

@@ -136,6 +136,19 @@ impl Ui {
         }
     }
 
+    /// The progress of the requests to the server, on stderr. `-q` hides
+    /// it, as it hides hints.
+    #[must_use]
+    pub fn progress(self, server: &str) -> crate::client::ProgressSink {
+        if self.verbosity == Verbosity::Quiet {
+            return crate::client::ProgressSink::default();
+        }
+        let server = server.to_string();
+        crate::client::ProgressSink::new(move |progress| {
+            self.stderr(&progress_line(self.format, &server, progress));
+        })
+    }
+
     /// The route of the stderr of a stdio server. Text: each line, with
     /// control characters as escapes. JSON:
     /// `{"serverLog": {"server": "...", "message": "..."}}`.
@@ -210,6 +223,49 @@ pub fn printable(text: &str) -> Cow<'_, str> {
         )
     } else {
         Cow::Borrowed(text)
+    }
+}
+
+/// A number of a progress notification: with no decimals when it is whole.
+fn amount(value: f64) -> String {
+    if value.fract() == 0.0 && value.abs() < 1e15 {
+        format!("{value:.0}")
+    } else {
+        value.to_string()
+    }
+}
+
+/// Text: `progress: server NAME: 3/10 message`. JSON: `{"progress":
+/// {"server", "progress", "total", "message"}}`, with the fields of the
+/// notification.
+#[must_use]
+pub fn progress_line(format: Format, server: &str, progress: &crate::client::Progress) -> String {
+    match format {
+        Format::Text => {
+            let total = progress
+                .total
+                .map(|total| format!("/{}", amount(total)))
+                .unwrap_or_default();
+            let message = progress
+                .message
+                .as_deref()
+                .map(|message| format!(" {message}"))
+                .unwrap_or_default();
+            format!(
+                "progress: server {server}: {}{total}{message}\n",
+                amount(progress.progress)
+            )
+        }
+        Format::Json => {
+            let mut body = json!({"server": server, "progress": progress.progress});
+            if let Some(total) = progress.total {
+                body["total"] = json!(total);
+            }
+            if let Some(message) = &progress.message {
+                body["message"] = json!(message);
+            }
+            json_line(&json!({ "progress": body }))
+        }
     }
 }
 
@@ -387,6 +443,34 @@ mod tests {
     #[test]
     fn printable_text_keeps_crlf_line_ends() {
         assert_eq!(printable("a\r\nb\rc"), "a\nb\\u{d}c");
+    }
+
+    #[test]
+    fn progress_has_text_and_json_forms() {
+        let progress = crate::client::Progress {
+            progress: 3.0,
+            total: Some(10.0),
+            message: Some("files".into()),
+        };
+        assert_eq!(
+            progress_line(Format::Text, "fx", &progress),
+            "progress: server fx: 3/10 files\n"
+        );
+        let value: Value =
+            serde_json::from_str(&progress_line(Format::Json, "fx", &progress)).unwrap();
+        assert_eq!(
+            value,
+            json!({"progress": {"server": "fx", "progress": 3.0, "total": 10.0, "message": "files"}})
+        );
+        let half = crate::client::Progress {
+            progress: 0.5,
+            total: None,
+            message: None,
+        };
+        assert_eq!(
+            progress_line(Format::Text, "fx", &half),
+            "progress: server fx: 0.5\n"
+        );
     }
 
     #[test]

@@ -15,7 +15,7 @@ pub mod http;
 pub mod observe;
 pub mod stdio;
 
-use std::{fmt, time::Duration};
+use std::{fmt, sync::Arc, time::Duration};
 
 use rmcp::{
     ClientLifecycleMode, ClientServiceExt, RoleClient,
@@ -78,6 +78,8 @@ pub struct Launch<'a> {
     /// The OAuth client with the stored tokens, for an http server that
     /// needs a login.
     pub authorized: Option<&'a http::Authorized>,
+    /// Gets the progress notifications of the requests.
+    pub progress: &'a ProgressSink,
 }
 
 /// The handshake step that failed.
@@ -236,7 +238,64 @@ impl RequestError {
     }
 }
 
-type Service = RunningService<RoleClient, ClientConfig>;
+type Service = RunningService<RoleClient, Handler>;
+
+/// One progress notification of a request (MCP basic/utilities/progress).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Progress {
+    pub progress: f64,
+    pub total: Option<f64>,
+    pub message: Option<String>,
+}
+
+/// The function that gets the progress of each request. rmcp adds a
+/// progress token to each request.
+#[derive(Clone, Default)]
+pub struct ProgressSink(Option<Arc<ProgressFunction>>);
+
+type ProgressFunction = dyn Fn(&Progress) + Send + Sync;
+
+impl ProgressSink {
+    #[must_use]
+    pub fn new(function: impl Fn(&Progress) + Send + Sync + 'static) -> Self {
+        Self(Some(Arc::new(function)))
+    }
+}
+
+impl std::fmt::Debug for ProgressSink {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ProgressSink")
+    }
+}
+
+/// The client side of the session: the client information, and the
+/// progress of each request.
+#[derive(Clone)]
+struct Handler {
+    info: ClientConfig,
+    progress: ProgressSink,
+}
+
+impl rmcp::ClientHandler for Handler {
+    fn get_info(&self) -> ClientConfig {
+        self.info.clone()
+    }
+
+    fn on_progress(
+        &self,
+        params: rmcp::model::ProgressNotificationParam,
+        _context: rmcp::service::NotificationContext<RoleClient>,
+    ) -> impl Future<Output = ()> + rmcp::service::MaybeSendFuture + '_ {
+        if let Some(function) = &self.progress.0 {
+            function(&Progress {
+                progress: params.progress,
+                total: params.total,
+                message: params.message,
+            });
+        }
+        std::future::ready(())
+    }
+}
 
 pub struct Connection {
     service: Service,
@@ -333,6 +392,10 @@ async fn handshake(
     phase: Phase,
     deadline: Instant,
 ) -> Result<Connection, ConnectError> {
+    let info = Handler {
+        info,
+        progress: launch.progress.clone(),
+    };
     let failed = |source| ConnectError::Handshake {
         phase,
         source: Box::new(source),

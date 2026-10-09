@@ -36,9 +36,10 @@ use rmcp::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, DiscoverResult,
         ErrorCode, GetPromptRequestParams, GetPromptResponse, GetPromptResult, InputRequiredResult,
         JsonObject, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult,
-        ListToolsResult, PaginatedRequestParams, Prompt, PromptArgument, PromptMessage,
-        ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult,
-        Resource, ResourceContents, ResourceTemplate, Role, ServerCapabilities, ServerConfig, Tool,
+        ListToolsResult, PaginatedRequestParams, ProgressNotificationParam, Prompt, PromptArgument,
+        PromptMessage, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
+        ReadResourceResult, Resource, ResourceContents, ResourceTemplate, Role, ServerCapabilities,
+        ServerConfig, Tool,
     },
     service::{MaybeSendFuture, RequestContext},
     transport::streamable_http_server::{
@@ -117,6 +118,11 @@ fn tools() -> Vec<Tool> {
         Tool::new("echo", "Return the text", text_arg("text")),
         Tool::new("fail", "Return a tool error", text_arg("text")),
         Tool::new("ask", "Return input_required", text_arg("text")),
+        Tool::new(
+            "progress",
+            "Report three steps of progress",
+            text_arg("text"),
+        ),
         Tool::new("env", "Return an environment variable", text_arg("name")),
         Tool::new("header", "Return an HTTP request header", text_arg("name")),
         Tool::new(
@@ -345,6 +351,17 @@ impl ServerHandler for Fixture {
                 &arguments, "text",
             ))])
             .into()),
+            "progress" => {
+                if let Some(token) = context.meta.get_progress_token() {
+                    for step in 1..=3_u8 {
+                        let param = ProgressNotificationParam::new(token.clone(), f64::from(step))
+                            .with_total(3.0)
+                            .with_message(format!("step {step}"));
+                        let _ = context.peer.notify_progress(param).await;
+                    }
+                }
+                Ok(text_result("done"))
+            }
             "ask" => Ok(CallToolResponse::InputRequired(
                 InputRequiredResult::from_request_state("state-1"),
             )),
