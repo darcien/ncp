@@ -17,7 +17,7 @@ use super::{
     render,
     schema_check::{self, Outcome},
     session::{self, Context, Loaded},
-    tool_args::{self, Argument, Given, Input, Resolved},
+    tool_args::{self, Input, Resolved},
     ui,
 };
 use crate::{
@@ -417,7 +417,7 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
     let server = session::select(&loaded, word, context.ui)?;
     let input = match input {
         Input::Stdin => Resolved::Object(read_stdin_object(context).await?),
-        Input::Pairs(pairs) => Resolved::Pairs(read_files(pairs)?),
+        Input::Pairs(pairs) => Resolved::Pairs(pairs),
         Input::Object(object) => Resolved::Object(object),
     };
     let needs_tool = call.help || !call.no_validate || tool_args::needs_schema(&input);
@@ -698,23 +698,13 @@ async fn prompt_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
 
 /// The arguments of a prompt: text only, as the spec gives them.
 fn prompt_arguments(words: &[String]) -> Result<JsonObject, Failure> {
-    let pairs = match tool_args::parse(words).map_err(|error| Failure::usage(error.to_string()))? {
-        Input::Pairs(pairs) => read_files(pairs)?,
-        _ => {
-            return Err(Failure::usage(
-                "prompt arguments are key=value or key=@path pairs",
-            ));
-        }
-    };
-    pairs
-        .into_iter()
-        .map(|(key, argument)| match argument {
-            Argument::Text(text) => Ok((key, Value::String(text))),
-            Argument::Json(_) => Err(Failure::usage(format!(
-                "prompt argument {key:?} must be text: use {key}=value"
-            ))),
-        })
-        .collect()
+    match tool_args::parse(words).map_err(|error| Failure::usage(error.to_string()))? {
+        Input::Pairs(pairs) => Ok(pairs
+            .into_iter()
+            .map(|(key, text)| (key, Value::String(text)))
+            .collect()),
+        _ => Err(Failure::usage("prompt arguments are key=value pairs")),
+    }
 }
 
 async fn prompt_get(
@@ -786,55 +776,6 @@ fn call_failure(server: &Server, tool: &str, listed: bool, error: &RequestError)
         }
         _ => session::request_failure(server, "tools/call", error),
     }
-}
-
-/// The largest file of a `key=@path` pair. An argument is a message to a
-/// server, not a bulk transfer, and a device such as `/dev/zero` has no end.
-const MAX_ARGUMENT_FILE: u64 = 1024 * 1024;
-
-/// Reads the file of each `key=@path` pair. Its text is the value, as for
-/// `key=value`.
-fn read_files(pairs: Vec<(String, Given)>) -> Result<Vec<(String, Argument)>, Failure> {
-    pairs
-        .into_iter()
-        .map(|(key, given)| match given {
-            Given::Text(text) => Ok((key, Argument::Text(text))),
-            Given::Json(value) => Ok((key, Argument::Json(value))),
-            Given::File(path) => {
-                read_argument_file(&key, &path).map(|text| (key, Argument::Text(text)))
-            }
-        })
-        .collect()
-}
-
-/// A regular file of at most the limit: a pipe or a device can block or
-/// have no end.
-fn read_argument_file(key: &str, path: &str) -> Result<String, Failure> {
-    use std::io::Read as _;
-    let failed = |reason: String| Failure::usage(format!("{key}=@{path}: {reason}"));
-    if path.is_empty() {
-        return Err(Failure::usage(format!("{key}=@ names no file"))
-            .hint(format!("{key}=@PATH, or {key}=@@ for a literal @")));
-    }
-    // One open: the checks and the read are of the same file.
-    let file = std::fs::File::open(path)
-        .map_err(|error| failed(format!("cannot read the file: {error}")))?;
-    let metadata = file
-        .metadata()
-        .map_err(|error| failed(format!("cannot read the file: {error}")))?;
-    if !metadata.is_file() {
-        return Err(failed("is not a regular file".to_string()));
-    }
-    let mut text = String::new();
-    file.take(MAX_ARGUMENT_FILE + 1)
-        .read_to_string(&mut text)
-        .map_err(|error| failed(format!("cannot read the file: {error}")))?;
-    if text.len() as u64 > MAX_ARGUMENT_FILE {
-        return Err(failed(format!(
-            "the file is larger than {MAX_ARGUMENT_FILE} bytes"
-        )));
-    }
-    Ok(text)
 }
 
 async fn read_stdin_object(context: &Context<'_>) -> Result<JsonObject, Failure> {

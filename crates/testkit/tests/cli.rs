@@ -1963,21 +1963,17 @@ fn config_file_option_reads_that_file_and_a_missing_one_is_a_usage_error() {
 }
 
 #[test]
-fn tool_call_reads_json_values_and_file_values() {
-    let home = Home::new("json-file-args");
+fn tool_call_sends_a_value_with_an_at_sign_as_text_and_reads_no_file() {
+    let home = Home::new("at-sign-args");
     home.configure(&json!({"fx": stdio("modern")}));
     let file = home.root.join("text.txt");
     std::fs::write(&file, "from a file").unwrap();
     let arg = format!("text=@{}", file.display());
     let run = home.run(&["tool", "call", "fx", "echo", &arg]);
     assert_eq!(run.code(), 0, "{}", run.describe());
-    assert_eq!(text_of(&run.stdout()), "from a file");
-    let run = home.run(&["tool", "call", "fx", "echo", "text:=\"json text\""]);
-    assert_eq!(text_of(&run.stdout()), "json text", "{}", run.describe());
-    let run = home.run(&["tool", "call", "fx", "echo", "text=@@at"]);
-    assert_eq!(text_of(&run.stdout()), "@at");
-    let run = home.run(&["tool", "call", "fx", "echo", "text=@/nonexistent/x"]);
-    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(text_of(&run.stdout()), format!("@{}", file.display()));
+    let run = home.run(&["tool", "call", "fx", "echo", "text=@acme/pkg"]);
+    assert_eq!(text_of(&run.stdout()), "@acme/pkg");
 }
 
 #[test]
@@ -2024,16 +2020,6 @@ fn resource_read_gives_json_in_a_pipe_and_raw_contents_on_request() {
     let run = home.run(&["resource", "read", "fx", "fixture://none"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert_eq!(run.error()["hint"], "ncp resource list fx");
-}
-
-#[test]
-fn file_argument_must_name_a_regular_file() {
-    let home = Home::new("file-arg-checks");
-    home.configure(&json!({"fx": stdio("modern")}));
-    for arg in ["text=@", "text=@/dev/null", "text=@/"] {
-        let run = home.run(&["tool", "call", "fx", "echo", arg]);
-        assert_eq!(run.code(), 2, "{arg}: {}", run.describe());
-    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2257,22 +2243,6 @@ fn raw_read_of_several_contents_is_a_usage_error_with_empty_stdout() {
         stderr.contains("hint: use --output-format json"),
         "{stderr}"
     );
-}
-
-#[test]
-fn color_marks_only_the_labels_of_text_output_on_request() {
-    let home = Home::new("color");
-    let text = ["--output-format", "text", "server", "list"];
-    let plain = home.run(&text);
-    assert!(!plain.0.stderr.contains(&0x1b), "{}", plain.describe());
-    let colored = home.run(&[&["--color", "always"][..], &text[..]].concat());
-    let stderr = String::from_utf8_lossy(&colored.0.stderr).to_string();
-    assert!(
-        stderr.starts_with("\u{1b}[1;36mhint:\u{1b}[0m"),
-        "{stderr:?}"
-    );
-    let json = home.run(&["--color", "always", "server", "list"]);
-    assert!(!json.0.stderr.contains(&0x1b), "{}", json.describe());
 }
 
 #[test]

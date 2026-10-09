@@ -27,7 +27,7 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 
 use self::{
-    args::{Cli, ColorChoice, Command, OutputFormat},
+    args::{Cli, Command, OutputFormat},
     outcome::{Exit, Failure},
     session::Context,
     timings::Timings,
@@ -87,7 +87,6 @@ pub fn main_with(platform: Platform) -> ExitCode {
     let ui = Ui {
         format: Format::detect(),
         verbosity: Verbosity::Normal,
-        color: false,
     };
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -101,15 +100,6 @@ pub fn main_with(platform: Platform) -> ExitCode {
             None => ui.format,
         },
         verbosity: Verbosity::from_flags(cli.options.quiet, cli.options.verbose),
-        color: ui::color_on(
-            match cli.options.color {
-                ColorChoice::Auto => None,
-                ColorChoice::Always => Some(true),
-                ColorChoice::Never => Some(false),
-            },
-            std::io::IsTerminal::is_terminal(&std::io::stderr()),
-            &env,
-        ),
     };
     let timings = cli.options.timings.then(|| Arc::new(Timings::new(started)));
     let runtime = match runtime() {

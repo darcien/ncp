@@ -62,14 +62,6 @@ pub struct GlobalOptions {
     /// Show no hints and no warnings on stderr. Errors stay.
     #[arg(short, long, global = true, conflicts_with = "verbose", action = clap::ArgAction::Count)]
     pub quiet: u8,
-    /// Color in the labels on stderr. Default: auto, which is on for a
-    /// TTY unless NO_COLOR is set.
-    #[allow(
-        clippy::doc_markdown,
-        reason = "clap shows this text as help, where backticks show"
-    )]
-    #[arg(long, global = true, value_enum, value_name = "WHEN", default_value_t = ColorChoice::Auto)]
-    pub color: ColorChoice,
     /// Read and write no cache: no cached era and no cached tool list.
     #[arg(long, global = true)]
     pub no_cache: bool,
@@ -84,19 +76,6 @@ pub struct GlobalOptions {
     /// ncp folder of the XDG configuration folder. It must exist.
     #[arg(long, global = true, value_name = "PATH")]
     pub config_file: Option<std::path::PathBuf>,
-}
-
-/// When to use color.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum ColorChoice {
-    /// On for a TTY, unless NO_COLOR is set
-    #[allow(
-        clippy::doc_markdown,
-        reason = "clap shows this text as help, where backticks show"
-    )]
-    Auto,
-    Always,
-    Never,
 }
 
 /// The output format.
@@ -169,8 +148,8 @@ pub enum PromptCommand {
         /// The server name from the configuration
         server: String,
     },
-    /// Get one prompt with its arguments: key=value pairs, or key=@path
-    /// for the text of a file.
+    /// Get one prompt with its arguments: key=value pairs. The spec gives
+    /// prompt arguments as text.
     Get {
         /// The server name from the configuration
         server: String,
@@ -270,8 +249,7 @@ pub enum ToolCommand {
     /// Arguments: key=value pairs, one JSON object, or - to read a JSON
     /// object from stdin. A key=value value is text, except when the input
     /// schema gives the property another type: then the value is JSON.
-    /// key:=json gives a JSON value, and key=@path gives the text of a file
-    /// (@@ at the start is a literal @).
+    /// For the text of a file, use the shell: key="$(cat FILE)".
     #[command(disable_help_flag = true)]
     Call(CallArgs),
 }

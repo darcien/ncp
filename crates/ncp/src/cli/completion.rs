@@ -63,7 +63,7 @@ const BASH_TOOLS: &str = concat!(
     "                for ncp_word in \"${COMP_WORDS[@]:1:COMP_CWORD-1}\"; do\n",
     "                    if [[ ${ncp_skip} -eq 1 ]] ; then ncp_skip=0 ; continue ; fi\n",
     "                    case \"${ncp_word}\" in\n",
-    "                        --timeout|--color|--output-format|--config-file) ncp_skip=1 ;;\n",
+    "                        --timeout|--output-format|--config-file) ncp_skip=1 ;;\n",
     "                        -*) ;;\n",
     "                        *) ncp_words+=(\"${ncp_word}\") ;;\n",
     "                    esac\n",
@@ -276,13 +276,13 @@ mod tests {
             .filter_map(|argument| argument.get_long().map(|long| format!("--{long}")))
             .collect();
         options.sort();
-        let mut listed: Vec<String> = "--timeout|--color|--output-format|--config-file"
+        let mut listed: Vec<String> = "--timeout|--output-format|--config-file"
             .split('|')
             .map(str::to_string)
             .collect();
         listed.sort();
         assert_eq!(options, listed);
-        assert!(BASH_TOOLS.contains("--timeout|--color|--output-format|--config-file)"));
+        assert!(BASH_TOOLS.contains("--timeout|--output-format|--config-file)"));
     }
 
     #[test]
