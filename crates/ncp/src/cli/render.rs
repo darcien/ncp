@@ -138,6 +138,28 @@ fn hint_marks(tool: &Tool) -> Vec<&'static str> {
     .collect()
 }
 
+/// Each annotation hint with its value, and the default of the spec when
+/// the server sets none: an absent hint must not look safe. The
+/// destructive and idempotent hints have a meaning only when the tool is
+/// not read-only (MCP 2025-11-25, server/tools, `ToolAnnotations`).
+fn annotation_lines(tool: &Tool) -> String {
+    let annotations = tool.annotations.clone().unwrap_or_default();
+    let read_only = annotations.read_only_hint;
+    let line = |name: &str, set: Option<bool>, default: bool| {
+        let (value, from) = match set {
+            Some(value) => (value, ""),
+            None => (default, " (default)"),
+        };
+        format!("  {name}: {}{from}\n", if value { "yes" } else { "no" })
+    };
+    let mut text = line("read-only", read_only, false);
+    if read_only != Some(true) {
+        text += &line("destructive", annotations.destructive_hint, true);
+        text += &line("idempotent", annotations.idempotent_hint, false);
+    }
+    text + &line("open-world", annotations.open_world_hint, true)
+}
+
 /// One tool for people to read.
 #[must_use]
 pub fn tool_show(server: &str, tool: &Tool) -> String {
@@ -154,14 +176,11 @@ pub fn tool_show(server: &str, tool: &Tool) -> String {
         .as_deref()
         .map_or_else(|| "  not described\n".to_string(), properties);
     let _ = write!(text, "\nOutput:\n{output}");
-    let marks = hint_marks(tool);
-    if !marks.is_empty() {
-        let _ = writeln!(
-            text,
-            "\nAnnotations (from the server, not checked): {}",
-            marks.join(", ")
-        );
-    }
+    let _ = write!(
+        text,
+        "\nAnnotations (hints from the server, not checked):\n{}",
+        annotation_lines(tool)
+    );
     let _ = write!(text, "\nExample:\n  {}\n", example_call(server, tool));
     text
 }
@@ -568,6 +587,23 @@ mod tests {
         assert_eq!(
             tool_list(&[marked, titled]),
             "search  Find issues  [read-only hint]\nb       Title B\n"
+        );
+    }
+
+    #[test]
+    fn tool_show_gives_each_annotation_hint_and_the_spec_defaults() {
+        let plain = Tool::new("a", "A", Arc::new(serde_json::Map::new()));
+        assert_eq!(
+            annotation_lines(&plain),
+            "  read-only: no (default)\n  destructive: yes (default)\n  \
+             idempotent: no (default)\n  open-world: yes (default)\n"
+        );
+        let read_only = plain
+            .clone()
+            .annotate(ToolAnnotations::new().read_only(true).open_world(false));
+        assert_eq!(
+            annotation_lines(&read_only),
+            "  read-only: yes\n  open-world: no\n"
         );
     }
 
