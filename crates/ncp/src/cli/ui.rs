@@ -144,8 +144,19 @@ impl Ui {
             return crate::client::ProgressSink::default();
         }
         let server = server.to_string();
+        let last = std::sync::Mutex::new(None::<std::time::Instant>);
         crate::client::ProgressSink::new(move |progress| {
-            self.stderr(&progress_line(self.format, &server, progress));
+            // At most a few lines a second (the spec: rate limiting), but
+            // always the last step.
+            let now = std::time::Instant::now();
+            let done = progress
+                .total
+                .is_some_and(|total| progress.progress >= total);
+            let Ok(mut last) = last.lock() else { return };
+            if done || last.is_none_or(|at| now.duration_since(at) >= PROGRESS_STEP) {
+                *last = Some(now);
+                self.stderr(&progress_line(self.format, &server, progress));
+            }
         })
     }
 
@@ -221,6 +232,9 @@ pub fn printable(text: &str) -> Cow<'_, str> {
         Cow::Borrowed(text)
     }
 }
+
+/// The shortest time between two progress lines.
+const PROGRESS_STEP: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// A number of a progress notification: with no decimals when it is whole.
 fn amount(value: f64) -> String {

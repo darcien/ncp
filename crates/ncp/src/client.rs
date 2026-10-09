@@ -15,7 +15,14 @@ pub mod http;
 pub mod observe;
 pub mod stdio;
 
-use std::{fmt, sync::Arc, time::Duration};
+use std::{
+    fmt,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use rmcp::{
     ClientLifecycleMode, ClientServiceExt, RoleClient,
@@ -274,6 +281,26 @@ impl std::fmt::Debug for ProgressSink {
 struct Handler {
     info: ClientConfig,
     progress: ProgressSink,
+    /// True while a request waits for its answer. `ncp` sends one request
+    /// at a time, so a notification out of that time is for no active
+    /// request (the spec: a client SHOULD track active progress tokens).
+    active: Arc<AtomicBool>,
+}
+
+/// Marks a request as active until the value is dropped, at each exit.
+struct ActiveRequest(Arc<AtomicBool>);
+
+impl ActiveRequest {
+    fn start(flag: &Arc<AtomicBool>) -> Self {
+        flag.store(true, Ordering::SeqCst);
+        Self(flag.clone())
+    }
+}
+
+impl Drop for ActiveRequest {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 impl rmcp::ClientHandler for Handler {
@@ -286,7 +313,7 @@ impl rmcp::ClientHandler for Handler {
         params: rmcp::model::ProgressNotificationParam,
         _context: rmcp::service::NotificationContext<RoleClient>,
     ) -> impl Future<Output = ()> + rmcp::service::MaybeSendFuture + '_ {
-        if let Some(function) = &self.progress.0 {
+        if let (Some(function), true) = (&self.progress.0, self.active.load(Ordering::SeqCst)) {
             function(&Progress {
                 progress: params.progress,
                 total: params.total,
@@ -395,6 +422,7 @@ async fn handshake(
     let info = Handler {
         info,
         progress: launch.progress.clone(),
+        active: Arc::default(),
     };
     let failed = |source| ConnectError::Handshake {
         phase,
@@ -852,6 +880,7 @@ impl Connection {
         request: ClientRequest,
         limits: RequestLimits<'_>,
     ) -> Result<ServerResult, RequestError> {
+        let _active = ActiveRequest::start(&self.service.service().active);
         let mut handle = self
             .service
             .peer()

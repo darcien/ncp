@@ -2042,9 +2042,10 @@ fn progress_of_a_call_goes_to_stderr_unless_quiet() {
     let run = home.run(&["tool", "call", "fx", "progress", "text=x"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
     let steps = notes(&run, "progress");
-    assert_eq!(steps.len(), 3, "{}", run.describe());
+    // The steps come fast: the rate limit keeps the first and the last.
+    assert_eq!(steps.len(), 2, "{}", run.describe());
     assert_eq!(
-        steps[2],
+        steps[1],
         json!({"server": "fx", "progress": 3.0, "total": 3.0, "message": "step 3"})
     );
     let quiet = home.run(&["-q", "tool", "call", "fx", "progress", "text=x"]);
