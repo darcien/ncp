@@ -2,6 +2,7 @@
 //! server, connect, and map errors to failures with a fix.
 
 use std::{
+    fmt::Write as _,
     io::ErrorKind,
     path::{Path, PathBuf},
     sync::Arc,
@@ -621,6 +622,23 @@ pub fn request_failure(server: &Server, method: &str, error: &RequestError) -> F
             Failure {
                 login_challenge: error.login_challenge(),
                 ..Failure::new(Exit::Auth, format!("{method}: {need}")).hint(login_hint(server))
+            }
+        }
+        RequestError::Service(rmcp::ServiceError::McpError(data))
+            if data.code.0 == crate::elicit::URL_REQUIRED =>
+        {
+            let pages = crate::elicit::pages(data.data.as_ref());
+            let list = pages.iter().fold(String::new(), |mut list, page| {
+                let _ = write!(list, "\n{} ({})", page.url, page.message);
+                list
+            });
+            Failure {
+                pages: pages.into(),
+                ..Failure::new(
+                    Exit::InputRequired,
+                    format!("{method}: the server asks you to open a page first:{list}"),
+                )
+                .hint("open the page, then run the command again")
             }
         }
         RequestError::Service(rmcp::ServiceError::McpError(data)) => Failure::protocol(format!(

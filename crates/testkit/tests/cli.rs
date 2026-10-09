@@ -2390,3 +2390,28 @@ async fn login_to_the_file_waits_at_most_the_cleanup_limit_for_a_native_store_wi
     assert!(elapsed < std::time::Duration::from_secs(30), "{elapsed:?}");
     assert!(!notes(&run, "warning").is_empty(), "{}", run.describe());
 }
+
+#[test]
+fn a_request_that_needs_a_page_gives_exit_5_with_the_pages() {
+    let home = Home::new("needs-page");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let run = home.run(&["tool", "call", "fx", "needs-page", "text=x"]);
+    assert_eq!(run.code(), 5, "{}", run.describe());
+    let error = run.error();
+    assert_eq!(
+        error["pages"],
+        json!([{"url": "https://login.example.test/start", "message": "Connect your account"}])
+    );
+    // On a TTY, ncp asks to open the page and does not run the call again.
+    let home = home.set("NCP_TEST_TTY", "1");
+    let run = home.run_with_stdin(&["tool", "call", "fx", "needs-page", "text=x"], "n\n");
+    assert_eq!(run.code(), 5, "{}", run.describe());
+    let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
+    assert!(stderr.contains("a page of login.example.test"), "{stderr}");
+    // A real TTY echoes the new line of the answer; a pipe does not.
+    let last: Value = serde_json::from_str(&stderr[stderr.rfind("{\"error\"").unwrap()..]).unwrap();
+    assert_eq!(
+        last["error"]["hint"],
+        "when the page is done, run the command again"
+    );
+}

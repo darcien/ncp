@@ -6,6 +6,38 @@
 
 use serde_json::{Map, Value, json};
 
+/// The JSON-RPC error code of a request that needs the user to open a
+/// page first (`URLElicitationRequiredError`, MCP 2025-11-25).
+pub const URL_REQUIRED: i32 = -32042;
+
+/// A page that the server asks the user to open, from the data of a
+/// `URLElicitationRequiredError`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Page {
+    pub message: String,
+    pub url: String,
+}
+
+/// The pages in the data of a `URLElicitationRequiredError`. An item with
+/// no URL is left out.
+#[must_use]
+pub fn pages(data: Option<&Value>) -> Vec<Page> {
+    data.and_then(|data| data.get("elicitations"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    Some(Page {
+                        message: text(item, "message").unwrap_or_default(),
+                        url: text(item, "url")?,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// What a server asks.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Request {
@@ -482,6 +514,22 @@ mod tests {
             result(&Action::Accept(Map::new())),
             json!({"action": "accept", "content": {}})
         );
+    }
+
+    #[test]
+    fn pages_come_from_the_data_of_the_error() {
+        let data = json!({"elicitations": [
+            {"mode": "url", "elicitationId": "e", "url": "https://a.test/x", "message": "Sign in"},
+            {"mode": "url", "message": "no url"}
+        ]});
+        assert_eq!(
+            pages(Some(&data)),
+            [Page {
+                message: "Sign in".into(),
+                url: "https://a.test/x".into()
+            }]
+        );
+        assert_eq!(pages(None), []);
     }
 
     #[test]

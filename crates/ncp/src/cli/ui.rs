@@ -441,6 +441,14 @@ pub fn error_text(format: Format, failure: &Failure) -> String {
             if let Some(hint) = &failure.hint {
                 body["hint"] = json!(hint);
             }
+            if !failure.pages.is_empty() {
+                let pages: Vec<Value> = failure
+                    .pages
+                    .iter()
+                    .map(|page| json!({"url": page.url, "message": page.message}))
+                    .collect();
+                body["pages"] = json!(pages);
+            }
             json_line(&json!({ "error": body }))
         }
     }

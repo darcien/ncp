@@ -208,6 +208,11 @@ fn tools() -> Vec<Tool> {
             text_arg("text"),
         ),
         Tool::new(
+            "needs-page",
+            "Fail with the error that asks to open a page",
+            text_arg("text"),
+        ),
+        Tool::new(
             "elicit-legacy",
             "Ask for a name with an elicitation request",
             text_arg("text"),
@@ -461,6 +466,14 @@ impl ServerHandler for Fixture {
             "elicit" => elicit_form(&request),
             "elicit-url" => Ok(elicit_url(&request, argument(&arguments, "text"))),
             "elicit-legacy" => elicit_legacy(&context).await,
+            "needs-page" => Err(ErrorData::new(
+                rmcp::model::ErrorCode(-32042),
+                "This request needs a page",
+                Some(
+                    json!({"elicitations": [{"mode": "url", "elicitationId": "p1",
+                    "url": "https://login.example.test/start", "message": "Connect your account"}]}),
+                ),
+            )),
             "ask" => Ok(CallToolResponse::InputRequired(
                 InputRequiredResult::from_request_state("state-1"),
             )),

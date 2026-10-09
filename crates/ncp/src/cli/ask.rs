@@ -203,6 +203,23 @@ impl Asker {
     }
 }
 
+impl Asker {
+    /// Asks to open each page that the server needs, as a URL-mode
+    /// question. `ncp` does not run the request again: the server can need
+    /// time, and the person knows when the page is done.
+    async fn open_pages(&self, failure: Failure) -> Failure {
+        for page in &failure.pages {
+            let params =
+                serde_json::json!({"mode": "url", "message": page.message, "url": page.url});
+            match self.ask(&params).await {
+                Ok(_) | Err(Stop::End | Stop::TimedOut) => {}
+                Err(Stop::Interrupted) => return session::interrupted().server(&self.server),
+            }
+        }
+        failure.hint("when the page is done, run the command again")
+    }
+}
+
 /// The elicitor of a connection for a legacy server, which asks with a
 /// request of its own. No answer (the end of stdin, the time limit or
 /// Ctrl-C) is a cancel.
@@ -298,7 +315,12 @@ pub async fn with_rounds<R: Rounds>(
     let mut continuation = None;
     let mut round = 1;
     loop {
-        let response = run(continuation.as_ref()).await?;
+        let response = match run(continuation.as_ref()).await {
+            Err(failure) if context.interactive && !failure.pages.is_empty() => {
+                return Err(asker.open_pages(failure).await);
+            }
+            other => other?,
+        };
         let questions = match response.input_required() {
             Some(result) if context.interactive && round < MAX_ROUNDS => {
                 elicitations(result).map(|questions| (questions, result.request_state.clone()))

@@ -62,6 +62,10 @@ pub struct Failure {
     /// Set for a `401` on a connection with no token, with the challenge
     /// of the answer: a stored login can answer it.
     pub login_challenge: Option<String>,
+    /// The pages that the server asks the user to open before it can
+    /// answer. A person at a TTY can open them; an agent gets them in the
+    /// JSON error.
+    pub pages: Box<[crate::elicit::Page]>,
 }
 
 impl Failure {
@@ -73,6 +77,7 @@ impl Failure {
             message: message.into(),
             hint: None,
             login_challenge: None,
+            pages: Box::default(),
         }
     }
 

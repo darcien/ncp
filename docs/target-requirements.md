@@ -31,7 +31,7 @@ Levels use [BCP 14][bcp14] key words, as the MCP spec does.
 | P6 | MUST | Tools: list and call. | [tools] |
 | P7 | SHOULD | Resources: list, read, templates. Prompts: list, get. | [res], [prompts] |
 | P8 | MUST | Process `input_required` results. At minimum, stop with a clear error. | [mrtr] |
-| P9 | SHOULD | Elicitation, form mode and URL mode, on a TTY. With no TTY, stop with a defined exit code. | [elicit] |
+| P9 | SHOULD | Elicitation, form mode and URL mode, on a TTY, and the error that asks the user to open a page (`URLElicitationRequiredError`). A URL opens only after the user agrees. With no TTY, stop with a defined exit code, and give the pages in the error. | [elicit] |
 | P10 | MUST | Send a cancellation when the user interrupts a request (Ctrl-C). | [cancel] |
 | P11 | SHOULD | Show progress notifications. | [progress] |
 | P12 | SHOULD | Cache list results with the `ttlMs` and `cacheScope` hints. | [chg] |
