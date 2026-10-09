@@ -1451,6 +1451,66 @@ async fn expired_token_is_refreshed_with_no_user_action_and_kept() {
     assert_ne!(before, after, "the new tokens go back to the file");
 }
 
+/// Changes the stored tokens item of `web` in the credential file.
+fn change_stored_tokens(home: &Home, change: impl FnOnce(&mut Value)) {
+    fn find(value: &mut Value) -> Option<&mut Value> {
+        let object = value.as_object_mut()?;
+        if object.contains_key("oauth/web/tokens") {
+            return object.get_mut("oauth/web/tokens");
+        }
+        object.values_mut().find_map(find)
+    }
+    let path = home.root.join("state/ncp/credentials.json");
+    let mut file: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let item = find(&mut file).unwrap();
+    let mut tokens: Value = serde_json::from_str(item.as_str().unwrap()).unwrap();
+    change(&mut tokens);
+    *item = json!(tokens.to_string());
+    std::fs::write(&path, file.to_string()).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stored_token_for_another_server_url_is_not_sent() {
+    let (_auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    let home = oauth_home("binding-url", &fixture.url);
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    change_stored_tokens(&home, |tokens| {
+        tokens["ncp_binding"]["resource"] = json!("https://other.example/mcp");
+    });
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 4, "{}", run.describe());
+    let error = run.error();
+    let message = error["message"].as_str().unwrap();
+    assert!(
+        message.contains("did not send the stored token"),
+        "{message}"
+    );
+    assert!(message.contains("https://other.example/mcp"), "{message}");
+    assert!(message.contains(&fixture.url), "{message}");
+    assert_eq!(error["hint"], "ncp auth login web");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stored_token_with_no_binding_is_not_sent_until_a_new_login() {
+    let (_auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    let home = oauth_home("binding-missing", &fixture.url);
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    change_stored_tokens(&home, |tokens| {
+        tokens.as_object_mut().unwrap().remove("ncp_binding");
+    });
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 4, "{}", run.describe());
+    assert!(
+        run.error()["message"]
+            .as_str()
+            .unwrap()
+            .contains("on purpose")
+    );
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn rejected_refresh_asks_for_a_new_login() {
     let (_auth, fixture) = oauth_fixture(AuthSettings {

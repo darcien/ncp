@@ -19,6 +19,60 @@ use crate::credential::Secret;
 /// ignores it.
 pub const REQUIRED_SCOPES: &str = "ncp_required_scopes";
 
+/// The field of the tokens item that keeps the binding of the tokens
+/// (design B70). rmcp ignores it.
+pub const BINDING: &str = "ncp_binding";
+
+/// The server that a token set is for: the canonical URL of the MCP server
+/// (the RFC 8707 resource) and the issuer of the tokens. The server name is
+/// only the storage key, so an entry that changes its URL keeps its name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenBinding {
+    pub resource: String,
+    pub issuer: String,
+}
+
+/// Why `ncp` does not send a stored token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BindingMismatch {
+    /// The tokens have no binding, for example from an older `ncp`.
+    Missing,
+    Resource {
+        stored: String,
+        current: String,
+    },
+    Issuer {
+        stored: String,
+        current: String,
+    },
+}
+
+/// Compares the binding of the stored tokens with the current entry and
+/// metadata. A token for another server must not go to this one.
+///
+/// # Errors
+///
+/// Returns the first value that differs, or `Missing`.
+pub fn check_binding(
+    stored: Option<&TokenBinding>,
+    current: &TokenBinding,
+) -> Result<(), BindingMismatch> {
+    let stored = stored.ok_or(BindingMismatch::Missing)?;
+    if stored.resource != current.resource {
+        return Err(BindingMismatch::Resource {
+            stored: stored.resource.clone(),
+            current: current.resource.clone(),
+        });
+    }
+    if stored.issuer != current.issuer {
+        return Err(BindingMismatch::Issuer {
+            stored: stored.issuer.clone(),
+            current: current.issuer.clone(),
+        });
+    }
+    Ok(())
+}
+
 /// The client credentials that an authorization server gave to `ncp`.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -202,6 +256,31 @@ mod tests {
         assert_eq!(ClientItem::from_secret(&secret).unwrap(), item);
         assert!(!format!("{item:?}").contains("s3"));
         assert!(item.is_for("https://as.test") && !item.is_for("https://other.test"));
+    }
+
+    #[test]
+    fn binding_check_names_the_value_that_differs_and_refuses_no_binding() {
+        let binding = |resource: &str, issuer: &str| TokenBinding {
+            resource: resource.into(),
+            issuer: issuer.into(),
+        };
+        let current = binding("https://a/mcp", "https://as");
+        assert_eq!(check_binding(Some(&current), &current), Ok(()));
+        assert_eq!(check_binding(None, &current), Err(BindingMismatch::Missing));
+        assert_eq!(
+            check_binding(Some(&binding("https://b/mcp", "https://as")), &current),
+            Err(BindingMismatch::Resource {
+                stored: "https://b/mcp".into(),
+                current: "https://a/mcp".into()
+            })
+        );
+        assert_eq!(
+            check_binding(Some(&binding("https://a/mcp", "https://other")), &current),
+            Err(BindingMismatch::Issuer {
+                stored: "https://other".into(),
+                current: "https://as".into()
+            })
+        );
     }
 
     #[test]

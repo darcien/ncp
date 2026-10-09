@@ -255,15 +255,16 @@ async fn login(
         check_issuer(name, client, &metadata)?;
     }
     manager.set_metadata(metadata.clone());
-    manager.set_credential_store(TokenStore::new(server.name.clone(), store.clone()).fresh());
-    let listener = TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .map_err(|error| Failure::protocol(format!("cannot listen for the redirect: {error}")))?;
-    let port = listener
-        .local_addr()
-        .map_err(|error| Failure::protocol(format!("cannot listen for the redirect: {error}")))?
-        .port();
-    let redirect = RedirectUri::new(port);
+    let binding = items::TokenBinding {
+        resource: remote.url.without_query(),
+        issuer: issuer.clone(),
+    };
+    manager.set_credential_store(
+        TokenStore::new(server.name.clone(), store.clone())
+            .fresh()
+            .with_binding(binding),
+    );
+    let (listener, redirect) = listen().await?;
     let request = client_request(
         context,
         server,
@@ -318,6 +319,17 @@ async fn login(
         },
     )?;
     Ok(server.name.clone())
+}
+
+/// The listener for the redirect, on a random loopback port (RFC 8252
+/// §7.3), and its redirect URI.
+async fn listen() -> Result<(TcpListener, RedirectUri), Failure> {
+    let failure = |error: std::io::Error| {
+        Failure::protocol(format!("cannot listen for the redirect: {error}"))
+    };
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.map_err(failure)?;
+    let port = listener.local_addr().map_err(failure)?.port();
+    Ok((listener, RedirectUri::new(port)))
 }
 
 /// The lock file of the refresh of one server, next to the credential
@@ -409,6 +421,7 @@ pub(super) async fn stored_login(
     let item =
         parse_item(&secret).map_err(|error| Failure::protocol(error.to_string()).server(name))?;
     let client_id = item.tokens.client_id.clone();
+    let stored_binding = item.binding.clone();
     context.ui.debug(Some(name), "read the stored OAuth tokens");
     let oauth_http = OAuthHttp::new(context.env, observer)
         .map_err(|error| Failure::protocol(error.to_string()).server(name))?;
@@ -439,6 +452,12 @@ pub(super) async fn stored_login(
     if let Some(client) = configured {
         check_issuer(name, client, &metadata)?;
     }
+    let current = items::TokenBinding {
+        resource: remote.url.without_query(),
+        issuer: issuer_of(&metadata),
+    };
+    items::check_binding(stored_binding.as_ref(), &current)
+        .map_err(|mismatch| binding_failure(name, &mismatch))?;
     manager.set_metadata(metadata);
     let usable = manager
         .initialize_from_store()
@@ -489,6 +508,32 @@ pub(super) async fn stored_login(
         crate::client::http::observed(http, observer),
         manager,
     )))
+}
+
+/// The stop when the stored tokens are for another server (design B70).
+fn binding_failure(name: &str, mismatch: &items::BindingMismatch) -> Failure {
+    let reason = match mismatch {
+        items::BindingMismatch::Missing => {
+            "the tokens do not name the server that they are for".to_string()
+        }
+        items::BindingMismatch::Resource { stored, current } => {
+            format!("the tokens are for {stored}, and the entry names {current}")
+        }
+        items::BindingMismatch::Issuer { stored, current } => {
+            format!(
+                "the tokens are from {stored}, and the server names the authorization server {current}"
+            )
+        }
+    };
+    Failure::new(
+        Exit::Auth,
+        format!("ncp did not send the stored token, on purpose: {reason}"),
+    )
+    .hint(format!(
+        "ncp auth login {}",
+        super::render::shell_word(name)
+    ))
+    .server(name)
 }
 
 /// Adds the time of a call to the store to `credentialsMs`, with

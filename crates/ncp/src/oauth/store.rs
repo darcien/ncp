@@ -37,6 +37,8 @@ pub struct TokenStore {
     /// The scopes of a `403` since the last login (design B52). rmcp does
     /// not know the field, so a refresh writes it back from here.
     required_scopes: Mutex<Option<Value>>,
+    /// The server that the tokens are for. A save writes it with the tokens.
+    binding: Option<items::TokenBinding>,
     /// The lock file that one refresh at a time holds, across processes.
     refresh_lock: Option<PathBuf>,
     /// Gets the time of each read and write of the store, for `--timings`.
@@ -58,6 +60,7 @@ impl TokenStore {
             store,
             copy: Mutex::new(Cached::Unread),
             required_scopes: Mutex::new(None),
+            binding: None,
             refresh_lock: None,
             timer: None,
         }
@@ -87,13 +90,23 @@ impl TokenStore {
         }
     }
 
-    /// The adapter with the item that the caller read already, so that rmcp
-    /// does not read the store again.
+    /// The adapter with the item that the caller read and checked already,
+    /// so that rmcp does not read the store again.
     #[must_use]
     pub fn with_item(self, item: TokensItem) -> Self {
         Self {
             copy: Mutex::new(Cached::Read(Box::new(Some(item.tokens)))),
             required_scopes: Mutex::new(item.required_scopes),
+            binding: item.binding,
+            ..self
+        }
+    }
+
+    /// The adapter that binds the tokens of a login to their server.
+    #[must_use]
+    pub fn with_binding(self, binding: items::TokenBinding) -> Self {
+        Self {
+            binding: Some(binding),
             ..self
         }
     }
@@ -109,10 +122,12 @@ impl TokenStore {
     }
 }
 
-/// The tokens item: the tokens of rmcp and the field of `ncp`.
+/// The tokens item: the tokens of rmcp and the fields of `ncp`.
 pub struct TokensItem {
     pub tokens: StoredCredentials,
     pub required_scopes: Option<Value>,
+    /// `None` when the item has no binding or a binding that is not valid.
+    pub binding: Option<items::TokenBinding>,
 }
 
 /// The tokens item in a stored secret.
@@ -127,10 +142,14 @@ pub fn parse_item(secret: &Secret) -> Result<TokensItem, items::ItemError> {
     };
     let json: Value = serde_json::from_str(secret.expose()).map_err(error)?;
     let required_scopes = json.get(items::REQUIRED_SCOPES).cloned();
+    let binding = json
+        .get(items::BINDING)
+        .and_then(|binding| serde_json::from_value(binding.clone()).ok());
     let tokens = serde_json::from_value(json).map_err(error)?;
     Ok(TokensItem {
         tokens,
         required_scopes,
+        binding,
     })
 }
 
@@ -200,6 +219,10 @@ impl RmcpStore for TokenStore {
             serde_json::to_value(&credentials).map_err(|error| failed(error.to_string()))?;
         if let Some(scopes) = self.required_scopes.lock().await.clone() {
             json[items::REQUIRED_SCOPES] = scopes;
+        }
+        if let Some(binding) = &self.binding {
+            json[items::BINDING] =
+                serde_json::to_value(binding).map_err(|error| failed(error.to_string()))?;
         }
         let secret =
             items::to_secret("tokens", &json).map_err(|error| failed(error.to_string()))?;
@@ -343,11 +366,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_save_writes_the_binding_and_a_read_gives_it_back() {
+        let backing = Arc::new(Counting::default());
+        let binding = items::TokenBinding {
+            resource: "https://a/mcp".into(),
+            issuer: "https://as".into(),
+        };
+        let adapter = TokenStore::new(server(), backing.clone())
+            .fresh()
+            .with_binding(binding.clone());
+        adapter.save(tokens("c1")).await.unwrap();
+        let key = CredentialKey::OAuthTokens(server());
+        let item = parse_item(&backing.inner.load(&key).unwrap().unwrap()).unwrap();
+        assert_eq!(item.binding, Some(binding));
+        // A refresh keeps the binding of the item.
+        let refresh = TokenStore::new(server(), backing.clone()).with_item(item);
+        refresh.save(tokens("c1")).await.unwrap();
+        let again = parse_item(&backing.inner.load(&key).unwrap().unwrap()).unwrap();
+        assert!(again.binding.is_some());
+    }
+
+    #[tokio::test]
     async fn given_tokens_need_no_read_and_clear_removes_the_item() {
         let backing = Arc::new(Counting::default());
         let adapter = TokenStore::new(server(), backing.clone()).with_item(TokensItem {
             tokens: tokens("c2"),
             required_scopes: None,
+            binding: None,
         });
         assert_eq!(adapter.load().await.unwrap().unwrap().client_id, "c2");
         assert_eq!(backing.reads.load(Ordering::SeqCst), 0);
