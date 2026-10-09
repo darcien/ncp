@@ -61,9 +61,9 @@ describes.
 | A2 | MUST | Discovery: protected resource metadata (RFC 9728), and both RFC 8414 and OpenID Connect Discovery. | [auth] |
 | A3 | MUST | `resource` parameter (RFC 8707) in each authorization request and token request. | [auth] |
 | A4 | MUST | Validate `iss` in the authorization response (RFC 9207). | [auth] |
-| A5 | MUST | Keep client credentials for each issuer. Register again when the authorization server changes. | [reg] |
+| A5 | MUST | Keep client credentials for each issuer. Register again when the authorization server changes. A client secret goes only to the issuer that the configuration names, so that a changed or hostile MCP server cannot get it. | [reg] |
 | A6 | SHOULD | Client registration in the spec order: pre-registered client, then Client ID Metadata Document (CIMD), then Dynamic Client Registration (DCR). | [reg] |
-| A7 | SHOULD | `ncp` has a CIMD metadata document at a stable HTTPS URL. Its place is a release decision. A URL for each user comes only when a real user needs it. | [reg] |
+| A7 | SHOULD | `ncp` has a CIMD metadata document at a stable HTTPS URL, on the GitHub Pages site of the repository. The URL comes with the first release; until then, `ncp` uses no CIMD. A URL for each user comes only when a real user needs it. | [reg] |
 | A8 | MUST | Refresh tokens with no user action. | [auth] |
 | A9 | SHOULD | Step-up after `403 insufficient_scope`: request the old and the new scopes, with a retry limit. | [auth] |
 | A10 | MUST | Login with no local browser: `ncp` shows the authorization URL and accepts the pasted redirect URL. | [auth] |
@@ -77,8 +77,8 @@ extension.
 
 | ID | Level | Requirement | Ref |
 |---|---|---|---|
-| S1 | MUST | Keep all secrets in the OS credential store: Keychain on macOS, Secret Service on Linux. Secrets are access tokens, refresh tokens, client secrets and static tokens. | [auth] |
-| S2 | MUST | No secret in a plain file by default. A `0600` file is permitted only after an explicit opt-in. With no credential store (for example Linux with no Secret Service), stop with an error that names this opt-in. | — |
+| S1 | MUST | Keep each secret that `ncp` stores in the OS credential store: Keychain on macOS, Secret Service on Linux. Secrets are access tokens, refresh tokens, client secrets and static tokens. A value that the user wrote in the configuration file stays there, because no reliable test can tell a secret from another value. | [auth] |
+| S2 | MUST | `ncp` writes no secret to a plain file by default. A `0600` file is permitted only after an explicit opt-in. With no credential store (for example Linux with no Secret Service), stop with an error that names this opt-in. | — |
 | S3 | MUST | No secret in process arguments or in logs. Verbose output hides secrets. | [sec] |
 | S4 | MUST | stdio servers get credentials through environment variables. `ncp` reads these values from the credential store. | [auth] |
 | S5 | SHOULD | A configuration file in a project directory starts stdio commands only after user approval. | — |
@@ -142,19 +142,25 @@ no loss.
   `127.0.0.0/8`, `::1`). No user name or password in the URL. Reason: tokens
   and headers must not go over the network in plain text, and the file must
   not hold a secret.
-- No secret in the file. A secret is a named value. The file names it with
-  `${NAME}`.
+- `ncp` writes no secret to the file. A secret is a named value, and the
+  file names it with `${NAME}`. `ncp` accepts a literal value that the user
+  wrote, because it cannot tell a secret from another value, and the file
+  can come from another tool.
 - `${VAR}` and `${env:VAR}` in a value expand. No other variable syntax, and
   no command expansion. Expansion applies to `command`, `args`, `env` values,
-  `cwd`, `url` and `headers` values, not to keys. The value comes from the
+  `cwd`, `url`, `headers` values and `oauth.clientSecret`, not to keys. The value comes from the
   environment, else from the credential store, else from the opt-in
   credential file. A value from the store or the file expands only in `env`
-  and `headers` values, because a value in `args` shows in the process list.
+  values, `headers` values and `oauth.clientSecret`, because a value in
+  `args` shows in the process list.
   A variable with no value is an error for that server. A `$` that does not
   start `${` stays as text.
-- `oauth` is a known key of an `http` entry. The MVP reads only
-  `oauth.clientId` (a pre-registered client). Other keys in `oauth` are
-  unknown keys.
+- `oauth` is a known key of an `http` entry. The MVP reads `oauth.clientId`
+  (a pre-registered client), `oauth.clientSecret` (its secret, a literal
+  value or `${NAME}`, as in `headers`) and `oauth.issuer` (the issuer of the
+  authorization server of the client). `clientSecret` needs `clientId` and
+  `issuer`. When `issuer` is absent, `ncp` reads `authorizationServer` for
+  compatibility with other tools. Other keys in `oauth` are unknown keys.
 - `ncp` ignores unknown keys, with a warning, so files from other tools load.
   A key of the other transport (for example `headers` in a `stdio` entry) is
   also an unknown key.
