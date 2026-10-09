@@ -27,6 +27,7 @@ written in Rust on the official SDK `rmcp`.
 ## Workflow
 
 - Follow `docs/plan.md`. Do the milestones in order.
+- You can break down the work for a milestone, and commit in small working chunk.
 - Keep notes in `.scratch/` (not tracked by git). Update
   `.scratch/progress.md` at the end of each milestone, and before a long
   pause: done, next, blocked.
