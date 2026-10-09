@@ -57,9 +57,14 @@ the container.
 
 ## Checks
 
-- Run `mise run precommit` before each commit. It formats the code, then
-  runs all checks and tests on the host and in the Linux container, in
-  parallel. All must pass.
+- The git pre-commit hook runs the checks. All must pass. Do not skip the
+  hook. Install it one time with `hk install --mise`.
+- The hook runs only the checks that the staged files can affect. For
+  example, a change to the docs does not start the Rust builds. When a new
+  kind of file can change the build or the tests, add it to the globs in
+  `hk.pkl`.
+- Run `mise run precommit` to run all checks on all files, for example after
+  a change to `hk.pkl` or `mise.toml`.
 - Tests use only local servers: stubs, rmcp fixtures, and official MCP test
   parts. Do not call third-party servers.
 

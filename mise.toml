@@ -4,6 +4,12 @@
 node = "22.23.3"
 cargo-deny = "0.20.2"
 typos = "1.50.3"
+hk = "2.5.0"
+
+# `hk install` then runs the hooks through `mise x`, so that the hooks use
+# the pinned tools.
+[env]
+HK_MISE = "1"
 
 [tasks.fmt]
 description = "Format all Rust code"
@@ -93,12 +99,6 @@ description = "Run the Secret Service tests in a container, with no network"
 depends = ["linux:test"]
 run = "harness/linux/run.sh secret-service"
 
-# Format and prune first, so that the checks see the formatted code. Show
-# the disk use last, after the builds.
 [tasks.precommit]
-description = "Format, then run all checks and tests on the host and in Linux"
-run = [
-  { tasks = ["fmt", "linux:prune"] },
-  { tasks = ["check", "test", "linux:check", "linux:secret-service"] },
-  { task = "check:disk" },
-]
+description = "Format, then run all checks and tests on all files, on the host and in Linux"
+run = "hk fix --all"

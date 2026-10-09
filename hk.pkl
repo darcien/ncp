@@ -1,0 +1,89 @@
+amends "package://github.com/jdx/hk/releases/download/v2.5.0/hk@2.5.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.5.0/hk@2.5.0#/Builtins.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.5.0/hk@2.5.0#/Config.pkl"
+
+// An expensive step runs only when a staged file can change its result.
+// The steps call the mise tasks, so that each command has one definition.
+// hk does not select removed files. Thus a commit that only removes a file
+// does not start the Rust steps.
+
+local buildInputs = List(
+  "crates/**",
+  "Cargo.toml",
+  "Cargo.lock",
+  "rust-toolchain.toml",
+  // It pins the tools and defines the tasks.
+  "mise.toml",
+)
+local linuxInputs = (buildInputs) { "harness/linux/**" }
+// No crate reads a Markdown file.
+local markdown = "**/*.md"
+
+// hk locks the files of a command with no declared effect, so such steps run
+// one at a time. The checks only read files.
+local function reads(command: String) = new Config.CommandSpec {
+  command = command
+  effect = "read"
+}
+
+// The builds wait for the fixers, so that they use the fixed files.
+local fixers = List("newlines", "trailing-whitespace", "mixed-line-ending", "cargo-fmt")
+
+steps {
+  ["newlines"] = Builtins.newlines
+  ["trailing-whitespace"] = Builtins.trailing_whitespace
+  ["mixed-line-ending"] = Builtins.mixed_line_ending
+  ["check-added-large-files"] = Builtins.check_added_large_files
+  ["check-case-conflict"] = Builtins.check_case_conflict
+  ["check-merge-conflict"] = Builtins.check_merge_conflict
+  ["check-executables-have-shebangs"] = Builtins.check_executables_have_shebangs
+  ["check-shebang-scripts-are-executable"] = Builtins.check_shebang_scripts_are_executable
+  // The tests use this TLS key. It is not a secret.
+  ["detect-private-key"] = (Builtins.detect_private_key) {
+    exclude = "crates/testkit/fixtures/tls/*.key"
+  }
+  // No fix, because typos can replace a correct word.
+  ["typos"] {
+    types = List("text")
+    check = reads("mise run check:typos {{files}}")
+  }
+  ["cargo-fmt"] {
+    glob = "**/*.rs"
+    check = reads("mise run check:fmt")
+    fix = new Config.CommandSpec {
+      command = "mise run fmt"
+      effect = "write"
+    }
+  }
+  ["cargo-clippy"] {
+    glob = (buildInputs) { "clippy.toml" }
+    exclude = markdown
+    depends = fixers
+    check = reads("mise run check:clippy")
+  }
+  ["cargo-deny"] {
+    glob = List("**/Cargo.toml", "Cargo.lock", "deny.toml", "mise.toml")
+    check = reads("mise run check:deny")
+  }
+  ["cargo-test"] {
+    glob = buildInputs
+    exclude = markdown
+    depends = fixers
+    check = reads("mise run test")
+  }
+  // One step for all Linux tasks, so that mise builds the image one time.
+  // The prune runs first, because a volume that is in use cannot be removed.
+  ["linux"] {
+    glob = linuxInputs
+    exclude = markdown
+    depends = fixers
+    check = reads("mise run linux:prune && mise run linux:check ::: linux:secret-service")
+  }
+  ["disk"] {
+    glob = linuxInputs
+    exclude = markdown
+    depends = List("cargo-clippy", "cargo-test", "linux")
+    check = reads("mise run check:disk")
+    output_summary = "stdout"
+  }
+}

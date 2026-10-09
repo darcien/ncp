@@ -154,6 +154,7 @@ The rules for contributors and agents are in `AGENTS.md`. The design is in
 and the research in `docs/research/`.
 
 ```
+hk install --mise      # install the git pre-commit hook (one time)
 mise run precommit     # format, checks and tests on the host and in Linux
 mise run conformance   # the official MCP conformance suite
 ```
