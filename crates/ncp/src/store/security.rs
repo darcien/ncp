@@ -329,16 +329,22 @@ impl SecurityStore {
 
     /// Removes the parts of older saves, and the parts of saves that
     /// stopped before their head, so that no old token data stays. A
-    /// failure here keeps the new value, and the next save removes the
-    /// rest.
+    /// generation that is younger than the limit of a save can belong to a
+    /// save that still runs, so it stays until a later save. A failure here
+    /// keeps the new value, and the next save removes the rest.
     fn remove_other_parts(&self, account: &str, keep: &[(String, String)], deadline: Instant) {
         let Ok(accounts) = self.accounts(deadline) else {
             return;
         };
+        let now = nanos_now();
+        let limit = self.limit.as_nanos();
         let _ = accounts
             .iter()
             .filter(|other| is_part_of(account, other))
             .filter(|other| !keep.iter().any(|(part, _)| part == *other))
+            .filter(|other| {
+                generation_time(account, other).is_none_or(|time| now.saturating_sub(time) > limit)
+            })
             .try_for_each(|other| self.remove(other, deadline).map(|_| ()));
     }
 }
@@ -416,10 +422,24 @@ fn is_part_of(account: &str, other: &str) -> bool {
 /// A new generation for each save, so that the parts of two saves never
 /// mix: the time in nanoseconds and the process id.
 fn new_generation() -> String {
-    let nanos = SystemTime::now()
+    format!("{:x}-{:x}", nanos_now(), std::process::id())
+}
+
+fn nanos_now() -> u128 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |time| time.as_nanos());
-    format!("{nanos:x}-{:x}", std::process::id())
+        .map_or(0, |time| time.as_nanos())
+}
+
+/// The time of the generation of a part account `ACCOUNT/GEN/INDEX`, or
+/// `None` when the account has no generation of `ncp`.
+fn generation_time(account: &str, part: &str) -> Option<u128> {
+    let (generation, _) = part
+        .strip_prefix(account)?
+        .strip_prefix('/')?
+        .split_once('/')?;
+    let (time, _) = generation.split_once('-')?;
+    u128::from_str_radix(time, 16).ok()
 }
 
 /// The accounts of the generic password items of service `ncp` in the
@@ -588,6 +608,18 @@ mod tests {
         assert!(is_part_of("secret/A", "secret/A/g/0"));
         assert!(!is_part_of("secret/A", "secret/A"));
         assert!(!is_part_of("secret/A", "secret/AB/g/0"));
+    }
+
+    #[test]
+    fn reads_the_time_of_a_generation_from_a_part_account() {
+        let generation = new_generation();
+        let part = part_account("oauth/a/tokens", &generation, 3);
+        let time = generation_time("oauth/a/tokens", &part).unwrap();
+        assert!(nanos_now() >= time);
+        assert_eq!(
+            generation_time("oauth/a/tokens", "oauth/a/tokens/x/0"),
+            None
+        );
     }
 
     #[test]

@@ -6,6 +6,8 @@
 
 use std::{fs, path::PathBuf};
 
+use serde_json::json;
+
 use ncp::{
     credential::{CredentialKey, Secret, SecretName},
     server::ServerName,
@@ -161,9 +163,14 @@ fn keeps_a_long_value_in_parts() {
 #[test]
 fn removes_the_old_parts_after_each_save() {
     let dir = keychain("old-parts");
-    let store = store(&dir);
+    // Parts that are older than the limit of a save belong to no save that
+    // still runs.
+    let limit = std::time::Duration::from_secs(1);
+    let store = store(&dir).with_limit(limit);
+    let older_than_the_limit = || std::thread::sleep(limit + std::time::Duration::from_millis(100));
     store.save(&tokens(), &secret(&long_value())).unwrap();
     let first: Vec<String> = items(&dir).keys().cloned().collect();
+    older_than_the_limit();
     store.save(&tokens(), &secret(&long_value())).unwrap();
     let second: Vec<String> = items(&dir).keys().cloned().collect();
     assert_eq!(first.len(), second.len());
@@ -175,9 +182,34 @@ fn removes_the_old_parts_after_each_save() {
         1,
         "only the head stays: {first:?} {second:?}"
     );
+    older_than_the_limit();
     store.save(&tokens(), &secret("short")).unwrap();
     assert_eq!(items(&dir).keys().collect::<Vec<_>>(), ["oauth/a/tokens"]);
     assert_eq!(store.load(&tokens()).unwrap(), Some(secret("short")));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn keeps_the_parts_of_a_save_that_can_still_run() {
+    let dir = keychain("running-save");
+    let store = store(&dir);
+    // Another process has written the parts of its save, and not yet its
+    // head. Its generation is young: the time now, in hexadecimal.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let running = format!("oauth/a/tokens/{now:x}-1/0");
+    let stopped = "oauth/a/tokens/1-1/0";
+    fs::write(
+        dir.join("items.json"),
+        json!({"ncp": {running.clone(): "ncp-base64:", stopped: "ncp-base64:"}}).to_string(),
+    )
+    .unwrap();
+    store.save(&tokens(), &secret("t1")).unwrap();
+    let items = items(&dir);
+    assert!(items.contains_key(&running), "{items:?}");
+    assert!(!items.contains_key(stopped), "{items:?}");
     fs::remove_dir_all(dir).unwrap();
 }
 
