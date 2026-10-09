@@ -10,7 +10,7 @@ use std::{collections::BTreeMap, process::Stdio, sync::Arc, time::Duration};
 
 use process_wrap::tokio::{ChildWrapper, CommandWrap, KillOnDrop, ProcessGroup};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, BufReader},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{ChildStdin, ChildStdout},
 };
 
@@ -53,9 +53,10 @@ pub fn child_env(base: &Env, env: &BTreeMap<String, Expanded>) -> BTreeMap<Strin
 pub enum ServerLog {
     /// To the stderr of `ncp`, with no change.
     Inherit,
-    /// Each line to the function. Thus the caller can keep the JSON Lines
-    /// form of its own stderr.
-    Lines(Arc<dyn Fn(&str) + Send + Sync>),
+    /// Each line through the function, which gives the text to write to
+    /// the stderr of `ncp`. Thus the caller can keep the JSON Lines form of
+    /// its own stderr.
+    Lines(Arc<dyn Fn(&str) -> String + Send + Sync>),
 }
 
 impl std::fmt::Debug for ServerLog {
@@ -120,7 +121,16 @@ pub fn spawn(
 /// stderr. A line that is not UTF-8 must not stop the reader: the server
 /// would then get an error on its next write. A long line comes in parts of
 /// the limit, cut between characters.
-async fn log_lines(stderr: tokio::process::ChildStderr, write: Arc<dyn Fn(&str) + Send + Sync>) {
+async fn log_lines(
+    stderr: tokio::process::ChildStderr,
+    format: Arc<dyn Fn(&str) -> String + Send + Sync>,
+) {
+    // An async write: when the caller of `ncp` does not read its stderr,
+    // this task waits, and the time limits of the runtime still work.
+    let mut out = tokio::io::stderr();
+    let mut write = async |line: &str| {
+        let _ = out.write_all(format(line).as_bytes()).await;
+    };
     let mut reader = BufReader::new(stderr);
     let mut part = Vec::new();
     let mut continued = false;
@@ -129,8 +139,9 @@ async fn log_lines(stderr: tokio::process::ChildStderr, write: Arc<dyn Fn(&str) 
         let read = (&mut reader).take(room).read_until(b'\n', &mut part).await;
         if !read.is_ok_and(|read| read > 0) {
             if !part.is_empty() {
-                write(&String::from_utf8_lossy(&part));
+                write(&String::from_utf8_lossy(&part)).await;
             }
+            let _ = out.flush().await;
             return;
         }
         let ends = part.last() == Some(&b'\n');
@@ -143,7 +154,7 @@ async fn log_lines(stderr: tokio::process::ChildStderr, write: Arc<dyn Fn(&str) 
         let text = text.strip_suffix('\n').unwrap_or(&text);
         // The new line after a part of exactly the limit is not a line.
         if !(continued && ends && text.is_empty()) {
-            write(text);
+            write(text).await;
         }
         continued = !ends;
         part.drain(..cut);

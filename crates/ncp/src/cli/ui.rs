@@ -156,12 +156,8 @@ impl Ui {
     pub fn server_log(self, server: &str) -> ServerLog {
         let server = server.to_string();
         ServerLog::Lines(Arc::new(move |line| match self.format {
-            Format::Text => self.stderr(&format!("{line}\n")),
-            Format::Json => {
-                self.stderr(&json_line(
-                    &json!({"serverLog": {"server": server, "message": line}}),
-                ));
-            }
+            Format::Text => printable(&format!("{line}\n")).into_owned(),
+            Format::Json => json_line(&json!({"serverLog": {"server": server, "message": line}})),
         }))
     }
 }
