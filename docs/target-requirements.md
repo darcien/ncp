@@ -83,7 +83,7 @@ extension.
 | S4 | MUST | stdio servers get credentials through environment variables. `ncp` reads these values from the credential store. | [auth] |
 | S5 | SHOULD | A configuration file in a project directory starts stdio commands only after user approval. | — |
 | S6 | MUST | If a daemon exists, it listens only on a Unix socket that only the user can open. No network listener. | — |
-| S7 | MUST | On macOS, use the login Keychain through `/usr/bin/security`. Reason: `ncp` has no paid Developer ID; an ad-hoc signed binary changes identity at each update, and the native Keychain API then asks again for each item, which an agent cannot answer. Put the credential store behind one internal interface, so that a change of storage model or signing method changes only that module. | — |
+| S7 | MUST | On macOS, use the login Keychain through `/usr/bin/security`. Reason: `ncp` has no paid Developer ID; an ad-hoc signed binary changes identity at each update, and the native Keychain API then asks again for each item, which an agent cannot answer. `ncp` gives each command to `security -i` on standard input, because a value in the process arguments breaks S3. One input line holds at most 4095 bytes, and some token sets are longer (for example from Entra ID). Thus a value that does not fit one line is kept in several items. A save that fails before its end keeps the old value. Put the credential store behind one internal interface, so that a change of storage model or signing method changes only that module. | — |
 | S8 | MUST | A credential store call that gives no answer in 60 s stops with an error. A locked store waits for its unlock prompt with no limit, and on a machine with no display nobody can answer the prompt. | — |
 
 ### 3.4 Network
