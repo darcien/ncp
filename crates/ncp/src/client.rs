@@ -87,6 +87,9 @@ pub struct Launch<'a> {
     pub authorized: Option<&'a http::Authorized>,
     /// Gets the progress notifications of the requests.
     pub progress: &'a ProgressSink,
+    /// Answers an elicitation of the server: a person at a TTY. With no
+    /// elicitor, `ncp` says that it cannot answer one.
+    pub elicitor: Option<&'a Elicitor>,
 }
 
 /// The handshake step that failed.
@@ -275,12 +278,29 @@ impl std::fmt::Debug for ProgressSink {
     }
 }
 
-/// The client side of the session: the client information, and the
-/// progress of each request.
+/// Asks the user for an elicitation: the parameters of
+/// `elicitation/create` in, the `ElicitResult` out, both as JSON.
+pub type Elicitor = Arc<
+    dyn Fn(serde_json::Value) -> std::pin::Pin<Box<dyn Future<Output = serde_json::Value> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// The answers to the `input_required` result of a request, for the next
+/// round of the same request.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Continuation {
+    pub responses: rmcp::model::InputResponses,
+    pub state: Option<String>,
+}
+
+/// The client side of the session: the client information, the progress
+/// of each request, and the answer to an elicitation of a legacy server.
 #[derive(Clone)]
 struct Handler {
     info: ClientConfig,
     progress: ProgressSink,
+    elicitor: Option<Elicitor>,
     /// True while a request waits for its answer. `ncp` sends one request
     /// at a time, so a notification out of that time is for no active
     /// request (the spec: a client SHOULD track active progress tokens).
@@ -321,6 +341,22 @@ impl rmcp::ClientHandler for Handler {
             });
         }
         std::future::ready(())
+    }
+
+    /// A legacy server asks with a request of its own during a request of
+    /// `ncp` (MCP 2025-11-25, client/elicitation).
+    async fn create_elicitation(
+        &self,
+        request: rmcp::model::ElicitRequestParams,
+        _context: rmcp::service::RequestContext<RoleClient>,
+    ) -> Result<rmcp::model::ElicitResult, rmcp::ErrorData> {
+        let decline = || serde_json::json!({"action": "decline"});
+        let answer = match (&self.elicitor, serde_json::to_value(&request)) {
+            (Some(elicitor), Ok(params)) => elicitor(params).await,
+            _ => decline(),
+        };
+        serde_json::from_value(answer)
+            .map_err(|error| rmcp::ErrorData::internal_error(error.to_string(), None))
     }
 }
 
@@ -367,7 +403,13 @@ async fn probe(
         preferred_versions.push(first_modern);
     }
     let lifecycle = ClientLifecycleMode::Discover { preferred_versions };
-    let attempt = handshake(launch, lifecycle, client_info(), Phase::Discover, deadline);
+    let attempt = handshake(
+        launch,
+        lifecycle,
+        client_info(launch.elicitor.is_some()),
+        Phase::Discover,
+        deadline,
+    );
     // On a probe timeout the future is dropped. Its stdio process stops by
     // kill-on-drop, so a late answer cannot reach the next connection. When
     // the connect limit comes first, the handshake stops itself.
@@ -396,7 +438,7 @@ async fn initialize(
     phase: Phase,
     deadline: Instant,
 ) -> Result<Connection, ConnectError> {
-    let info = client_info().with_protocol_version(to_rmcp(&version));
+    let info = client_info(launch.elicitor.is_some()).with_protocol_version(to_rmcp(&version));
     handshake(
         launch,
         ClientLifecycleMode::Initialize,
@@ -422,6 +464,7 @@ async fn handshake(
     let info = Handler {
         info,
         progress: launch.progress.clone(),
+        elicitor: launch.elicitor.cloned(),
         active: Arc::default(),
     };
     let failed = |source| ConnectError::Handshake {
@@ -562,9 +605,16 @@ async fn race<T>(
     }
 }
 
-fn client_info() -> ClientConfig {
+/// The client information. A client with a person at a TTY says that it
+/// can answer elicitation in form and URL mode; else a server must not ask.
+fn client_info(elicitation: bool) -> ClientConfig {
+    let mut capabilities = ClientCapabilities::default();
+    if elicitation {
+        capabilities.elicitation =
+            serde_json::from_value(serde_json::json!({"form": {}, "url": {}})).ok();
+    }
     ClientConfig::new(
-        ClientCapabilities::default(),
+        capabilities,
         Implementation::new("ncp", env!("CARGO_PKG_VERSION")),
     )
 }
@@ -785,9 +835,14 @@ impl Connection {
     pub async fn read_resource(
         &self,
         uri: &str,
+        continuation: Option<&Continuation>,
         limits: RequestLimits<'_>,
     ) -> Result<Answer<ReadResourceResult>, RequestError> {
-        let params = ReadResourceRequestParams::new(uri);
+        let mut params = ReadResourceRequestParams::new(uri);
+        if let Some(continuation) = continuation {
+            params.input_responses = Some(continuation.responses.clone());
+            params.request_state.clone_from(&continuation.state);
+        }
         let request = ClientRequest::ReadResourceRequest(ReadResourceRequest::new(params));
         match self.request(request, limits).await? {
             ServerResult::ReadResourceResult(result) => Ok(Answer::Complete(result)),
@@ -805,9 +860,14 @@ impl Connection {
         &self,
         name: &str,
         arguments: JsonObject,
+        continuation: Option<&Continuation>,
         limits: RequestLimits<'_>,
     ) -> Result<Answer<GetPromptResult>, RequestError> {
         let mut params = GetPromptRequestParams::new(name);
+        if let Some(continuation) = continuation {
+            params.input_responses = Some(continuation.responses.clone());
+            params.request_state.clone_from(&continuation.state);
+        }
         params.arguments = (!arguments.is_empty()).then_some(arguments);
         let request = ClientRequest::GetPromptRequest(GetPromptRequest::new(params));
         match self.request(request, limits).await? {
@@ -859,9 +919,14 @@ impl Connection {
         &self,
         name: &str,
         arguments: JsonObject,
+        continuation: Option<&Continuation>,
         limits: RequestLimits<'_>,
     ) -> Result<CallToolResponse, RequestError> {
-        let params = CallToolRequestParams::new(name.to_string()).with_arguments(arguments);
+        let mut params = CallToolRequestParams::new(name.to_string()).with_arguments(arguments);
+        if let Some(continuation) = continuation {
+            params.input_responses = Some(continuation.responses.clone());
+            params.request_state.clone_from(&continuation.state);
+        }
         let request = ClientRequest::CallToolRequest(CallToolRequest::new(params));
         match self.request(request, limits).await? {
             ServerResult::CallToolResult(result) => Ok(CallToolResponse::Complete(result)),

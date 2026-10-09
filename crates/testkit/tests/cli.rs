@@ -2219,3 +2219,51 @@ fn bash_completion_offers_the_cached_tool_names_and_no_unsafe_name() {
     assert!(has(&words, "fx"), "the server after an option: {words}");
     assert!(!home.root.join("PWNED").exists());
 }
+
+#[test]
+fn elicitation_of_a_modern_server_asks_on_the_tty_and_sends_the_answers() {
+    let home = Home::new("elicit-modern").set("NCP_TEST_TTY", "1");
+    home.configure(&json!({"fx": stdio("modern")}));
+    // The fields come in name order: an empty age takes the default, then
+    // a name, and yes to send.
+    let run = home.run_with_stdin(&["tool", "call", "fx", "elicit", "text=x"], "\nAda\ny\n");
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let answer: Value = serde_json::from_str(text_of(&run.stdout())).unwrap();
+    assert_eq!(
+        answer,
+        json!({"action": "accept", "content": {"name": "Ada", "age": 30}})
+    );
+    let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
+    assert!(
+        stderr.contains("The server fx asks: Who are you?"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn elicitation_can_be_declined_and_with_no_tty_gives_exit_5() {
+    let home = Home::new("elicit-decline").set("NCP_TEST_TTY", "1");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let run = home.run_with_stdin(&["tool", "call", "fx", "elicit", "text=x"], "\nAda\nn\n");
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let answer: Value = serde_json::from_str(text_of(&run.stdout())).unwrap();
+    assert_eq!(answer, json!({"action": "decline"}));
+    let home = Home::new("elicit-no-tty");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let run = home.run(&["tool", "call", "fx", "elicit", "text=x"]);
+    assert_eq!(run.code(), 5, "{}", run.describe());
+}
+
+#[test]
+fn elicitation_request_of_a_legacy_server_asks_on_the_tty() {
+    let home = Home::new("elicit-legacy").set("NCP_TEST_TTY", "1");
+    home.configure(&json!({"fx": stdio("legacy")}));
+    let run = home.run_with_stdin(
+        &["tool", "call", "fx", "elicit-legacy", "text=x"],
+        "Ada\ny\n",
+    );
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let answer: Value = serde_json::from_str(text_of(&run.stdout())).unwrap();
+    assert_eq!(answer["action"], "accept");
+    assert_eq!(answer["content"], json!({"name": "Ada"}));
+}

@@ -126,6 +126,16 @@ fn tools() -> Vec<Tool> {
             "Report three steps of progress",
             text_arg("text"),
         ),
+        Tool::new(
+            "elicit",
+            "Ask for a name and an age, as a multi-round request",
+            text_arg("text"),
+        ),
+        Tool::new(
+            "elicit-legacy",
+            "Ask for a name with an elicitation request",
+            text_arg("text"),
+        ),
         Tool::new("env", "Return an environment variable", text_arg("name")),
         Tool::new("header", "Return an HTTP request header", text_arg("name")),
         Tool::new(
@@ -371,6 +381,47 @@ impl ServerHandler for Fixture {
                     }
                 }
                 Ok(text_result("done"))
+            }
+            "elicit" => Ok(
+                match request
+                    .input_responses
+                    .as_ref()
+                    .and_then(|answers| answers.get("q"))
+                {
+                    Some(answer) => text_result(answer.to_string()),
+                    None => CallToolResponse::InputRequired(InputRequiredResult::new(
+                        serde_json::from_value(
+                            json!({"q": {"method": "elicitation/create", "params": {
+                                "mode": "form",
+                                "message": "Who are you?",
+                                "requestedSchema": {"type": "object", "properties": {
+                                    "name": {"type": "string"},
+                                    "age": {"type": "integer", "default": 30}
+                                }, "required": ["name"]}
+                            }}}),
+                        )
+                        .ok(),
+                        Some("state-e".into()),
+                    )),
+                },
+            ),
+            "elicit-legacy" => {
+                let params = serde_json::from_value(json!({
+                    "mode": "form",
+                    "message": "Who are you?",
+                    "requestedSchema": {"type": "object", "properties": {
+                        "name": {"type": "string"}
+                    }, "required": ["name"]}
+                }))
+                .map_err(|error| ErrorData::internal_error(error.to_string(), None))?;
+                let answer = context
+                    .peer
+                    .create_elicitation(params)
+                    .await
+                    .map_err(|error| ErrorData::internal_error(error.to_string(), None))?;
+                Ok(text_result(
+                    serde_json::to_string(&answer).unwrap_or_default(),
+                ))
             }
             "ask" => Ok(CallToolResponse::InputRequired(
                 InputRequiredResult::from_request_state("state-1"),

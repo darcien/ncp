@@ -454,16 +454,21 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
         if let (true, Some(tool)) = (call.help, &tool) {
             return show_tool(context, name, tool);
         }
-        let response = connection
-            .call_tool(tool_name, arguments, context.limits())
-            .await;
-        let response = match response {
-            Ok(response) => response,
-            Err(error) => {
-                super::auth::remember_scopes(context, server, &error).await;
-                return Err(call_failure(server, tool_name, tool.is_some(), &error));
-            }
-        };
+        let listed = tool.is_some();
+        let response =
+            super::ask::with_rounds(context, name, async |continuation| {
+                match connection
+                    .call_tool(tool_name, arguments.clone(), continuation, context.limits())
+                    .await
+                {
+                    Ok(response) => Ok(response),
+                    Err(error) => {
+                        super::auth::remember_scopes(context, server, &error).await;
+                        Err(call_failure(server, tool_name, listed, &error))
+                    }
+                }
+            })
+            .await?;
         print_response(context, name, tool_name, response)
     })
     .await
@@ -587,10 +592,13 @@ async fn resource_read(context: &Context<'_>, word: &str, uri: &str) -> Result<(
     let server = select(context, &loaded, word, show_fix)?;
     let name = server.name.as_str();
     let answer = with_connection(context, server, async |connection| {
-        connection
-            .read_resource(uri, context.limits())
-            .await
-            .map_err(|error| named_failure(server, "resources/read", &error, "resource"))
+        super::ask::with_rounds(context, name, async |continuation| {
+            connection
+                .read_resource(uri, continuation, context.limits())
+                .await
+                .map_err(|error| named_failure(server, "resources/read", &error, "resource"))
+        })
+        .await
     })
     .await?;
     let result = match answer {
@@ -719,10 +727,13 @@ async fn prompt_get(
     let server = select(context, &loaded, word, show_fix)?;
     let name = server.name.as_str();
     let answer = with_connection(context, server, async |connection| {
-        connection
-            .get_prompt(prompt, arguments.clone(), context.limits())
-            .await
-            .map_err(|error| named_failure(server, "prompts/get", &error, "prompt"))
+        super::ask::with_rounds(context, name, async |continuation| {
+            connection
+                .get_prompt(prompt, arguments.clone(), continuation, context.limits())
+                .await
+                .map_err(|error| named_failure(server, "prompts/get", &error, "prompt"))
+        })
+        .await
     })
     .await?;
     match answer {

@@ -1,6 +1,7 @@
 //! The command line: the imperative shell around the client core.
 
 pub mod args;
+pub mod ask;
 pub mod auth;
 mod commands;
 mod completion;
@@ -45,6 +46,8 @@ const SHUTDOWN_LIMIT: Duration = Duration::from_secs(2);
 pub struct Platform {
     pub open_native: secrets::OpenNative,
     pub open_browser: auth::OpenBrowser,
+    /// True when a person can answer questions on a TTY.
+    pub interactive: fn() -> bool,
 }
 
 /// Runs `ncp` and gives its exit code.
@@ -53,6 +56,7 @@ pub fn main() -> ExitCode {
     main_with(Platform {
         open_native: secrets::open_native,
         open_browser: auth::open_browser,
+        interactive: ask::interactive,
     })
 }
 
@@ -175,6 +179,7 @@ async fn run(
             open_native: platform.open_native,
             open_browser: platform.open_browser,
             timings,
+            interactive: (platform.interactive)(),
             cache: match (cli.options.no_cache, cli.options.refresh) {
                 (true, _) => session::CacheUse::Off,
                 (false, true) => session::CacheUse::WriteOnly,

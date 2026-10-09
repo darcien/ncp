@@ -9,6 +9,8 @@
 //!   to the URL, and then a GET to the `Location` of the answer, as a
 //!   browser does after a login that the user approves. With no value, no
 //!   browser is available.
+//! - With `NCP_TEST_TTY=1`, a person answers questions on stdin, as on a
+//!   TTY.
 
 use std::{
     io::{BufRead, BufReader, Write},
@@ -71,9 +73,14 @@ fn fake_browser(url: &str) -> std::io::Result<()> {
     }
 }
 
+fn fake_tty() -> bool {
+    std::env::var_os("NCP_TEST_TTY").is_some()
+}
+
 fn main() -> std::process::ExitCode {
     ncp::cli::main_with(Platform {
         open_native: fake_native,
         open_browser: fake_browser,
+        interactive: fake_tty,
     })
 }

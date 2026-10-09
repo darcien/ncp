@@ -62,6 +62,8 @@ pub struct Context<'a> {
     pub timings: Option<Arc<Timings>>,
     /// What `ncp` does with its caches.
     pub cache: CacheUse,
+    /// A person can answer questions: stdin and stderr are a TTY.
+    pub interactive: bool,
 }
 
 impl Context<'_> {
@@ -354,6 +356,7 @@ struct Prepared {
     http: Option<reqwest::Client>,
     server_log: client::stdio::ServerLog,
     progress: client::ProgressSink,
+    elicitor: Option<client::Elicitor>,
 }
 
 async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Failure> {
@@ -399,6 +402,9 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
         http,
         server_log: ui.server_log(name),
         progress: ui.progress(name),
+        elicitor: context
+            .interactive
+            .then(|| super::ask::elicitor(ui, name, context.open_browser, &context.cancel)),
     })
 }
 
@@ -417,6 +423,7 @@ impl Prepared {
             observer: &self.observer,
             authorized: None,
             progress: &self.progress,
+            elicitor: self.elicitor.as_ref(),
         }
     }
 

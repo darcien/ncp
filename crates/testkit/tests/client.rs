@@ -99,6 +99,7 @@ impl Setup {
             observer: &client::observe::Observer::default(),
             authorized: None,
             progress: &client::ProgressSink::default(),
+            elicitor: None,
         })
         .await
     }
@@ -143,7 +144,12 @@ fn arguments(value: serde_json::Value) -> JsonObject {
 /// Calls a tool and returns the first text content.
 async fn call_text(connection: &Connection, tool: &str, args: serde_json::Value) -> String {
     let response = connection
-        .call_tool(tool, arguments(args), limits(&CancellationToken::new()))
+        .call_tool(
+            tool,
+            arguments(args),
+            None,
+            limits(&CancellationToken::new()),
+        )
         .await
         .unwrap();
     let CallToolResponse::Complete(result) = response else {
@@ -221,7 +227,7 @@ async fn finds_modern_era_of_http_server() {
         .list_tools(limits(&CancellationToken::new()))
         .await
         .unwrap();
-    assert_eq!(tools.len(), 7);
+    assert_eq!(tools.len(), 9);
     connection.close().await;
 }
 
@@ -329,6 +335,7 @@ async fn returns_tool_error_result_as_complete_result() {
         .call_tool(
             "fail",
             arguments(serde_json::json!({"text": "bad"})),
+            None,
             limits(&CancellationToken::new()),
         )
         .await
@@ -344,7 +351,12 @@ async fn returns_tool_error_result_as_complete_result() {
 async fn returns_input_required_result_to_the_caller() {
     let connection = Setup::new(stdio(&["modern"], &[])).connect().await.unwrap();
     let response = connection
-        .call_tool("ask", JsonObject::new(), limits(&CancellationToken::new()))
+        .call_tool(
+            "ask",
+            JsonObject::new(),
+            None,
+            limits(&CancellationToken::new()),
+        )
         .await
         .unwrap();
     let CallToolResponse::InputRequired(result) = response else {
@@ -372,7 +384,7 @@ async fn call_and_cancel(
     });
     let args = serde_json::json!({"ms": 30_000, "marker": marker.to_str().unwrap()});
     connection
-        .call_tool("wait", arguments(args), limits(&cancel))
+        .call_tool("wait", arguments(args), None, limits(&cancel))
         .await
 }
 
@@ -430,6 +442,7 @@ async fn sends_cancel_request_when_request_passes_its_time_limit() {
         .call_tool(
             "wait",
             arguments(args),
+            None,
             RequestLimits {
                 cancel: &cancel,
                 timeout: limit,
