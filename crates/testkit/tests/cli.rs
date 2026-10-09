@@ -2081,3 +2081,56 @@ fn tool_list_with_no_time_to_live_is_not_cached() {
     assert_eq!(home.run(&["tool", "list", "fx"]).code(), 0);
     assert!(!home.root.join("cache/ncp/lists/fx.json").exists());
 }
+
+#[test]
+fn completion_never_gives_a_name_with_shell_characters() {
+    let home = Home::new("complete-unsafe");
+    home.configure(&json!({
+        "$(touch${IFS}PWNED)": {"command": "x"},
+        "ok": {"command": "x"},
+        "bad_entry": {"url": "https://example.com/mcp"}
+    }));
+    let run = home.run(&["__complete-servers"]);
+    assert_eq!(String::from_utf8_lossy(&run.0.stdout), "bad_entry\nok\n");
+}
+
+fn cached_server(home: &Home, env: &Value) {
+    home.configure(&json!({"fx": {"command": FIXTURE, "args": ["cached"], "env": env}}));
+}
+
+#[test]
+fn a_changed_entry_makes_the_cached_list_invalid() {
+    let home = Home::new("cache-entry");
+    cached_server(&home, &json!({"A": "1"}));
+    assert_eq!(home.run(&["tool", "list", "fx"]).code(), 0);
+    let from_cache = |run: &Run| {
+        notes(run, "debug").iter().any(|note| {
+            note["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("list cache")
+        })
+    };
+    assert!(from_cache(&home.run(&["-v", "tool", "list", "fx"])));
+    cached_server(&home, &json!({"A": "2"}));
+    assert!(!from_cache(&home.run(&["-v", "tool", "list", "fx"])));
+}
+
+#[test]
+fn tool_call_lists_again_when_the_cached_list_does_not_have_the_tool() {
+    let home = Home::new("cache-stale");
+    cached_server(&home, &json!({}));
+    assert_eq!(home.run(&["tool", "list", "fx"]).code(), 0);
+    let path = home.root.join("cache/ncp/lists/fx.json");
+    let mut cached: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    cached["tools"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|tool| tool["name"] != "echo");
+    std::fs::write(&path, cached.to_string()).unwrap();
+    let run = home.run(&["tool", "call", "fx", "echo", "text=hi"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(text_of(&run.stdout()), "hi");
+    let run = home.run(&["tool", "show", "fx", "echo"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+}

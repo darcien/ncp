@@ -571,6 +571,42 @@ fn to_rmcp(version: &ProtocolVersion) -> rmcp::model::ProtocolVersion {
         .unwrap_or(rmcp::model::ProtocolVersion::LATEST_WITH_INITIALIZE)
 }
 
+/// The cache hints of a list (MCP 2026-07-28, server/utilities/caching):
+/// the time that it stays fresh, and if it is for one user only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CacheHints {
+    pub ttl_ms: Option<u64>,
+    /// A private list must not be shared across authorization contexts.
+    /// A list with no scope counts as private: that is the safe reading.
+    pub private: bool,
+}
+
+impl CacheHints {
+    /// No hints: not fresh, private.
+    pub const NONE: Self = Self {
+        ttl_ms: None,
+        private: true,
+    };
+
+    #[must_use]
+    pub fn of(ttl_ms: Option<u64>, scope: Option<&rmcp::model::CacheScope>) -> Self {
+        Self {
+            ttl_ms,
+            private: !matches!(scope, Some(rmcp::model::CacheScope::Public)),
+        }
+    }
+
+    /// The hints of two pages: the shorter time, and private when one page
+    /// is private.
+    #[must_use]
+    pub fn and(self, other: Self) -> Self {
+        Self {
+            ttl_ms: self.ttl_ms.zip(other.ttl_ms).map(|(a, b)| a.min(b)),
+            private: self.private || other.private,
+        }
+    }
+}
+
 /// The answer to a request that can ask for more input (multi-round
 /// requests): the result, or the `input_required` result for the caller.
 #[derive(Debug)]
@@ -616,8 +652,7 @@ impl Connection {
         Ok(self.list_tools_fresh_for(limits).await?.0)
     }
 
-    /// Lists all tools, with the time that the list stays fresh: the
-    /// shortest `ttlMs` of the pages, or `None` when a page has none.
+    /// Lists all tools, with the cache hints of the pages.
     ///
     /// # Errors
     ///
@@ -625,26 +660,19 @@ impl Connection {
     pub async fn list_tools_fresh_for(
         &self,
         limits: RequestLimits<'_>,
-    ) -> Result<(Vec<Tool>, Option<u64>), RequestError> {
-        let mut ttl: Option<Option<u64>> = None;
-        let tools = self
-            .pages(
-                limits,
-                |params| ClientRequest::ListToolsRequest(ListToolsRequest::with_param(params)),
-                |result| match result {
-                    ServerResult::ListToolsResult(page) => {
-                        let page_ttl = page.ttl_ms;
-                        ttl = Some(match ttl {
-                            None => page_ttl,
-                            Some(earlier) => earlier.zip(page_ttl).map(|(a, b)| a.min(b)),
-                        });
-                        Some((page.tools, page.next_cursor))
-                    }
-                    _ => None,
-                },
-            )
-            .await?;
-        Ok((tools, ttl.flatten()))
+    ) -> Result<(Vec<Tool>, CacheHints), RequestError> {
+        self.pages(
+            limits,
+            |params| ClientRequest::ListToolsRequest(ListToolsRequest::with_param(params)),
+            |result| match result {
+                ServerResult::ListToolsResult(page) => {
+                    let hints = CacheHints::of(page.ttl_ms, page.cache_scope.as_ref());
+                    Some((page.tools, page.next_cursor, hints))
+                }
+                _ => None,
+            },
+        )
+        .await
     }
 
     /// Lists all resources.
@@ -660,11 +688,14 @@ impl Connection {
             limits,
             |params| ClientRequest::ListResourcesRequest(ListResourcesRequest::with_param(params)),
             |result| match result {
-                ServerResult::ListResourcesResult(page) => Some((page.resources, page.next_cursor)),
+                ServerResult::ListResourcesResult(page) => {
+                    Some((page.resources, page.next_cursor, CacheHints::NONE))
+                }
                 _ => None,
             },
         )
         .await
+        .map(|(items, _)| items)
     }
 
     /// Lists all resource templates.
@@ -685,12 +716,13 @@ impl Connection {
             },
             |result| match result {
                 ServerResult::ListResourceTemplatesResult(page) => {
-                    Some((page.resource_templates, page.next_cursor))
+                    Some((page.resource_templates, page.next_cursor, CacheHints::NONE))
                 }
                 _ => None,
             },
         )
         .await
+        .map(|(items, _)| items)
     }
 
     /// Lists all prompts.
@@ -706,11 +738,14 @@ impl Connection {
             limits,
             |params| ClientRequest::ListPromptsRequest(ListPromptsRequest::with_param(params)),
             |result| match result {
-                ServerResult::ListPromptsResult(page) => Some((page.prompts, page.next_cursor)),
+                ServerResult::ListPromptsResult(page) => {
+                    Some((page.prompts, page.next_cursor, CacheHints::NONE))
+                }
                 _ => None,
             },
         )
         .await
+        .map(|(items, _)| items)
     }
 
     /// Reads one resource. An `input_required` result goes back to the
@@ -760,19 +795,21 @@ impl Connection {
         &self,
         limits: RequestLimits<'_>,
         request: impl Fn(PaginatedRequestParams) -> ClientRequest,
-        mut page: impl FnMut(ServerResult) -> Option<(Vec<T>, Option<Cursor>)>,
-    ) -> Result<Vec<T>, RequestError> {
+        page: impl Fn(ServerResult) -> Option<(Vec<T>, Option<Cursor>, CacheHints)>,
+    ) -> Result<(Vec<T>, CacheHints), RequestError> {
         let mut items = Vec::new();
+        let mut hints: Option<CacheHints> = None;
         let mut cursor = None;
         // A server that gives a cursor again would make the loop endless.
         let mut seen = std::collections::HashSet::new();
         loop {
             let params = PaginatedRequestParams::default().with_cursor(cursor);
             let result = self.request(request(params), limits).await?;
-            let (found, next) = page(result).ok_or(RequestError::UnexpectedResult)?;
+            let (found, next, page_hints) = page(result).ok_or(RequestError::UnexpectedResult)?;
             items.extend(found);
+            hints = Some(hints.map_or(page_hints, |earlier| earlier.and(page_hints)));
             match next {
-                None => return Ok(items),
+                None => return Ok((items, hints.unwrap_or(CacheHints::NONE))),
                 Some(next) if !seen.insert(next.clone()) => {
                     return Err(RequestError::RepeatedCursor);
                 }

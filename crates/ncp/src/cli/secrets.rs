@@ -271,6 +271,8 @@ async fn set(context: &Context<'_>, name: &str, place: CredentialPlace) -> Resul
     call(context, &target, move |store| store.save(&saved, &value))
         .await
         .map_err(|error| store_failure(&error))?;
+    // A list of a server can depend on the value.
+    crate::list_cache::remove_all(&context.paths.cache_dir);
     warn_about_copies(context, name, &key, place).await;
     context.ui.result(
         || format!("Stored {name} in {}.\n", place_text(place)),
@@ -586,6 +588,7 @@ async fn delete(context: &Context<'_>, name: &str) -> Result<(), Failure> {
             Err(Failure::usage(format!("{name} is not stored")).hint("ncp secret list"))
         }
         (false, _) => {
+            crate::list_cache::remove_all(&context.paths.cache_dir);
             let places: Vec<&str> = removed.iter().map(|place| place_name(*place)).collect();
             let text: Vec<&str> = removed.iter().map(|place| place_text(*place)).collect();
             context.ui.result(

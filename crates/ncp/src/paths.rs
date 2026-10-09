@@ -9,6 +9,8 @@ use crate::expand::Env;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paths {
     pub config_file: PathBuf,
+    /// The folder of the caches: the era cache and the list cache.
+    pub cache_dir: PathBuf,
     pub era_cache: PathBuf,
     pub credential_file: PathBuf,
 }
@@ -18,14 +20,6 @@ pub struct Paths {
 pub struct NoHome;
 
 impl Paths {
-    /// The folder of the caches of `ncp`.
-    #[must_use]
-    pub fn cache_dir(&self) -> PathBuf {
-        self.era_cache
-            .parent()
-            .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
-    }
-
     /// # Errors
     ///
     /// Returns an error when an XDG variable is not set and `HOME` is not an
@@ -44,9 +38,11 @@ impl Paths {
                 _ => Ok(home()?.join(fallback)),
             }
         };
+        let cache_dir = base("XDG_CACHE_HOME", ".cache")?.join("ncp");
         Ok(Self {
             config_file: base("XDG_CONFIG_HOME", ".config")?.join("ncp/mcp.json"),
-            era_cache: base("XDG_CACHE_HOME", ".cache")?.join("ncp/eras.json"),
+            era_cache: cache_dir.join("eras.json"),
+            cache_dir,
             credential_file: base("XDG_STATE_HOME", ".local/state")?.join("ncp/credentials.json"),
         })
     }

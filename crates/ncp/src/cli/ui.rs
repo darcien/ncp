@@ -82,7 +82,7 @@ impl Ui {
             // JSON on a TTY comes only from `--output-format json`; a
             // person reads it, so it is pretty (section 4).
             Format::Json if std::io::stdout().is_terminal() => {
-                write_stdout(&format!("{}\n", printable(&pretty_json(&json()))))
+                write_stdout(&format!("{}\n", escape_raw_controls(pretty_json(&json()))))
             }
             Format::Json => write_stdout(&json_line(&json())),
         }
@@ -245,7 +245,7 @@ pub fn progress_line(format: Format, server: &str, progress: &crate::client::Pro
             let message = progress
                 .message
                 .as_deref()
-                .map(|message| format!(" {message}"))
+                .map(|message| format!(" {}", one_line(&message.replace('\t', " "))))
                 .unwrap_or_default();
             format!(
                 "progress: server {server}: {}{total}{message}\n",
@@ -313,8 +313,13 @@ fn pretty_json(value: &Value) -> String {
 /// them when a person reads the stream, so they go out as `\u00XX` escapes.
 #[must_use]
 pub fn json_line(value: &Value) -> String {
-    let text = value.to_string();
-    let escaped: String = if text.chars().any(is_raw_control) {
+    format!("{}\n", escape_raw_controls(value.to_string()))
+}
+
+/// JSON text with DEL and the C1 control characters as `\u00XX` escapes,
+/// which keeps it valid JSON.
+fn escape_raw_controls(text: String) -> String {
+    if text.chars().any(is_raw_control) {
         text.chars()
             .map(|c| {
                 if is_raw_control(c) {
@@ -326,8 +331,16 @@ pub fn json_line(value: &Value) -> String {
             .collect()
     } else {
         text
-    };
-    format!("{escaped}\n")
+    }
+}
+
+/// A message of a note on one line. A message can come from a server, and
+/// a new line in it could start a line that looks like a note of `ncp`.
+fn one_line(message: &str) -> String {
+    message
+        .replace("\r\n", "\\n")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }
 
 fn is_raw_control(c: char) -> bool {
@@ -340,8 +353,8 @@ fn is_raw_control(c: char) -> bool {
 pub fn note(kind: &str, format: Format, server: Option<&str>, message: &str) -> String {
     match format {
         Format::Text => match server {
-            Some(server) => format!("{kind}: server {server}: {message}\n"),
-            None => format!("{kind}: {message}\n"),
+            Some(server) => format!("{kind}: server {server}: {}\n", one_line(message)),
+            None => format!("{kind}: {}\n", one_line(message)),
         },
         Format::Json => {
             let mut body = json!({"message": message});
@@ -367,9 +380,9 @@ pub fn error_text(format: Format, failure: &Failure) -> String {
             let hint = failure
                 .hint
                 .as_deref()
-                .map(|hint| format!("hint: {hint}\n"))
+                .map(|hint| format!("hint: {}\n", one_line(hint)))
                 .unwrap_or_default();
-            format!("error: {server}{}\n{hint}", failure.message)
+            format!("error: {server}{}\n{hint}", one_line(&failure.message))
         }
         Format::Json => {
             let mut body = json!({
@@ -439,6 +452,28 @@ mod tests {
     #[test]
     fn printable_text_keeps_crlf_line_ends() {
         assert_eq!(printable("a\r\nb\rc"), "a\nb\\u{d}c");
+    }
+
+    #[test]
+    fn a_message_with_new_lines_stays_on_one_line() {
+        let failure = Failure::new(Exit::Protocol, "x\nhint: run evil").hint("a\nb");
+        assert_eq!(
+            error_text(Format::Text, &failure),
+            "error: x\\nhint: run evil\nhint: a\\nb\n"
+        );
+        assert_eq!(
+            note("warning", Format::Text, None, "a\r\nerror: b"),
+            "warning: a\\nerror: b\n"
+        );
+        let progress = crate::client::Progress {
+            progress: 1.0,
+            total: None,
+            message: Some("a\nerror: b".into()),
+        };
+        assert_eq!(
+            progress_line(Format::Text, "fx", &progress),
+            "progress: server fx: 1 a\\nerror: b\n"
+        );
     }
 
     #[test]

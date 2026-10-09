@@ -23,6 +23,9 @@ pub struct CachedTools {
     /// The target as the file writes it. A changed target makes the list
     /// invalid.
     pub target: Target,
+    /// A digest of the entry as the file writes it: a changed `env`,
+    /// `headers` or `oauth.clientId` makes the list invalid.
+    pub entry: u64,
     /// Milliseconds since the Unix epoch.
     pub fetched_at_ms: u64,
     pub ttl_ms: u64,
@@ -32,8 +35,9 @@ pub struct CachedTools {
 impl CachedTools {
     /// The tools when they are fresh for this target at this time.
     #[must_use]
-    pub fn fresh_for(&self, target: &Target, now_ms: u64) -> Option<&[Tool]> {
+    pub fn fresh_for(&self, target: &Target, entry: u64, now_ms: u64) -> Option<&[Tool]> {
         let fresh = &self.target == target
+            && self.entry == entry
             && now_ms >= self.fetched_at_ms
             && now_ms - self.fetched_at_ms < self.ttl_ms;
         fresh.then_some(self.tools.as_slice())
@@ -44,6 +48,46 @@ impl CachedTools {
     pub fn age(&self, now_ms: u64) -> Duration {
         Duration::from_millis(now_ms.saturating_sub(self.fetched_at_ms))
     }
+}
+
+/// The longest time that `ncp` keeps a list, whatever the server says. A
+/// wrong `ttlMs` must not keep an old list for days.
+pub const MAX_TTL_MS: u64 = 24 * 60 * 60 * 1000;
+
+/// The time to keep a list, or `None` when `ncp` must not keep it.
+///
+/// A private list must not be shared across authorization contexts (MCP
+/// 2026-07-28, server/utilities/caching). The cache has no copy of a
+/// credential, so it cannot see a changed token: a private list is kept
+/// only when the connection used no credential, that is no OAuth token
+/// and no `${NAME}` value.
+#[must_use]
+pub fn keep_for(ttl_ms: Option<u64>, private: bool, used_credentials: bool) -> Option<u64> {
+    let ttl = ttl_ms.filter(|ttl| *ttl > 0)?;
+    (!private || !used_credentials).then_some(ttl.min(MAX_TTL_MS))
+}
+
+/// The digest of the entry: the target and the `env`, `headers` and
+/// `oauth.clientId` as the file writes them. It holds no expanded value.
+#[must_use]
+pub fn entry_digest(server: &crate::config::Server) -> u64 {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    format!("{:?}", server.target).hash(&mut hasher);
+    match &server.transport {
+        crate::config::Transport::Stdio(stdio) => format!("{:?}", stdio.env).hash(&mut hasher),
+        crate::config::Transport::Http(remote) | crate::config::Transport::Sse(remote) => {
+            format!("{:?}", remote.headers).hash(&mut hasher);
+            remote.oauth_client_id.hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
+
+/// Removes the lists of all servers, for example after a change of a
+/// secret: a list can depend on it.
+pub fn remove_all(cache_dir: &Path) {
+    let _ = std::fs::remove_dir_all(cache_dir.join("lists"));
 }
 
 /// The file of the tools of a server.
@@ -102,6 +146,7 @@ mod tests {
     fn cached() -> CachedTools {
         CachedTools {
             target: target("https://a.test/mcp"),
+            entry: 7,
             fetched_at_ms: 1_000,
             ttl_ms: 500,
             tools: vec![Tool::new("echo", "Echo", Arc::new(serde_json::Map::new()))],
@@ -111,27 +156,26 @@ mod tests {
     #[test]
     fn list_is_fresh_only_within_its_time_and_for_its_target() {
         let cached = cached();
-        assert_eq!(
-            cached
-                .fresh_for(&target("https://a.test/mcp"), 1_499)
-                .map(<[Tool]>::len),
-            Some(1)
-        );
+        let a = target("https://a.test/mcp");
+        assert_eq!(cached.fresh_for(&a, 7, 1_499).map(<[Tool]>::len), Some(1));
+        assert!(cached.fresh_for(&a, 7, 1_500).is_none());
         assert!(
             cached
-                .fresh_for(&target("https://a.test/mcp"), 1_500)
+                .fresh_for(&target("https://b.test/mcp"), 7, 1_100)
                 .is_none()
         );
-        assert!(
-            cached
-                .fresh_for(&target("https://b.test/mcp"), 1_100)
-                .is_none()
-        );
-        assert!(
-            cached
-                .fresh_for(&target("https://a.test/mcp"), 999)
-                .is_none()
-        );
+        assert!(cached.fresh_for(&a, 8, 1_100).is_none());
+        assert!(cached.fresh_for(&a, 7, 999).is_none());
+    }
+
+    #[test]
+    fn private_list_is_kept_only_when_no_credential_was_used() {
+        assert_eq!(keep_for(Some(5), false, true), Some(5));
+        assert_eq!(keep_for(Some(5), true, false), Some(5));
+        assert_eq!(keep_for(Some(5), true, true), None);
+        assert_eq!(keep_for(None, false, false), None);
+        assert_eq!(keep_for(Some(0), false, false), None);
+        assert_eq!(keep_for(Some(u64::MAX), false, false), Some(MAX_TTL_MS));
     }
 
     #[test]

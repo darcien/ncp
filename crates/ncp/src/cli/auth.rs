@@ -293,22 +293,12 @@ async fn login(
     session
         .handle_callback_with_issuer(&callback.code, &callback.state, callback.iss.as_deref())
         .await
-        .map_err(|error| match error {
-            // For example a token set that is too long for the Keychain
-            // through `security`.
-            AuthError::CredentialStoreError(text)
-                if crate::oauth::store::file_failure(&text).is_some() =>
-            {
-                let text = crate::oauth::store::file_failure(&text).unwrap_or_default();
-                Failure::protocol(format!("cannot keep the tokens: {text}")).server(name)
-            }
-            AuthError::CredentialStoreError(_) if place == CredentialPlace::Native => {
-                Failure::new(Exit::Auth, format!("cannot keep the tokens: {error}"))
-                    .hint(format!("ncp auth login {name} --credential-store file"))
-                    .server(name)
-            }
-            error => auth_failure("OAuth token request", &error).server(name),
-        })?;
+        .map_err(|error| token_failure(&error, name, place))?;
+    // A list of the old login can differ from the list of this one.
+    crate::list_cache::remove(&crate::list_cache::path(
+        &context.paths.cache_dir,
+        &server.name,
+    ));
     let granted = session.auth_manager.get_current_scopes().await;
     context.ui.result(
         || {
@@ -341,12 +331,41 @@ async fn hold_tokens_lock(
     server: &ServerName,
 ) -> Option<crate::private_file::Lock> {
     let path = refresh_lock(context, server);
-    crate::store::run_blocking(crate::store::CALL_LIMIT, move || {
-        Ok(crate::oauth::store::lock_tokens(&path).ok())
+    let locked = crate::store::run_blocking(crate::store::CALL_LIMIT, move || {
+        Ok(crate::oauth::store::lock_tokens(&path))
     })
-    .await
-    .ok()
-    .flatten()
+    .await;
+    match locked {
+        Ok(Ok(lock)) => Some(lock),
+        // Another process holds the lock past its limit: go on, but say so,
+        // because that process can undo this change.
+        Ok(Err(error)) if error.kind() == std::io::ErrorKind::TimedOut => {
+            context
+                .ui
+                .warning(Some(server.as_str()), &error.to_string());
+            None
+        }
+        _ => None,
+    }
+}
+
+/// The failure of the token request of a login. A store that cannot keep
+/// the tokens has its own fix: a file that fails is a local error, and a
+/// native store that fails (for example a token set that is too long for
+/// the Keychain through `security`) can give way to the file.
+fn token_failure(error: &AuthError, name: &str, place: CredentialPlace) -> Failure {
+    match error {
+        AuthError::CredentialStoreError(text) => match crate::oauth::store::file_failure(text) {
+            Some(text) => Failure::protocol(format!("cannot keep the tokens: {text}")).server(name),
+            None if place == CredentialPlace::Native => {
+                Failure::new(Exit::Auth, format!("cannot keep the tokens: {error}"))
+                    .hint(format!("ncp auth login {name} --credential-store file"))
+                    .server(name)
+            }
+            None => auth_failure("OAuth token request", error).server(name),
+        },
+        error => auth_failure("OAuth token request", error).server(name),
+    }
 }
 
 /// The inputs of [`stored_login`].
@@ -931,6 +950,10 @@ async fn logout(context: &Context<'_>, word: &str) -> Result<(), Failure> {
     // A refresh in another process must not bring the tokens back.
     let _lock = hold_tokens_lock(context, &server.name).await;
     let removed = remove_everywhere(context, name, &key).await?;
+    crate::list_cache::remove(&crate::list_cache::path(
+        &context.paths.cache_dir,
+        &server.name,
+    ));
     let places: Vec<&str> = removed
         .iter()
         .map(|place| secrets::place_name(*place))

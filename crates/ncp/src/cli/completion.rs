@@ -116,7 +116,15 @@ pub fn servers(env: &Env) {
             let mut names: Vec<String> = config
                 .servers()
                 .map(|server| server.name.to_string())
-                .chain(config.invalid().map(|(name, _)| name.to_string()))
+                // An invalid entry can have any key. A shell expands each
+                // word of the list again, so only a name that passes the
+                // rule of server names (no shell characters) goes out.
+                .chain(
+                    config
+                        .invalid()
+                        .filter_map(|(name, _)| crate::server::ServerName::parse(name).ok())
+                        .map(|name| name.to_string()),
+                )
                 .collect();
             names.sort();
             names

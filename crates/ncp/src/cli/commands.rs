@@ -215,8 +215,10 @@ async fn list(
     connection: &Connection,
 ) -> Result<Vec<Tool>, Failure> {
     match connection.list_tools_fresh_for(context.limits()).await {
-        Ok((tools, ttl_ms)) => {
-            keep_tools(context, server, &tools, ttl_ms);
+        Ok((tools, hints)) => {
+            let used_credentials = connection.is_authorized() || !server.value_names().is_empty();
+            let keep = list_cache::keep_for(hints.ttl_ms, hints.private, used_credentials);
+            keep_tools(context, server, &tools, keep);
             Ok(tools)
         }
         Err(error) => {
@@ -226,18 +228,19 @@ async fn list(
     }
 }
 
-/// Keeps the tools in the cache while the server says that they are fresh
-/// (`ttlMs`). A list with no time removes the old file. A cache that
+/// Keeps the tools in the cache for the time of `list_cache::keep_for`.
+/// A list that `ncp` must not keep removes the old file. A cache that
 /// cannot be written gives a warning: `ncp` works the same with no cache.
 fn keep_tools(context: &Context<'_>, server: &Server, tools: &[Tool], ttl_ms: Option<u64>) {
     if !context.use_cache {
         return;
     }
-    let path = list_cache::path(&context.paths.cache_dir(), &server.name);
-    match ttl_ms.filter(|ttl| *ttl > 0) {
+    let path = list_cache::path(&context.paths.cache_dir, &server.name);
+    match ttl_ms {
         Some(ttl_ms) => {
             let cached = list_cache::CachedTools {
                 target: server.target.clone(),
+                entry: list_cache::entry_digest(server),
                 fetched_at_ms: list_cache::now_ms(),
                 ttl_ms,
                 tools: tools.to_vec(),
@@ -259,9 +262,11 @@ fn cached_tools(context: &Context<'_>, server: &Server) -> Option<Vec<Tool>> {
     if !context.use_cache {
         return None;
     }
-    let cached = list_cache::load(&list_cache::path(&context.paths.cache_dir(), &server.name))?;
+    let cached = list_cache::load(&list_cache::path(&context.paths.cache_dir, &server.name))?;
     let now = list_cache::now_ms();
-    let tools = cached.fresh_for(&server.target, now)?.to_vec();
+    let tools = cached
+        .fresh_for(&server.target, list_cache::entry_digest(server), now)?
+        .to_vec();
     context.ui.debug(
         Some(server.name.as_str()),
         &format!(
@@ -345,8 +350,12 @@ async fn tool_show(context: &Context<'_>, word: &str, tool: Option<&str>) -> Res
     let server = select(context, &loaded, word, show_fix)?;
     let name = server.name.as_str();
     let tool_name = tool_word(name, tool)?;
-    let tool = match cached_tools(context, server) {
-        Some(tools) => find_tool(name, tools, tool_name)?,
+    // A cached list that misses the tool gets a live list: the server can
+    // have changed within the time of the list.
+    let cached =
+        cached_tools(context, server).and_then(|tools| find_tool(name, tools, tool_name).ok());
+    let tool = match cached {
+        Some(tool) => tool,
         None => {
             with_connection(context, server, async |connection| {
                 find_tool(name, list(context, server, connection).await?, tool_name)
@@ -401,29 +410,35 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
     with_connection(context, server, async |connection| {
         // rmcp mirrors parameters only for a tool that it listed in this
         // session, so that case lists again; else a fresh cache serves.
-        let tools = if mirrors_parameters(server, connection) {
-            Some(list(context, server, connection).await?)
-        } else if needs_tool {
-            match cached_tools(context, server) {
-                Some(tools) => Some(tools),
-                None => Some(list(context, server, connection).await?),
-            }
+        let cached = if needs_tool && !mirrors_parameters(server, connection) {
+            cached_tools(context, server)
         } else {
             None
         };
-        let tool = match tools {
-            Some(tools) if needs_tool => Some(find_tool(name, tools, tool_name)?),
-            _ => None,
+        let prepared = match cached {
+            Some(tools) => {
+                // The server can have changed within the time of the list
+                // (the spec permits a fetch again): a list from the cache
+                // that does not fit gets one live list.
+                if let Ok(prepared) =
+                    prepare_call(context, name, Some(tools), &input, tool_name, &call)
+                {
+                    prepared
+                } else {
+                    let tools = list(context, server, connection).await?;
+                    prepare_call(context, name, Some(tools), &input, tool_name, &call)?
+                }
+            }
+            None if needs_tool || mirrors_parameters(server, connection) => {
+                let tools = list(context, server, connection).await?;
+                let tools = needs_tool.then_some(tools);
+                prepare_call(context, name, tools, &input, tool_name, &call)?
+            }
+            None => prepare_call(context, name, None, &input, tool_name, &call)?,
         };
+        let (tool, arguments) = prepared;
         if let (true, Some(tool)) = (call.help, &tool) {
             return show_tool(context, name, tool);
-        }
-        let arguments = match &tool {
-            Some(tool) => tool_args::coerce(&input, &tool.input_schema),
-            None => tool_args::coerce(&input, &JsonObject::new()),
-        };
-        if let (false, Some(tool)) = (call.no_validate, &tool) {
-            check_arguments(context, name, tool, &arguments)?;
         }
         let response = connection
             .call_tool(tool_name, arguments, context.limits())
@@ -438,6 +453,33 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
         print_response(context, name, tool_name, response)
     })
     .await
+}
+
+/// The tool and the arguments of a call: the tool from the list, the
+/// arguments with the schema rule, and the schema check unless
+/// `--no-validate`.
+fn prepare_call(
+    context: &Context<'_>,
+    server: &str,
+    tools: Option<Vec<Tool>>,
+    input: &Resolved,
+    tool_name: &str,
+    call: &CallArgs,
+) -> Result<(Option<Tool>, JsonObject), Failure> {
+    let tool = tools
+        .map(|tools| find_tool(server, tools, tool_name))
+        .transpose()?;
+    if call.help {
+        return Ok((tool, JsonObject::new()));
+    }
+    let arguments = match &tool {
+        Some(tool) => tool_args::coerce(input, &tool.input_schema),
+        None => tool_args::coerce(input, &JsonObject::new()),
+    };
+    if let (false, Some(tool)) = (call.no_validate, &tool) {
+        check_arguments(context, server, tool, &arguments)?;
+    }
+    Ok((tool, arguments))
 }
 
 /// True when a call needs the tool list first: from `2026-07-28` an HTTP
@@ -742,22 +784,31 @@ fn read_files(pairs: Vec<(String, Given)>) -> Result<Vec<(String, Argument)>, Fa
 /// A regular file of at most the limit: a pipe or a device can block or
 /// have no end.
 fn read_argument_file(key: &str, path: &str) -> Result<String, Failure> {
+    use std::io::Read as _;
     let failed = |reason: String| Failure::usage(format!("{key}=@{path}: {reason}"));
     if path.is_empty() {
         return Err(Failure::usage(format!("{key}=@ names no file"))
             .hint(format!("{key}=@PATH, or {key}=@@ for a literal @")));
     }
-    let metadata = std::fs::metadata(path)
+    // One open: the checks and the read are of the same file.
+    let file = std::fs::File::open(path)
+        .map_err(|error| failed(format!("cannot read the file: {error}")))?;
+    let metadata = file
+        .metadata()
         .map_err(|error| failed(format!("cannot read the file: {error}")))?;
     if !metadata.is_file() {
         return Err(failed("is not a regular file".to_string()));
     }
-    if metadata.len() > MAX_ARGUMENT_FILE {
+    let mut text = String::new();
+    file.take(MAX_ARGUMENT_FILE + 1)
+        .read_to_string(&mut text)
+        .map_err(|error| failed(format!("cannot read the file: {error}")))?;
+    if text.len() as u64 > MAX_ARGUMENT_FILE {
         return Err(failed(format!(
             "the file is larger than {MAX_ARGUMENT_FILE} bytes"
         )));
     }
-    std::fs::read_to_string(path).map_err(|error| failed(format!("cannot read the file: {error}")))
+    Ok(text)
 }
 
 async fn read_stdin_object(context: &Context<'_>) -> Result<JsonObject, Failure> {
