@@ -290,7 +290,8 @@ async fn login(
             .ui
             .warning(Some(name), &format!("cannot open a browser: {error}"));
     }
-    let callback = wait_for_redirect(listener, &redirect, &state, read_stdin)
+    let expected = expected_redirect(state, &metadata);
+    let callback = wait_for_redirect(listener, &redirect, &expected, read_stdin)
         .await
         .map_err(|failure| failure.server(name))?;
     // A refresh of the old tokens in another process must not save over
@@ -319,6 +320,21 @@ async fn login(
         },
     )?;
     Ok(server.name.clone())
+}
+
+/// What the redirect of the login must have: its state, and the issuer of
+/// the metadata in `iss` (RFC 9207 §2.4). The metadata says if `iss` is
+/// required.
+fn expected_redirect(state: String, metadata: &AuthorizationMetadata) -> callback::Expected {
+    callback::Expected {
+        state,
+        issuer: issuer_of(metadata),
+        iss_required: metadata
+            .additional_fields
+            .get("authorization_response_iss_parameter_supported")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    }
 }
 
 /// The listener for the redirect, on a random loopback port (RFC 8252
@@ -626,16 +642,35 @@ pub(super) struct TokenPlaces {
 }
 
 impl TokenPlaces {
+    /// The places for the tokens of a connection. A store that is not
+    /// available is kept as such, as for `${NAME}`: when the file has no
+    /// tokens either, the error says why and names the file.
     pub(super) async fn open(context: &Context<'_>) -> Self {
         let (native, down) = match secrets::native(context).await {
             Ok(native) => (Some(native), None),
-            Err(crate::store::StoreError::Unavailable(_)) => (None, None),
             Err(error) => (None, Some(error)),
         };
         Self {
             native,
             down,
             file: secrets::file(context),
+        }
+    }
+
+    /// The places for `auth status`. A host with no native store has only
+    /// the file, as for `secret list` (design B36).
+    async fn open_for_status(context: &Context<'_>) -> Self {
+        match Self::open(context).await {
+            Self {
+                down: Some(crate::store::StoreError::Unavailable(_)),
+                file,
+                ..
+            } => Self {
+                native: None,
+                down: None,
+                file,
+            },
+            places => places,
         }
     }
 
@@ -679,7 +714,12 @@ impl TokenPlaces {
             .map_err(|error| secrets::store_failure(&error))?;
         match (found, &self.down) {
             (Some(secret), _) => Ok(Some((file, secret))),
-            (None, Some(error)) => Err(secrets::store_failure(error).hint(format!(
+            (None, Some(crate::store::StoreError::Interrupted)) => Err(session::interrupted()),
+            (None, Some(error)) => Err(Failure::new(
+                Exit::Auth,
+                format!("the file has no tokens, and the native store gave none: {error}"),
+            )
+            .hint(format!(
                 "ncp auth login {} --credential-store file",
                 super::render::shell_word(server.name.as_str())
             ))),
@@ -1063,7 +1103,7 @@ const MAX_REQUEST_LINE: u64 = 16 * 1024;
 async fn redirect_of(
     mut stream: tokio::net::TcpStream,
     redirect: &RedirectUri,
-    state: &str,
+    expected: &callback::Expected,
 ) -> Option<Result<callback::Callback, callback::CallbackError>> {
     let mut line = String::new();
     let mut reader = BufReader::new(&mut stream).take(MAX_REQUEST_LINE);
@@ -1077,7 +1117,7 @@ async fn redirect_of(
         return None;
     }
     let url = format!("http://127.0.0.1:{}{target}", redirect.port());
-    let result = callback::parse(&url, redirect, state);
+    let result = callback::parse(&url, redirect, expected);
     match &result {
         Ok(_) => {
             let message = "The login is complete. You can close this tab.";
@@ -1106,7 +1146,7 @@ const NOT_FOUND: &[u8] =
 async fn from_listener(
     listener: TcpListener,
     redirect: &RedirectUri,
-    state: &str,
+    expected: &callback::Expected,
 ) -> Result<callback::Callback, callback::CallbackError> {
     let (sender, mut found) = tokio::sync::mpsc::channel(1);
     let mut tasks = tokio::task::JoinSet::new();
@@ -1118,9 +1158,9 @@ async fn from_listener(
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     continue;
                 };
-                let (sender, redirect, state) = (sender.clone(), redirect.clone(), state.to_string());
+                let (sender, redirect, expected) = (sender.clone(), redirect.clone(), expected.clone());
                 tasks.spawn(async move {
-                    if let Some(result) = redirect_of(stream, &redirect, &state).await {
+                    if let Some(result) = redirect_of(stream, &redirect, &expected).await {
                         let _ = sender.send(result).await;
                     }
                 });
@@ -1149,7 +1189,7 @@ async fn pasted_line() -> Option<String> {
 async fn wait_for_redirect(
     listener: TcpListener,
     redirect: &RedirectUri,
-    state: &str,
+    expected: &callback::Expected,
     read_stdin: bool,
 ) -> Result<callback::Callback, Failure> {
     let from_stdin = async {
@@ -1157,14 +1197,14 @@ async fn wait_for_redirect(
             return std::future::pending().await;
         }
         match pasted_line().await {
-            Some(line) => callback::parse(&line, redirect, state),
+            Some(line) => callback::parse(&line, redirect, expected),
             // The end of stdin: only the listener can answer now.
             None => std::future::pending().await,
         }
     };
     // The limit and Ctrl-C of the whole login apply.
     let result = tokio::select! {
-        result = from_listener(listener, redirect, state) => result,
+        result = from_listener(listener, redirect, expected) => result,
         result = from_stdin => result,
     };
     result.map_err(|error| Failure::new(Exit::Auth, error.to_string()))
@@ -1250,7 +1290,7 @@ async fn status(context: &Context<'_>, word: Option<&str>) -> Result<(), Failure
             .filter(|server| matches!(server.transport, Transport::Http(_)))
             .collect(),
     };
-    let mut places = TokenPlaces::open(context).await;
+    let mut places = TokenPlaces::open_for_status(context).await;
     let mut rows = Vec::new();
     for server in servers {
         let tokens = match places.find(context, server).await? {

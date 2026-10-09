@@ -1464,7 +1464,11 @@ async fn tool_list_sends_the_stored_token_after_a_login() {
     let home = oauth_home("token-use", &fixture.url);
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "ncp auth login web");
+    // The test has no native store, so a login can go only to the file.
+    assert_eq!(
+        run.error()["hint"],
+        "ncp auth login web --credential-store file"
+    );
     assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
@@ -1668,7 +1672,8 @@ async fn request_that_needs_a_login_after_an_open_handshake_uses_the_stored_logi
     let fixture = ncp_testkit::serve_http_with_oauth_after_handshake(Mode::Legacy, &auth)
         .await
         .unwrap();
-    let home = oauth_home("open-handshake", &fixture.url);
+    // With a native store, the login can go there: the hint names no place.
+    let home = oauth_home("open-handshake", &fixture.url).with_fake_keychain();
     let call = ["tool", "call", "web", "echo", "text=hi"];
     let run = home.run(&call);
     assert_eq!(run.code(), 4, "{}", run.describe());

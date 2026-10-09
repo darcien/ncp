@@ -45,13 +45,27 @@ pub struct Callback {
     pub iss: Option<String>,
 }
 
+/// What a redirect of this login must have: the state of the login, and
+/// the issuer of the metadata in `iss` (RFC 9207 §2.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Expected {
+    pub state: String,
+    pub issuer: String,
+    /// The metadata says `authorization_response_iss_parameter_supported`,
+    /// so a redirect with no `iss` is not valid.
+    pub iss_required: bool,
+}
+
 impl CallbackError {
     /// True when the redirect is for this login: it has the state of the
     /// login. The listener ignores a redirect that is not, because any
     /// local program or web page can send one.
     #[must_use]
     pub fn is_for_this_login(&self) -> bool {
-        matches!(self, Self::Refused { .. } | Self::Missing("code"))
+        matches!(
+            self,
+            Self::Refused { .. } | Self::Missing("code" | "iss") | Self::WrongIssuer(_)
+        )
     }
 }
 
@@ -80,6 +94,10 @@ pub enum CallbackError {
     Missing(&'static str),
     #[error("the redirect URL is from another login: its state does not agree")]
     WrongState,
+    #[error(
+        "the redirect URL names the issuer {0:?}, which is not the authorization server of the login"
+    )]
+    WrongIssuer(String),
 }
 
 fn describe(error: &str, description: Option<&str>) -> String {
@@ -96,7 +114,11 @@ fn describe(error: &str, description: Option<&str>) -> String {
 /// Returns an error when the URL is not for this redirect URI, when the
 /// authorization server sent an error (RFC 6749 §4.1.2.1), when a part is
 /// missing, or when `state` is not the state of this login.
-pub fn parse(text: &str, redirect: &RedirectUri, state: &str) -> Result<Callback, CallbackError> {
+pub fn parse(
+    text: &str,
+    redirect: &RedirectUri,
+    expected: &Expected,
+) -> Result<Callback, CallbackError> {
     let url = url::Url::parse(text.trim()).map_err(|_| CallbackError::NotUrl)?;
     let target_agrees = url.scheme() == "http"
         && url.host_str() == Some(HOST)
@@ -113,10 +135,15 @@ pub fn parse(text: &str, redirect: &RedirectUri, state: &str) -> Result<Callback
     // The state comes first: an error response has the state too (RFC 6749
     // §4.1.2.1), and a redirect of another login must not end this one.
     let found_state = find("state").ok_or(CallbackError::Missing("state"))?;
-    if found_state != state {
+    if found_state != expected.state {
         return Err(CallbackError::WrongState);
     }
     if let Some(error) = find("error") {
+        // rmcp checks `iss` only on a code. The text of an error response
+        // shows only after the check, because a mix-up attack can send
+        // an error with a false description (MCP 2026-07-28,
+        // authorization).
+        check_issuer(find("iss"), expected)?;
         return Err(CallbackError::Refused {
             error,
             description: find("error_description"),
@@ -129,12 +156,28 @@ pub fn parse(text: &str, redirect: &RedirectUri, state: &str) -> Result<Callback
     })
 }
 
+fn check_issuer(iss: Option<String>, expected: &Expected) -> Result<(), CallbackError> {
+    match iss {
+        Some(iss) if iss != expected.issuer => Err(CallbackError::WrongIssuer(iss)),
+        None if expected.iss_required => Err(CallbackError::Missing("iss")),
+        _ => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn redirect() -> RedirectUri {
         RedirectUri::new(4711)
+    }
+
+    fn login() -> Expected {
+        Expected {
+            state: "s1".into(),
+            issuer: "https://as.test".into(),
+            iss_required: false,
+        }
     }
 
     #[test]
@@ -147,7 +190,7 @@ mod tests {
         let callback = parse(
             " http://127.0.0.1:4711/callback?code=c1&state=s1&iss=https%3A%2F%2Fas.test\n",
             &redirect(),
-            "s1",
+            &login(),
         )
         .unwrap();
         assert_eq!(callback.code, "c1");
@@ -161,7 +204,7 @@ mod tests {
             parse(
                 "http://127.0.0.1:4711/callback?code=c&state=x",
                 &redirect(),
-                "s1"
+                &login()
             ),
             Err(CallbackError::WrongState)
         );
@@ -177,14 +220,14 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    parse(text, &redirect(), "s1"),
+                    parse(text, &redirect(), &login()),
                     Err(CallbackError::WrongTarget(_))
                 ),
                 "{text}"
             );
         }
         assert_eq!(
-            parse("code=c", &redirect(), "s1"),
+            parse("code=c", &redirect(), &login()),
             Err(CallbackError::NotUrl)
         );
     }
@@ -194,7 +237,7 @@ mod tests {
         let error = parse(
             "http://127.0.0.1:4711/callback?error=access_denied&error_description=no+consent&state=s1",
             &redirect(),
-            "s1",
+            &login(),
         )
         .unwrap_err();
         assert_eq!(
@@ -204,18 +247,46 @@ mod tests {
     }
 
     #[test]
+    fn error_with_another_issuer_shows_no_description() {
+        let error = parse(
+            "http://127.0.0.1:4711/callback?error=access_denied&error_description=call+us&state=s1&iss=https%3A%2F%2Fevil.test",
+            &redirect(),
+            &login(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            CallbackError::WrongIssuer("https://evil.test".into())
+        );
+        assert!(!error.to_string().contains("call us"));
+        assert!(error.is_for_this_login());
+        let required = Expected {
+            iss_required: true,
+            ..login()
+        };
+        assert_eq!(
+            parse(
+                "http://127.0.0.1:4711/callback?error=access_denied&error_description=x&state=s1",
+                &redirect(),
+                &required
+            ),
+            Err(CallbackError::Missing("iss"))
+        );
+    }
+
+    #[test]
     fn error_of_another_login_is_not_for_this_login() {
         let forged = parse(
             "http://127.0.0.1:4711/callback?error=access_denied",
             &redirect(),
-            "s1",
+            &login(),
         )
         .unwrap_err();
         assert!(!forged.is_for_this_login(), "{forged:?}");
         let refused = parse(
             "http://127.0.0.1:4711/callback?error=access_denied&state=s1",
             &redirect(),
-            "s1",
+            &login(),
         )
         .unwrap_err();
         assert!(refused.is_for_this_login(), "{refused:?}");
@@ -224,11 +295,19 @@ mod tests {
     #[test]
     fn missing_code_or_state_is_an_error() {
         assert_eq!(
-            parse("http://127.0.0.1:4711/callback?state=s1", &redirect(), "s1"),
+            parse(
+                "http://127.0.0.1:4711/callback?state=s1",
+                &redirect(),
+                &login()
+            ),
             Err(CallbackError::Missing("code"))
         );
         assert_eq!(
-            parse("http://127.0.0.1:4711/callback?code=c", &redirect(), "s1"),
+            parse(
+                "http://127.0.0.1:4711/callback?code=c",
+                &redirect(),
+                &login()
+            ),
             Err(CallbackError::Missing("state"))
         );
     }
