@@ -176,7 +176,7 @@ mod tests {
     fn http_traces_hide_the_secrets_of_the_url() {
         let exchange = HttpExchange {
             method: "POST",
-            url: "https://u:p@h.test/mcp?api_key=k".into(),
+            url: "https://u:p@h.test/cb?code=k&q=1".into(),
             headers: vec![("authorization".into(), "****".into())],
             outcome: "JSON response".into(),
             elapsed: Duration::from_micros(3_140),
@@ -186,14 +186,14 @@ mod tests {
         let line = trace_line(Format::Text, "gh", &Event::Http(&exchange), &hidden).unwrap();
         assert_eq!(
             line,
-            "trace: server gh: POST https://****@h.test/mcp?api_key=**** \
+            "trace: server gh: POST https://****@h.test/cb?code=****&q=1 \
              [authorization: ****]: JSON response in 3.1 ms\n"
         );
         let line = trace_line(Format::Json, "gh", &Event::Http(&exchange), &hidden).unwrap();
         let value: Value = serde_json::from_str(&line).unwrap();
         assert_eq!(
             value["trace"]["http"]["url"],
-            "https://****@h.test/mcp?api_key=****"
+            "https://****@h.test/cb?code=****&q=1"
         );
         assert_eq!(value["trace"]["http"]["headers"]["authorization"], "****");
     }
@@ -202,9 +202,9 @@ mod tests {
     fn http_errors_show_the_url_with_its_secrets_hidden() {
         let exchange = HttpExchange {
             method: "POST",
-            url: "http://h.test/mcp?api_key=k3y".into(),
+            url: "http://h.test/cb?code=k3y".into(),
             headers: Vec::new(),
-            outcome: "error: error sending request for url (http://h.test/mcp?api_key=k3y)".into(),
+            outcome: "error: error sending request for url (http://h.test/cb?code=k3y)".into(),
             elapsed: Duration::from_millis(1),
             request_body: None,
             response_body: None,

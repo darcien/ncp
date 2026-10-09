@@ -1,7 +1,9 @@
 //! Hidden values in diagnostic output.
 //!
 //! Verbose output must not show a secret, because logs and screens are
-//! often shared. As uv
+//! often shared. It hides each value that `ncp` knows is a secret (design
+//! B43), and does not guess from a name: a guess hides some secrets and
+//! not others, and the user cannot know which. As uv
 //! does, a hidden value shows as `****`, always with the same length. An
 //! empty value shows as empty. Thus the user can see if a value is set or
 //! empty, but never its length.
@@ -18,23 +20,6 @@ const SECRET_HEADERS: [&str; 4] = [
     "cookie",
     "set-cookie",
 ];
-
-/// Parts of a query parameter name that show a secret value, for example
-/// `token`, `api_key` or `client_secret`. A name that holds one of them is
-/// hidden. To hide too much is safe; to show a key is not.
-const SECRET_NAME_PARTS: [&str; 7] = [
-    "token",
-    "secret",
-    "password",
-    "passwd",
-    "key",
-    "signature",
-    "credential",
-];
-
-/// Query parameter names that are secret only as a full name. As a part,
-/// they occur in too many common names.
-const SECRET_NAMES: [&str; 4] = ["code", "sig", "pwd", "auth"];
 
 /// OAuth fields and form parameters that hold a token, a code or a client
 /// secret. The names are standard (RFC 6749, 7591, 7636, 8693), so the list
@@ -61,14 +46,6 @@ pub fn hide(value: &str) -> &'static str {
     if value.is_empty() { "" } else { HIDDEN }
 }
 
-/// True when the query parameter name shows a secret value.
-#[must_use]
-pub fn is_secret_name(name: &str) -> bool {
-    let name = name.to_ascii_lowercase();
-    SECRET_NAMES.contains(&name.as_str())
-        || SECRET_NAME_PARTS.iter().any(|part| name.contains(part))
-}
-
 /// The header value as it shows. `sensitive` is true for a value that came
 /// from `${NAME}`.
 #[must_use]
@@ -80,8 +57,8 @@ pub fn header(name: &str, value: &str, sensitive: bool) -> String {
     }
 }
 
-/// The URL with its user information and its secret query values hidden.
-/// The rest of the text stays as it is, also a `${NAME}` of the
+/// The URL with its user information and its OAuth codes and tokens
+/// hidden. The rest of the text stays as it is, also a `${NAME}` of the
 /// configuration, so that the URL shows as the user wrote it. A text that
 /// is not a URL is hidden as a whole.
 #[must_use]
@@ -107,7 +84,8 @@ pub fn url(text: &str) -> String {
     format!("{scheme}://{authority}{tail}{fragment}")
 }
 
-/// The query with the value of each secret parameter hidden.
+/// The query with the value of each OAuth secret parameter hidden, for
+/// example the `code` of a redirect.
 fn hide_query(query: &str) -> String {
     query
         .split('&')
@@ -116,7 +94,7 @@ fn hide_query(query: &str) -> String {
                 let decoded: String = url::form_urlencoded::parse(name.as_bytes())
                     .map(|(name, _)| name.into_owned())
                     .collect();
-                if is_secret_name(&decoded) {
+                if is_oauth_secret(&decoded) {
                     format!("{name}={}", hide(value))
                 } else {
                     pair.to_string()
@@ -202,23 +180,23 @@ mod tests {
     }
 
     #[test]
-    fn url_hides_user_information_and_secret_query_values() {
+    fn url_hides_user_information_and_oauth_secrets_and_guesses_nothing_from_a_name() {
         assert_eq!(
             url("https://user:pass@example.com/mcp?api_key=k1&page=2&Token=t&code=c"),
-            "https://****@example.com/mcp?api_key=****&page=2&Token=****&code=****"
+            "https://****@example.com/mcp?api_key=k1&page=2&Token=t&code=****"
         );
         assert_eq!(url("http://:pass@p.test:3128"), "http://****@p.test:3128");
         assert_eq!(
             url("http://h:1/mcp/${KEY}?q=a%20b&key=${KEY}#f"),
-            "http://h:1/mcp/${KEY}?q=a%20b&key=****#f"
+            "http://h:1/mcp/${KEY}?q=a%20b&key=${KEY}#f"
         );
         assert_eq!(
             url("https://example.com/mcp?q=a"),
             "https://example.com/mcp?q=a"
         );
         assert_eq!(
-            url("https://example.com/mcp?token="),
-            "https://example.com/mcp?token="
+            url("https://example.com/cb?access_token=&state=s"),
+            "https://example.com/cb?access_token=&state=s"
         );
         assert_eq!(url("not a url"), "****");
     }

@@ -1002,8 +1002,11 @@ async fn verbose_output_names_the_proxy_route_and_a_stored_value_source() {
 #[tokio::test(flavor = "multi_thread")]
 async fn trace_output_shows_messages_and_requests_with_secrets_hidden() {
     let fixture = serve_http_with(Mode::Modern, Some("t0ken")).await.unwrap();
-    let home = Home::new("trace").set("WEB_TOKEN", "t0ken");
-    let url = format!("{}?api_key=k3y", fixture.url);
+    let home = Home::new("trace")
+        .set("WEB_TOKEN", "t0ken")
+        .set("API_KEY", "k3y");
+    // A value from ${NAME} is a secret; a literal value shows as it is.
+    let url = format!("{}?api_key=${{API_KEY}}&page=2", fixture.url);
     home.configure(&json!({"web": {"type": "http", "url": url,
         "headers": {"Authorization": "Bearer ${WEB_TOKEN}", "X-Org": "acme"}}}));
     let run = home.run(&["-vv", "tool", "list", "web"]);
@@ -1032,7 +1035,10 @@ async fn trace_output_shows_messages_and_requests_with_secrets_hidden() {
         .unwrap_or_else(|| panic!("no HTTP trace: {stderr}"));
     assert_eq!(request["method"], "POST");
     assert!(
-        request["url"].as_str().unwrap().ends_with("?api_key=****"),
+        request["url"]
+            .as_str()
+            .unwrap()
+            .ends_with("?api_key=${API_KEY}&page=2"),
         "{request}"
     );
     assert_eq!(request["headers"]["authorization"], "****");
@@ -1397,7 +1403,7 @@ fn trace_of_a_failed_request_hides_values_in_the_url() {
         .port();
     let home = Home::new("trace-error").set("PATH_KEY", "s3cret-path");
     home.configure(&json!({"web": {"type": "http",
-        "url": format!("http://127.0.0.1:{port}/mcp/${{PATH_KEY}}?api_key=k3y")}}));
+        "url": format!("http://127.0.0.1:{port}/mcp/${{PATH_KEY}}?api_key=${{PATH_KEY}}")}}));
     let run = home.run(&["-vv", "tool", "list", "web"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
     let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
@@ -1407,10 +1413,7 @@ fn trace_of_a_failed_request_hides_values_in_the_url() {
             .any(|trace| trace.get("http").is_some()),
         "{stderr}"
     );
-    assert!(
-        !stderr.contains("s3cret-path") && !stderr.contains("k3y"),
-        "{stderr}"
-    );
+    assert!(!stderr.contains("s3cret-path"), "{stderr}");
 }
 
 #[test]
@@ -2643,7 +2646,7 @@ fn raw_server(answer: String) -> (String, std::sync::Arc<std::sync::atomic::Atom
 fn http_server_that_redirects_stops_and_sends_no_header_to_the_new_location() {
     let ok = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string();
     let (target, target_hits) = raw_server(ok);
-    let location = format!("{target}?api_key=k1");
+    let location = format!("{target}?page=2");
     let (url, _) = raw_server(format!(
         "HTTP/1.1 307 Temporary Redirect\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
     ));
