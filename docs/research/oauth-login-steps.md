@@ -64,10 +64,9 @@ that you have an account for. Use a test account if you can.
 - Step 6 finds no line.
 - Step 7 says that the tokens were removed from the native store.
 
-If step 3 fails with "the secret is too long for the security program",
-the token set of the server is longer than the Keychain line limit (about
-2900 bytes). Record the server: a split of the tokens into more items is
-a decision for the user (design B51).
+A token set that is longer than one `security` command line (about 2900
+bytes, for example from Entra ID) goes into several Keychain items
+(design B66). Step 3 then works as for a short token set.
 
 ## Result
 

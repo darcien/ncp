@@ -351,8 +351,8 @@ async fn hold_tokens_lock(
 
 /// The failure of the token request of a login. A store that cannot keep
 /// the tokens has its own fix: a file that fails is a local error, and a
-/// native store that fails (for example a token set that is too long for
-/// the Keychain through `security`) can give way to the file.
+/// native store that fails (for example a locked Keychain) can give way to
+/// the file.
 fn token_failure(error: &AuthError, name: &str, place: CredentialPlace) -> Failure {
     match error {
         AuthError::CredentialStoreError(text) => match crate::oauth::store::file_failure(text) {

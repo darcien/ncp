@@ -13,6 +13,11 @@
 //! process. All calls block. An async caller runs them through
 //! [`super::run_blocking`].
 //!
+//! `security -i` reads one command line of at most 4095 bytes, and some
+//! token sets are longer. Such a value goes into parts, one item each, and
+//! a head item names the parts. One `add-generic-password -U` changes one
+//! item atomically, so the head is the commit point of a save.
+//!
 //! This code has no macOS dependency, so the tests run with a fake program
 //! on each platform.
 
@@ -21,7 +26,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Output, Stdio},
     thread::JoinHandle,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -36,6 +41,9 @@ const PROGRAM: &str = "/usr/bin/security";
 /// ASCII as hexadecimal digits. The encoded value has only printable ASCII
 /// and no quote, so each value is safe in the command and in the output.
 const ENCODED: &str = "ncp-base64:";
+
+/// The mark of a head: the item that names the parts of a long value.
+const PARTS: &str = "ncp-parts:";
 
 /// The longest command line, with its new line, that `security -i` reads
 /// as one command. It reads each line with `fgets` into a buffer of 4096
@@ -88,7 +96,15 @@ impl SecurityStore {
         Self { limit, ..self }
     }
 
-    fn run(&self, args: &[&str], input: Option<&str>) -> Result<Output, StoreError> {
+    fn run(
+        &self,
+        args: &[&str],
+        input: Option<&str>,
+        deadline: Instant,
+    ) -> Result<Output, StoreError> {
+        if Instant::now() >= deadline {
+            return Err(StoreError::NoAnswer(self.limit));
+        }
         let mut child = Command::new(&self.program)
             .args(args)
             .stdin(if input.is_some() {
@@ -109,7 +125,7 @@ impl SecurityStore {
         // the program while this thread waits for it.
         let stdout = read_all(child.stdout.take());
         let stderr = read_all(child.stderr.take());
-        let status = self.wait(&mut child)?;
+        let status = self.wait(&mut child, deadline)?;
         sent.map_err(|error| {
             StoreError::Failure(format!(
                 "cannot send the command to {}: {error}",
@@ -123,9 +139,8 @@ impl SecurityStore {
         })
     }
 
-    /// Waits for the program until the limit, then stops it.
-    fn wait(&self, child: &mut Child) -> Result<ExitStatus, StoreError> {
-        let deadline = Instant::now() + self.limit;
+    /// Waits for the program until the deadline, then stops it.
+    fn wait(&self, child: &mut Child, deadline: Instant) -> Result<ExitStatus, StoreError> {
         let failure =
             |error: io::Error| StoreError::Failure(format!("{}: {error}", self.program.display()));
         loop {
@@ -163,13 +178,107 @@ impl Default for SecurityStore {
 
 impl CredentialStore for SecurityStore {
     fn load(&self, key: &CredentialKey) -> Result<Option<Secret>, StoreError> {
+        let deadline = Instant::now() + self.limit;
         let account = key.account();
+        match self.load_value(&account, deadline)? {
+            Loaded::Found(secret) => Ok(Some(secret)),
+            Loaded::Absent => Ok(None),
+            // Readers do not hold the refresh lock. Between the read of the
+            // head and the read of a part, another process can save a new
+            // value and remove the old parts. The head then names the new
+            // parts.
+            Loaded::PartMissing => match self.load_value(&account, deadline)? {
+                Loaded::Found(secret) => Ok(Some(secret)),
+                Loaded::Absent => Ok(None),
+                Loaded::PartMissing => Err(StoreError::Failure(format!(
+                    "the item {account} is kept in parts, and a part is missing"
+                ))),
+            },
+        }
+    }
+
+    fn save(&self, key: &CredentialKey, secret: &Secret) -> Result<(), StoreError> {
+        let deadline = Instant::now() + self.limit;
+        let account = key.account();
+        let plan = save_plan(&account, secret.expose(), &new_generation())?;
+        plan.parts
+            .iter()
+            .try_for_each(|(part, text)| self.add(part, text, deadline))?;
+        // The head is the commit point. A head that `ncp` writes after it
+        // reports a failure would change the value after the failure, so
+        // the save stops while the head can still finish in time.
+        if deadline.saturating_duration_since(Instant::now()) < self.limit / HEAD_RESERVE {
+            return Err(StoreError::NoAnswer(self.limit));
+        }
+        self.add(&account, &plan.head, deadline)?;
+        self.remove_other_parts(&account, &plan.parts, deadline);
+        Ok(())
+    }
+
+    fn delete(&self, key: &CredentialKey) -> Result<bool, StoreError> {
+        let deadline = Instant::now() + self.limit;
+        let account = key.account();
+        let parts: Vec<String> = self
+            .accounts(deadline)?
+            .into_iter()
+            .filter(|other| is_part_of(&account, other))
+            .collect();
+        // The head goes first, so that no reader finds a head with a
+        // missing part.
+        let head = self.remove(&account, deadline)?;
+        parts.iter().try_fold(head, |found, part| {
+            self.remove(part, deadline).map(|removed| found || removed)
+        })
+    }
+
+    fn keys(&self) -> Result<Vec<CredentialKey>, StoreError> {
+        let accounts = self.accounts(Instant::now() + self.limit)?;
+        Ok(super::keys_of(accounts.iter().map(String::as_str)))
+    }
+}
+
+/// The part of the limit that the head of a save keeps for itself.
+const HEAD_RESERVE: u32 = 10;
+
+/// The result of one read of a value.
+enum Loaded {
+    Found(Secret),
+    Absent,
+    PartMissing,
+}
+
+impl SecurityStore {
+    fn load_value(&self, account: &str, deadline: Instant) -> Result<Loaded, StoreError> {
+        let Some(text) = self.find(account, deadline)? else {
+            return Ok(Loaded::Absent);
+        };
+        match parse_item(account, &text)? {
+            Item::Whole(stored) => decode(&stored).map(Loaded::Found),
+            Item::Head { generation, count } => {
+                let parts = (0..count)
+                    .map(|index| self.find(&part_account(account, &generation, index), deadline))
+                    .collect::<Result<Vec<_>, _>>()?;
+                match parts.into_iter().collect::<Option<String>>() {
+                    Some(stored) => decode(&stored).map(Loaded::Found),
+                    None => Ok(Loaded::PartMissing),
+                }
+            }
+        }
+    }
+
+    /// The stored text of one item.
+    fn find(&self, account: &str, deadline: Instant) -> Result<Option<String>, StoreError> {
         let output = self.run(
-            &["find-generic-password", "-s", SERVICE, "-a", &account, "-w"],
+            &["find-generic-password", "-s", SERVICE, "-a", account, "-w"],
             None,
+            deadline,
         )?;
         match output.status.code() {
-            Some(0) => decode(&output.stdout).map(Some),
+            Some(0) => {
+                let text = String::from_utf8(output.stdout)
+                    .map_err(|_| StoreError::Failure("stored item is not UTF-8 text".into()))?;
+                Ok(Some(text.strip_suffix('\n').unwrap_or(&text).to_string()))
+            }
             Some(ITEM_NOT_FOUND) => Ok(None),
             code => Err(exit_error(
                 "find-generic-password",
@@ -179,9 +288,10 @@ impl CredentialStore for SecurityStore {
         }
     }
 
-    fn save(&self, key: &CredentialKey, secret: &Secret) -> Result<(), StoreError> {
-        let line = add_command(&key.account(), secret.expose())?;
-        let output = self.run(&["-i"], Some(&line))?;
+    /// Adds or replaces one item. Each item has its own run, so that each
+    /// exit code is known.
+    fn add(&self, account: &str, text: &str, deadline: Instant) -> Result<(), StoreError> {
+        let output = self.run(&["-i"], Some(&add_line(account, text)), deadline)?;
         // The error does not show stderr: after a parse error, it can hold
         // the command, and the command holds the value.
         match output.status.code() {
@@ -190,11 +300,11 @@ impl CredentialStore for SecurityStore {
         }
     }
 
-    fn delete(&self, key: &CredentialKey) -> Result<bool, StoreError> {
-        let account = key.account();
+    fn remove(&self, account: &str, deadline: Instant) -> Result<bool, StoreError> {
         let output = self.run(
-            &["delete-generic-password", "-s", SERVICE, "-a", &account],
+            &["delete-generic-password", "-s", SERVICE, "-a", account],
             None,
+            deadline,
         )?;
         match output.status.code() {
             Some(0) => Ok(true),
@@ -207,20 +317,109 @@ impl CredentialStore for SecurityStore {
         }
     }
 
-    /// `dump-keychain` with no `-d` shows the attributes of each item and
-    /// no value, so it decrypts nothing.
-    fn keys(&self) -> Result<Vec<CredentialKey>, StoreError> {
-        let output = self.run(&["dump-keychain"], None)?;
+    /// The accounts of all `ncp` items. `dump-keychain` with no `-d` shows
+    /// the attributes of each item and no value, so it decrypts nothing.
+    fn accounts(&self, deadline: Instant) -> Result<Vec<String>, StoreError> {
+        let output = self.run(&["dump-keychain"], None, deadline)?;
         match output.status.code() {
-            Some(0) => {
-                let text = String::from_utf8_lossy(&output.stdout);
-                Ok(super::keys_of(
-                    ncp_accounts(&text).iter().map(String::as_str),
-                ))
-            }
+            Some(0) => Ok(ncp_accounts(&String::from_utf8_lossy(&output.stdout))),
             code => Err(exit_error("dump-keychain", code, &diagnostics(&output))),
         }
     }
+
+    /// Removes the parts of older saves, and the parts of saves that
+    /// stopped before their head, so that no old token data stays. A
+    /// failure here keeps the new value, and the next save removes the
+    /// rest.
+    fn remove_other_parts(&self, account: &str, keep: &[(String, String)], deadline: Instant) {
+        let Ok(accounts) = self.accounts(deadline) else {
+            return;
+        };
+        let _ = accounts
+            .iter()
+            .filter(|other| is_part_of(account, other))
+            .filter(|other| !keep.iter().any(|(part, _)| part == *other))
+            .try_for_each(|other| self.remove(other, deadline).map(|_| ()));
+    }
+}
+
+/// What one item holds.
+#[derive(Debug, PartialEq, Eq)]
+enum Item {
+    /// The whole stored value.
+    Whole(String),
+    /// The head of a value in parts. The parts are the items
+    /// `ACCOUNT/GENERATION/0` up to `ACCOUNT/GENERATION/{count - 1}`.
+    Head { generation: String, count: usize },
+}
+
+fn parse_item(account: &str, text: &str) -> Result<Item, StoreError> {
+    let Some(head) = text.strip_prefix(PARTS) else {
+        return Ok(Item::Whole(text.to_string()));
+    };
+    head.split_once(':')
+        .and_then(|(generation, count)| {
+            let count = count.parse().ok()?;
+            Some(Item::Head {
+                generation: generation.to_string(),
+                count,
+            })
+        })
+        .ok_or_else(|| StoreError::Failure(format!("the item {account} is not valid")))
+}
+
+/// The items that one save writes: the parts in order, then the head.
+#[derive(Debug, PartialEq, Eq)]
+struct SavePlan {
+    parts: Vec<(String, String)>,
+    head: String,
+}
+
+/// Cuts the encoded value into parts when its command does not fit one
+/// line. The parts and the head have no second encoding: the encoded text
+/// has only printable ASCII and no quote, and a head starts with a mark
+/// that no encoded value has.
+fn save_plan(account: &str, value: &str, generation: &str) -> Result<SavePlan, StoreError> {
+    let encoded = encode(value);
+    if add_line(account, &encoded).len() <= MAX_LINE {
+        return Ok(SavePlan {
+            parts: Vec::new(),
+            head: encoded,
+        });
+    }
+    // The longest part account has the largest index.
+    let room = MAX_LINE
+        .checked_sub(add_line(&part_account(account, generation, usize::MAX), "").len())
+        .filter(|&room| room > 0)
+        .ok_or_else(|| StoreError::Failure(format!("the account {account} is too long")))?;
+    let parts: Vec<(String, String)> = encoded
+        .as_bytes()
+        .chunks(room)
+        .map(String::from_utf8_lossy)
+        .enumerate()
+        .map(|(index, text)| (part_account(account, generation, index), text.into_owned()))
+        .collect();
+    let head = format!("{PARTS}{generation}:{}", parts.len());
+    Ok(SavePlan { parts, head })
+}
+
+fn part_account(account: &str, generation: &str, index: usize) -> String {
+    format!("{account}/{generation}/{index}")
+}
+
+fn is_part_of(account: &str, other: &str) -> bool {
+    other
+        .strip_prefix(account)
+        .is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// A new generation for each save, so that the parts of two saves never
+/// mix: the time in nanoseconds and the process id.
+fn new_generation() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |time| time.as_nanos());
+    format!("{nanos:x}-{:x}", std::process::id())
 }
 
 /// The accounts of the generic password items of service `ncp` in the
@@ -249,21 +448,13 @@ fn not_started(program: &Path, error: &io::Error) -> StoreError {
 }
 
 /// The command for `security -i` that adds or replaces an item.
-fn add_command(account: &str, value: &str) -> Result<String, StoreError> {
-    let line = format!(
+fn add_line(account: &str, text: &str) -> String {
+    format!(
         "add-generic-password -U -s {} -a {} -w {}\n",
         quote(SERVICE),
         quote(account),
-        quote(&encode(value))
-    );
-    if line.len() <= MAX_LINE {
-        Ok(line)
-    } else {
-        Err(StoreError::Failure(format!(
-            "the secret is too long for the security program: the command has {} bytes, and the limit is {MAX_LINE}",
-            line.len()
-        )))
-    }
+        quote(text)
+    )
 }
 
 /// Quotes a word for `security -i`. In a word that starts with a double
@@ -285,12 +476,10 @@ fn encode(value: &str) -> String {
     format!("{ENCODED}{}", STANDARD.encode(value))
 }
 
-/// Reads the output of `find-generic-password -w`. A value with no mark is
-/// plain text, for example an item that a person added by hand.
-fn decode(stdout: &[u8]) -> Result<Secret, StoreError> {
+/// Reads a stored value. A value with no mark is plain text, for example an
+/// item that a person added by hand.
+fn decode(stored: &str) -> Result<Secret, StoreError> {
     let not_text = || StoreError::Failure("stored item is not UTF-8 text".into());
-    let text = std::str::from_utf8(stdout).map_err(|_| not_text())?;
-    let stored = text.strip_suffix('\n').unwrap_or(text);
     match stored.strip_prefix(ENCODED) {
         Some(encoded) => STANDARD
             .decode(encoded)
@@ -340,32 +529,79 @@ mod tests {
 
     #[test]
     fn sends_the_value_only_in_encoded_form() {
-        let line = add_command("a/oauth/tokens", "he said \"hi\"\n").unwrap();
+        let plan = save_plan("oauth/a/tokens", "he said \"hi\"\n", "g").unwrap();
+        assert_eq!(plan.parts, []);
         assert_eq!(
-            line,
-            "add-generic-password -U -s \"ncp\" -a \"a/oauth/tokens\" -w \"ncp-base64:aGUgc2FpZCAiaGkiCg==\"\n"
+            add_line("oauth/a/tokens", &plan.head),
+            "add-generic-password -U -s \"ncp\" -a \"oauth/a/tokens\" -w \"ncp-base64:aGUgc2FpZCAiaGkiCg==\"\n"
         );
     }
 
     #[test]
-    fn refuses_a_command_longer_than_one_line_of_security() {
-        let fits = |len: usize| add_command("a/oauth/tokens", &"x".repeat(len)).is_ok();
+    fn keeps_a_value_in_one_item_while_its_command_fits_one_line() {
+        let fits = |len: usize| {
+            save_plan("oauth/a/tokens", &"x".repeat(len), "g")
+                .unwrap()
+                .parts
+                .is_empty()
+        };
         let longest = (0..MAX_LINE).take_while(|&len| fits(len)).last().unwrap();
-        let line = add_command("a/oauth/tokens", &"x".repeat(longest)).unwrap();
+        let plan = save_plan("oauth/a/tokens", &"x".repeat(longest), "g").unwrap();
+        let line = add_line("oauth/a/tokens", &plan.head);
         assert!(line.len() <= MAX_LINE);
         assert!(line.len() > MAX_LINE - 4);
-        let Err(StoreError::Failure(message)) = add_command("a/oauth/tokens", &"x".repeat(4000))
-        else {
-            panic!("a long value must fail");
-        };
-        assert!(!message.contains("xxxx"));
+    }
+
+    #[test]
+    fn cuts_a_long_value_into_parts_that_each_fit_one_line() {
+        let value = "x".repeat(10_000);
+        let plan = save_plan("oauth/a/tokens", &value, "g1").unwrap();
+        assert_eq!(plan.parts.len(), 4);
+        assert_eq!(plan.head, "ncp-parts:g1:4");
+        for (index, (account, text)) in plan.parts.iter().enumerate() {
+            assert_eq!(account, &format!("oauth/a/tokens/g1/{index}"));
+            assert!(add_line(account, text).len() <= MAX_LINE);
+        }
+        let joined: String = plan.parts.iter().map(|(_, text)| text.as_str()).collect();
+        assert_eq!(joined, encode(&value));
+    }
+
+    #[test]
+    fn reads_a_head_and_refuses_a_head_that_is_not_valid() {
+        assert_eq!(
+            parse_item("a", "ncp-parts:g1:3").unwrap(),
+            Item::Head {
+                generation: "g1".into(),
+                count: 3
+            }
+        );
+        assert_eq!(
+            parse_item("a", "ncp-base64:eA==").unwrap(),
+            Item::Whole("ncp-base64:eA==".into())
+        );
+        assert!(parse_item("a", "ncp-parts:g1").is_err());
+        assert!(parse_item("a", "ncp-parts:g1:x").is_err());
+    }
+
+    #[test]
+    fn finds_the_parts_of_an_account_only() {
+        assert!(is_part_of("secret/A", "secret/A/g/0"));
+        assert!(!is_part_of("secret/A", "secret/A"));
+        assert!(!is_part_of("secret/A", "secret/AB/g/0"));
+    }
+
+    #[test]
+    fn gives_a_new_generation_for_each_save() {
+        let first = new_generation();
+        std::thread::sleep(Duration::from_millis(1));
+        assert_ne!(first, new_generation());
     }
 
     #[test]
     fn decodes_an_encoded_value() {
-        let stored = format!("{}\n", encode("v \"q\"\n\u{fc}"));
+        let stored = encode("v \"q\"\n\u{fc}");
         assert_eq!(
-            decode(stored.as_bytes()).unwrap(),
+            decode(&stored).unwrap(),
             Secret::new("v \"q\"\n\u{fc}".into())
         );
     }
@@ -373,14 +609,14 @@ mod tests {
     #[test]
     fn reads_a_value_with_no_mark_as_plain_text() {
         assert_eq!(
-            decode(b"plain value\n").unwrap(),
+            decode("plain value").unwrap(),
             Secret::new("plain value".into())
         );
     }
 
     #[test]
     fn reports_an_encoded_value_that_is_not_valid_without_the_value() {
-        let Err(StoreError::Failure(message)) = decode(b"ncp-base64:@@secret@@\n") else {
+        let Err(StoreError::Failure(message)) = decode("ncp-base64:@@secret@@") else {
             panic!("a bad value must fail");
         };
         assert!(!message.contains("secret@@"));

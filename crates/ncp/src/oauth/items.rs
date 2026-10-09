@@ -53,7 +53,7 @@ pub struct ItemError {
 
 impl ClientItem {
     /// The item as a secret: compact JSON, because the macOS Keychain
-    /// through `security` takes about 2900 bytes at most.
+    /// through `security` keeps a long value in more items.
     ///
     /// # Errors
     ///

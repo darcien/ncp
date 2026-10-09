@@ -96,7 +96,8 @@ fn never_puts_the_value_in_a_program_argument() {
     store.load(&tokens()).unwrap();
     store.delete(&tokens()).unwrap();
     let log = calls(&dir);
-    assert_eq!(log.lines().count(), 3);
+    // The save and the delete also list the accounts, to find old parts.
+    assert_eq!(log.lines().count(), 5);
     assert_eq!(log.lines().next(), Some(r#"["-i"]"#));
     assert!(!log.contains("he said"));
     assert!(!log.contains("ncp-base64:"));
@@ -128,41 +129,109 @@ fn reads_a_value_with_no_mark_as_plain_text() {
     fs::remove_dir_all(dir).unwrap();
 }
 
-#[test]
-fn keeps_the_longest_value_that_fits_in_one_command_line() {
-    let dir = keychain("longest");
-    let store = store(&dir);
-    let fits = |len: usize| store.save(&tokens(), &secret(&"x".repeat(len))).is_ok();
-    // Find the longest value that the store accepts.
-    let (mut short, mut long) = (0, 4096);
-    while long - short > 1 {
-        let middle = usize::midpoint(short, long);
-        if fits(middle) {
-            short = middle;
-        } else {
-            long = middle;
-        }
+fn items(dir: &std::path::Path) -> serde_json::Map<String, serde_json::Value> {
+    let text = fs::read_to_string(dir.join("items.json")).unwrap();
+    let mut all: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&text).unwrap();
+    match all.remove("ncp") {
+        Some(serde_json::Value::Object(items)) => items,
+        _ => serde_json::Map::new(),
     }
-    store.save(&tokens(), &secret(&"x".repeat(short))).unwrap();
-    // The fake cuts a longer line as the real program does, so a limit that
-    // is too large gives a different value here.
-    assert_eq!(
-        store.load(&tokens()).unwrap(),
-        Some(secret(&"x".repeat(short)))
-    );
-    assert!(short > 2900, "the longest value has {short} bytes");
+}
+
+fn long_value() -> String {
+    HARD_VALUE.repeat(200)
+}
+
+#[test]
+fn keeps_a_long_value_in_parts() {
+    let dir = keychain("parts");
+    let store = store(&dir);
+    store.save(&tokens(), &secret(&long_value())).unwrap();
+    assert_eq!(store.load(&tokens()).unwrap(), Some(secret(&long_value())));
+    let items = items(&dir);
+    let head = items["oauth/a/tokens"].as_str().unwrap();
+    assert!(head.starts_with("ncp-parts:"), "{head}");
+    assert!(items.len() > 2);
+    assert!(!calls(&dir).contains("he said"));
+    // A part is not a key of its own.
+    assert_eq!(store.keys().unwrap(), [tokens()]);
     fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
-fn refuses_a_value_that_is_too_long_without_running_the_program() {
-    let dir = keychain("too-long");
-    let value = format!("{}tail", "x".repeat(4000));
-    let Err(StoreError::Failure(message)) = store(&dir).save(&tokens(), &secret(&value)) else {
-        panic!("a long value must fail");
+fn removes_the_old_parts_after_each_save() {
+    let dir = keychain("old-parts");
+    let store = store(&dir);
+    store.save(&tokens(), &secret(&long_value())).unwrap();
+    let first: Vec<String> = items(&dir).keys().cloned().collect();
+    store.save(&tokens(), &secret(&long_value())).unwrap();
+    let second: Vec<String> = items(&dir).keys().cloned().collect();
+    assert_eq!(first.len(), second.len());
+    assert_eq!(
+        first
+            .iter()
+            .filter(|account| second.contains(account))
+            .count(),
+        1,
+        "only the head stays: {first:?} {second:?}"
+    );
+    store.save(&tokens(), &secret("short")).unwrap();
+    assert_eq!(items(&dir).keys().collect::<Vec<_>>(), ["oauth/a/tokens"]);
+    assert_eq!(store.load(&tokens()).unwrap(), Some(secret("short")));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn deletes_the_head_and_the_parts() {
+    let dir = keychain("delete-parts");
+    let store = store(&dir);
+    let other = CredentialKey::Secret(SecretName::parse("A").unwrap());
+    store.save(&other, &secret("keep")).unwrap();
+    store.save(&tokens(), &secret(&long_value())).unwrap();
+    assert!(store.delete(&tokens()).unwrap());
+    assert_eq!(items(&dir).keys().collect::<Vec<_>>(), ["secret/A"]);
+    assert_eq!(store.load(&tokens()).unwrap(), None);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn reads_the_head_again_then_names_the_account_when_a_part_is_missing() {
+    let dir = keychain("missing-part");
+    fs::write(
+        dir.join("items.json"),
+        r#"{"ncp": {"oauth/a/tokens": "ncp-parts:g1:2", "oauth/a/tokens/g1/0": "ncp-base64:"}}"#,
+    )
+    .unwrap();
+    let Err(StoreError::Failure(message)) = store(&dir).load(&tokens()) else {
+        panic!("a missing part must fail");
     };
-    assert!(!message.contains("xxxx"));
-    assert_eq!(calls(&dir), "");
+    assert!(message.contains("oauth/a/tokens"), "{message}");
+    let head_reads = calls(&dir)
+        .lines()
+        .filter(|line| line.contains(r#""oauth/a/tokens","-w""#))
+        .count();
+    assert_eq!(head_reads, 2);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn keeps_the_old_value_when_a_save_in_parts_runs_out_of_time() {
+    let dir = keychain("parts-deadline");
+    let fast = store(&dir);
+    fast.save(&tokens(), &secret("old")).unwrap();
+    // Each run takes 300 ms, and the parts need more runs than the limit
+    // permits.
+    fs::write(dir.join("delay"), "300").unwrap();
+    let limit = std::time::Duration::from_millis(1000);
+    let start = std::time::Instant::now();
+    let result = fast
+        .clone()
+        .with_limit(limit)
+        .save(&tokens(), &secret(&long_value()));
+    assert!(matches!(result, Err(StoreError::NoAnswer(_))), "{result:?}");
+    assert!(start.elapsed() < limit + std::time::Duration::from_millis(500));
+    fs::remove_file(dir.join("delay")).unwrap();
+    assert_eq!(fast.load(&tokens()).unwrap(), Some(secret("old")));
     fs::remove_dir_all(dir).unwrap();
 }
 
