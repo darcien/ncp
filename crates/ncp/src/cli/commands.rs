@@ -218,10 +218,7 @@ async fn list(
         Ok((tools, hints)) => {
             let used_credentials = connection.is_authorized() || !server.value_names().is_empty();
             let keep = list_cache::keep_for(hints.ttl_ms, hints.private, used_credentials);
-            let has_instructions = connection
-                .server_info()
-                .is_some_and(|info| info.instructions.is_some());
-            keep_tools(context, server, &tools, keep, has_instructions);
+            keep_tools(context, server, &tools, keep, has_instructions(connection));
             Ok(tools)
         }
         Err(error) => {
@@ -229,6 +226,13 @@ async fn list(
             Err(session::request_failure(server, "tools/list", &error))
         }
     }
+}
+
+/// True when the handshake of the server has `instructions`.
+fn has_instructions(connection: &Connection) -> bool {
+    connection
+        .server_info()
+        .is_some_and(|info| info.instructions.is_some())
 }
 
 /// Keeps the tools in the cache for the time of `list_cache::keep_for`.
@@ -301,10 +305,7 @@ async fn tool_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
         None => {
             with_connection(context, server, async |connection| {
                 let tools = list(context, server, connection).await?;
-                let has_instructions = connection
-                    .server_info()
-                    .is_some_and(|info| info.instructions.is_some());
-                Ok((tools, has_instructions))
+                Ok((tools, has_instructions(connection)))
             })
             .await?
         }
