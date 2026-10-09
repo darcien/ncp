@@ -217,30 +217,35 @@ fn type_text(schema: &JsonObject, property: &Value) -> String {
 /// A call with each required argument.
 #[must_use]
 pub fn example_call(server: &str, tool: &Tool) -> String {
+    example_call_with(server, tool, &[])
+}
+
+/// An example call with the required arguments, and then the other
+/// properties in `also`, for example the ones that failed the check.
+#[must_use]
+pub fn example_call_with(server: &str, tool: &Tool, also: &[&str]) -> String {
     let schema = &tool.input_schema;
-    let required: Vec<String> = schema
+    let properties = schema.get("properties").and_then(Value::as_object);
+    let required: Vec<&str> = schema
         .get("required")
         .and_then(Value::as_array)
-        .map(|names| {
-            names
-                .iter()
-                .filter_map(Value::as_str)
-                .map(|name| {
-                    let property = schema
-                        .get("properties")
-                        .and_then(|properties| properties.get(name))
-                        .unwrap_or(&Value::Null);
-                    shell_word(&format!("{name}=<{}>", type_text(schema, property)))
-                })
-                .collect()
-        })
+        .map(|names| names.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
+    let others = also.iter().copied().filter(|name| {
+        !required.contains(name) && properties.is_some_and(|known| known.contains_key(*name))
+    });
+    let arguments = required.iter().copied().chain(others).map(|name| {
+        let property = properties
+            .and_then(|known| known.get(name))
+            .unwrap_or(&Value::Null);
+        shell_word(&format!("{name}=<{}>", type_text(schema, property)))
+    });
     std::iter::once(format!(
         "ncp tool call {} {}",
         shell_word(server),
         shell_word(&tool.name)
     ))
-    .chain(required)
+    .chain(arguments)
     .collect::<Vec<_>>()
     .join(" ")
 }
@@ -515,6 +520,24 @@ mod tests {
         );
         assert_eq!(target(&http), "https://example.com/mcp");
         assert_eq!(transport_name(&http), "http");
+    }
+
+    #[test]
+    fn example_call_adds_the_failed_properties_after_the_required_ones() {
+        let tool = Tool::new(
+            "search",
+            "Search",
+            Arc::new(
+                serde_json::from_value(json!({"type": "object", "properties": {
+                    "query": {"type": "string"}, "limit": {"type": "integer"}},
+                    "required": ["query"]}))
+                .unwrap(),
+            ),
+        );
+        assert_eq!(
+            example_call_with("web", &tool, &["limit", "query", "nothing"]),
+            "ncp tool call web search 'query=<string>' 'limit=<integer>'"
+        );
     }
 
     #[test]

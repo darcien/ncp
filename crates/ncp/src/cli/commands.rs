@@ -873,6 +873,16 @@ fn check_arguments(
             Ok(())
         }
         Outcome::Invalid(problems) => {
+            // The top-level property of each problem, so that the example
+            // shows it too.
+            let mut failed: Vec<&str> = problems
+                .iter()
+                .filter_map(|problem| problem.path.split('/').nth(1))
+                .filter(|name| !name.is_empty())
+                .collect();
+            failed.sort_unstable();
+            failed.dedup();
+            let example = render::example_call_with(server, tool, &failed);
             let problems = problems.iter().fold(String::new(), |mut text, problem| {
                 let path = if problem.path.is_empty() {
                     "/"
@@ -888,7 +898,7 @@ fn check_arguments(
                 render::properties(&tool.input_schema).trim_end()
             ))
             .server(server)
-            .hint(render::example_call(server, tool)))
+            .hint(example))
         }
     }
 }

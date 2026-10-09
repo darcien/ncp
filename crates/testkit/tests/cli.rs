@@ -2320,3 +2320,43 @@ fn tool_completion_offers_no_names_of_a_changed_or_removed_entry() {
     home.configure(&json!({}));
     assert_eq!(names(&home), "");
 }
+
+#[test]
+fn text_diagnostics_of_a_stdio_server_show_debug_trace_and_server_start() {
+    let home = Home::new("text-diagnostics");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let run = home.run(&[
+        "--output-format",
+        "text",
+        "-vv",
+        "--timings",
+        "tool",
+        "list",
+        "fx",
+    ]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
+    assert!(
+        stderr
+            .lines()
+            .any(|line| line.starts_with("debug: server fx: ")),
+        "{stderr}"
+    );
+    assert!(
+        stderr
+            .lines()
+            .any(|line| line.starts_with("trace: server fx: sent {")),
+        "the trace of -vv: {stderr}"
+    );
+    let timings = stderr
+        .lines()
+        .find(|line| line.starts_with("timings: "))
+        .unwrap_or_else(|| panic!("{stderr}"));
+    assert!(timings.contains("server start "), "{timings}");
+    assert!(timings.contains("responses "), "{timings}");
+    assert_eq!(
+        stderr.lines().last(),
+        Some(timings),
+        "the timings come last"
+    );
+}
