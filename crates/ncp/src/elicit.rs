@@ -66,6 +66,7 @@ pub enum Kind {
     Text {
         min_length: Option<u64>,
         max_length: Option<u64>,
+        format: Option<TextFormat>,
     },
     Integer {
         minimum: Option<f64>,
@@ -79,7 +80,75 @@ pub enum Kind {
     /// One value of a list: `enum`, or `oneOf` with `const` and `title`.
     Choice(Vec<Choice>),
     /// Values of a list: an array of `enum` or `anyOf` items.
-    Choices(Vec<Choice>),
+    Choices {
+        list: Vec<Choice>,
+        min_items: Option<u64>,
+        max_items: Option<u64>,
+    },
+}
+
+/// The formats of a text field that the spec names. The check is a light
+/// one, to catch a typing error: the server checks the value again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextFormat {
+    Email,
+    Uri,
+    Date,
+    DateTime,
+}
+
+impl TextFormat {
+    fn parse(name: &str) -> Option<Self> {
+        match name {
+            "email" => Some(Self::Email),
+            "uri" => Some(Self::Uri),
+            "date" => Some(Self::Date),
+            "date-time" => Some(Self::DateTime),
+            _ => None,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Email => "email address",
+            Self::Uri => "URI",
+            Self::Date => "date, YYYY-MM-DD",
+            Self::DateTime => "date and time, YYYY-MM-DDThh:mm:ssZ",
+        }
+    }
+
+    fn accepts(self, text: &str) -> bool {
+        match self {
+            Self::Email => text
+                .split_once('@')
+                .is_some_and(|(local, domain)| !local.is_empty() && domain.contains('.')),
+            Self::Uri => url::Url::parse(text).is_ok(),
+            Self::Date => is_date(text),
+            Self::DateTime => {
+                text.get(..10).is_some_and(is_date)
+                    && text[10..].starts_with(['T', 't'])
+                    && (text.ends_with(['Z', 'z']) || text[11..].contains(['+', '-']))
+            }
+        }
+    }
+}
+
+/// A date as `YYYY-MM-DD` with a month and a day in range.
+fn is_date(text: &str) -> bool {
+    let parts: Vec<&str> = text.split('-').collect();
+    let number = |part: &str, width: usize| {
+        (part.len() == width && part.chars().all(|c| c.is_ascii_digit()))
+            .then(|| part.parse::<u32>().ok())
+            .flatten()
+    };
+    match parts.as_slice() {
+        [year, month, day] => {
+            number(year, 4).is_some()
+                && number(month, 2).is_some_and(|month| (1..=12).contains(&month))
+                && number(day, 2).is_some_and(|day| (1..=31).contains(&day))
+        }
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -194,11 +263,20 @@ fn single_choices(property: &Value) -> Option<Vec<Choice>> {
 fn field(name: &str, property: &Value, required: bool) -> Result<Field, RequestError> {
     let number = |key: &str| property.get(key).and_then(Value::as_f64);
     let kind = match property.get("type").and_then(Value::as_str) {
+        // A `oneOf` whose items do not all have a `const` is not a list
+        // that ncp can show; free text would send a value that is not in it.
+        Some("string") if property.get("oneOf").is_some() => single_choices(property)
+            .map(Kind::Choice)
+            .ok_or_else(|| RequestError::FieldType(name.to_string(), "oneOf".into()))?,
         Some("string") => match single_choices(property) {
             Some(list) => Kind::Choice(list),
             None => Kind::Text {
                 min_length: property.get("minLength").and_then(Value::as_u64),
                 max_length: property.get("maxLength").and_then(Value::as_u64),
+                format: property
+                    .get("format")
+                    .and_then(Value::as_str)
+                    .and_then(TextFormat::parse),
             },
         },
         Some("integer") => Kind::Integer {
@@ -217,7 +295,11 @@ fn field(name: &str, property: &Value, required: bool) -> Result<Field, RequestE
                 .and_then(choices)
                 .or_else(|| items.get("enum").and_then(choices))
                 .ok_or_else(|| RequestError::FieldType(name.to_string(), "array".into()))?;
-            Kind::Choices(list)
+            Kind::Choices {
+                list,
+                min_items: property.get("minItems").and_then(Value::as_u64),
+                max_items: property.get("maxItems").and_then(Value::as_u64),
+            }
         }
         other => {
             return Err(RequestError::FieldType(
@@ -240,12 +322,16 @@ fn field(name: &str, property: &Value, required: bool) -> Result<Field, RequestE
 #[must_use]
 pub fn hint(field: &Field) -> String {
     let kind = match &field.kind {
-        Kind::Text { .. } => "text".to_string(),
+        Kind::Text {
+            format: Some(format),
+            ..
+        } => format.name().to_string(),
+        Kind::Text { format: None, .. } => "text".to_string(),
         Kind::Integer { .. } => "whole number".to_string(),
         Kind::Number { .. } => "number".to_string(),
         Kind::Boolean => "yes or no".to_string(),
         Kind::Choice(list) => format!("one of: {}", titles(list)),
-        Kind::Choices(list) => format!("some of, with commas: {}", titles(list)),
+        Kind::Choices { list, .. } => format!("some of, with commas: {}", titles(list)),
     };
     let need = if field.required { ", required" } else { "" };
     let default = field
@@ -315,7 +401,11 @@ pub fn answer(field: &Field, typed: &str) -> Result<Option<Value>, String> {
         Kind::Text {
             min_length,
             max_length,
+            format,
         } => {
+            if let Some(format) = format.filter(|format| !format.accepts(typed)) {
+                return Err(format!("type a {}", format.name()));
+            }
             let length = typed.chars().count() as u64;
             if min_length.is_some_and(|min| length < min)
                 || max_length.is_some_and(|max| length > max)
@@ -354,13 +444,27 @@ pub fn answer(field: &Field, typed: &str) -> Result<Option<Value>, String> {
             _ => Err("type yes or no".into()),
         },
         Kind::Choice(list) => pick(list, typed).map(Some),
-        Kind::Choices(list) => typed
-            .split(',')
-            .map(str::trim)
-            .filter(|word| !word.is_empty())
-            .map(|word| pick(list, word))
-            .collect::<Result<Vec<_>, _>>()
-            .map(|values| Some(Value::Array(values))),
+        Kind::Choices {
+            list,
+            min_items,
+            max_items,
+        } => {
+            let values = typed
+                .split(',')
+                .map(str::trim)
+                .filter(|word| !word.is_empty())
+                .map(|word| pick(list, word))
+                .collect::<Result<Vec<_>, _>>()?;
+            let count = values.len() as u64;
+            let minimum = min_items.unwrap_or(u64::from(field.required));
+            if count < minimum || max_items.is_some_and(|max| count > max) {
+                return Err(format!(
+                    "choose {minimum} to {} values",
+                    max_items.map_or("any".into(), |max| max.to_string())
+                ));
+            }
+            Ok(Some(Value::Array(values)))
+        }
     }
 }
 
@@ -446,7 +550,52 @@ mod tests {
             ])
         );
         assert!(matches!(field("size").kind, Kind::Choice(_)));
-        assert!(matches!(field("tags").kind, Kind::Choices(_)));
+        assert!(matches!(field("tags").kind, Kind::Choices { .. }));
+    }
+
+    fn one_field(property: &Value, required: bool) -> Field {
+        field("f", property, required).unwrap()
+    }
+
+    #[test]
+    fn text_formats_catch_typing_errors() {
+        let check = |format: &str, typed: &str| {
+            answer(
+                &one_field(&json!({"type": "string", "format": format}), false),
+                typed,
+            )
+            .is_ok()
+        };
+        assert!(check("email", "ada@example.test") && !check("email", "ada"));
+        assert!(check("uri", "https://a.test/x") && !check("uri", "a test"));
+        assert!(check("date", "2026-10-09") && !check("date", "2026-13-01"));
+        assert!(!check("date", "9/10/2026"));
+        assert!(check("date-time", "2026-10-09T10:00:00Z"));
+        assert!(check("date-time", "2026-10-09T10:00:00+11:00"));
+        assert!(!check("date-time", "2026-10-09") && !check("date-time", "2026-10-09T10:00"));
+        // An unknown format is free text.
+        assert!(check("color", "anything"));
+    }
+
+    #[test]
+    fn multi_select_checks_the_count_of_values() {
+        let tags = json!({"type": "array", "items": {"enum": ["a", "b", "c"]},
+            "minItems": 1, "maxItems": 2});
+        assert!(answer(&one_field(&tags, false), "a, b").is_ok());
+        assert!(answer(&one_field(&tags, false), "a, b, c").is_err());
+        assert!(answer(&one_field(&tags, false), " , ").is_err());
+        let free = json!({"type": "array", "items": {"enum": ["a"]}});
+        assert!(answer(&one_field(&free, true), " , ").is_err());
+        assert_eq!(answer(&one_field(&free, false), " , "), Ok(Some(json!([]))));
+    }
+
+    #[test]
+    fn one_of_with_an_item_with_no_const_is_refused() {
+        let property = json!({"type": "string", "oneOf": [{"const": "a"}, {"title": "B"}]});
+        assert!(matches!(
+            field("f", &property, false),
+            Err(RequestError::FieldType(..))
+        ));
     }
 
     #[test]
