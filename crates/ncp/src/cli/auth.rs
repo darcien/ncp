@@ -552,29 +552,21 @@ pub(super) async fn stored_login(
 
 /// The stop when the stored tokens are for another server (design B70).
 ///
-/// A URL with a `${NAME}` value does not show: the stored URL can hold an
-/// old value that `ncp` cannot hide.
+/// The message names only the current value: a stored URL or issuer can
+/// hold an old `${NAME}` value that `ncp` cannot hide.
 fn binding_failure(server: &Server, mismatch: &items::BindingMismatch) -> Failure {
     let name = server.name.as_str();
-    let has_values = match &server.transport {
-        Transport::Http(remote) | Transport::Sse(remote) => !remote.url_values.is_empty(),
-        Transport::Stdio(_) => false,
-    };
     let reason = match mismatch {
         items::BindingMismatch::Missing => {
             "the tokens do not name the server that they are for".to_string()
         }
-        items::BindingMismatch::Resource { .. } if has_values => {
+        items::BindingMismatch::Resource { .. } => {
             "the tokens are for another URL than the entry names".to_string()
         }
-        items::BindingMismatch::Resource { stored, current } => {
-            format!("the tokens are for {stored}, and the entry names {current}")
-        }
-        items::BindingMismatch::Issuer { stored, current } => {
-            format!(
-                "the tokens are from {stored}, and the server names the authorization server {current}"
-            )
-        }
+        items::BindingMismatch::Issuer { current, .. } => format!(
+            "the tokens are from another authorization server than {}",
+            session::hide_expanded_url(server, current.clone())
+        ),
     };
     Failure::new(
         Exit::Auth,
@@ -1390,6 +1382,40 @@ fn status_text(rows: &[(String, items::Status)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn binding_stop_names_no_stored_url_or_issuer() {
+        let env = crate::expand::Env::from([("KEY".to_string(), "n3w-k3y".to_string())]);
+        let config = crate::config::parse(
+            r#"{"mcpServers": {"web": {"type": "http", "url": "https://h/${KEY}/mcp"}}}"#,
+            &env,
+        )
+        .unwrap();
+        let server = config.server("web").unwrap();
+        let resource = binding_failure(
+            server,
+            &items::BindingMismatch::Resource {
+                stored: "https://h/old-k3y/mcp".into(),
+                current: "https://h/n3w-k3y/mcp".into(),
+            },
+        );
+        assert!(
+            resource.message.contains("another URL"),
+            "{}",
+            resource.message
+        );
+        let issuer = binding_failure(
+            server,
+            &items::BindingMismatch::Issuer {
+                stored: "https://as/old-k3y".into(),
+                current: "https://as/n3w-k3y".into(),
+            },
+        );
+        for failure in [&resource, &issuer] {
+            assert!(!failure.message.contains("k3y"), "{}", failure.message);
+            assert!(failure.message.contains("on purpose"));
+        }
+    }
 
     fn metadata(endpoint: &str) -> AuthorizationMetadata {
         let mut metadata = AuthorizationMetadata::default();

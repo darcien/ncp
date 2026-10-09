@@ -620,13 +620,23 @@ pub(super) fn hide_expanded_url(server: &Server, message: String) -> String {
     match (&server.transport, &server.target) {
         (Transport::Http(remote) | Transport::Sse(remote), Target::Remote { url }) => {
             let shown = crate::redact::url(url);
-            let message = message.replace(remote.url.as_str(), &shown);
-            // reqwest names the URL in its parsed form.
-            let message = match url::Url::parse(remote.url.as_str()) {
-                Ok(parsed) => message.replace(parsed.as_str(), &shown),
-                Err(_) => message,
-            };
-            crate::redact::values(&message, &remote.url_values)
+            // The whole URL first, so that the URL as the file writes it
+            // shows; then each value in other places, for example in a URL
+            // that rmcp makes from it.
+            let parts: Vec<&str> = message.split(remote.url.as_str()).collect();
+            parts
+                .iter()
+                .map(|part| match url::Url::parse(remote.url.as_str()) {
+                    // reqwest names the URL in its parsed form.
+                    Ok(parsed) => part
+                        .split(parsed.as_str())
+                        .map(|piece| crate::redact::values(piece, &remote.url_values))
+                        .collect::<Vec<_>>()
+                        .join(&shown),
+                    Err(_) => crate::redact::values(part, &remote.url_values),
+                })
+                .collect::<Vec<_>>()
+                .join(&shown)
         }
         _ => message,
     }

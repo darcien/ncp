@@ -117,10 +117,18 @@ pub fn values(text: &str, secrets: &[String]) -> String {
         .iter()
         .filter(|value| !value.is_empty())
         .flat_map(|value| {
+            let percent = percent_encoded(value);
+            let form: String = url::form_urlencoded::byte_serialize(value.as_bytes()).collect();
+            // A URL parser lowercases a host, and a form encodes a URL
+            // that holds a percent-encoded value again.
+            let twice: String = url::form_urlencoded::byte_serialize(percent.as_bytes()).collect();
             [
                 value.clone(),
-                url::form_urlencoded::byte_serialize(value.as_bytes()).collect(),
-                percent_encoded(value),
+                value.to_lowercase(),
+                form,
+                percent.clone(),
+                percent.to_lowercase(),
+                twice,
             ]
         })
         .collect();
@@ -246,6 +254,16 @@ mod tests {
         assert_eq!(
             values("a=k 1/x b=k+1%2Fx c=k%201%2Fx d", &secrets),
             "a=**** b=**** c=**** d"
+        );
+        let host = vec!["AcmeX".to_string()];
+        assert_eq!(
+            values("https://acmex.example.com", &host),
+            "https://****.example.com"
+        );
+        let path = vec!["a b".to_string()];
+        assert_eq!(
+            values("resource=https%3A%2F%2Fh%2Fa%2520b", &path),
+            "resource=https%3A%2F%2Fh%2F****"
         );
     }
 

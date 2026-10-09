@@ -44,7 +44,13 @@ fn http_line(
     shown_url: &dyn Fn(&str) -> String,
 ) -> String {
     let url = shown_url(&exchange.url);
-    let outcome = shown_url(&hide_url_in(&exchange.outcome, &exchange.url, &url));
+    let outcome = hide_url_in(&exchange.outcome, &exchange.url, &url);
+    // A status line holds no value; an error can hold a URL.
+    let outcome = if outcome.starts_with("error") {
+        shown_url(&outcome)
+    } else {
+        outcome
+    };
     // OAuth bodies can hold the server URL, for example in `resource`.
     let request_body = exchange.request_body.as_deref().map(shown_url);
     let response_body = exchange.response_body.as_deref().map(shown_url);

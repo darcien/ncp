@@ -1526,8 +1526,8 @@ async fn stored_token_for_another_server_url_is_not_sent() {
         message.contains("did not send the stored token"),
         "{message}"
     );
-    assert!(message.contains("https://other.example/mcp"), "{message}");
-    assert!(message.contains(&fixture.url), "{message}");
+    // A stored URL can hold an old secret, so it does not show.
+    assert!(!message.contains("other.example"), "{message}");
     assert_eq!(error["hint"], "ncp auth login web");
 }
 
@@ -2916,4 +2916,21 @@ fn issuer_lookup_of_a_slow_server_keeps_the_usage_error() {
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert!(started.elapsed() < std::time::Duration::from_secs(4));
     drop(silent);
+}
+
+#[test]
+fn failed_login_hides_a_value_in_the_url_path() {
+    // Each request gets 401 with no metadata, so discovery fails and names
+    // the URLs that it made from the server URL.
+    let (url, _) = raw_server(
+        "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Bearer\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            .to_string(),
+    );
+    let base = url.trim_end_matches("/mcp").to_string();
+    let home = Home::new("login-error-value").set("KEY", "t3nant-k3y");
+    home.configure(&json!({"web": {"type": "http", "url": format!("{base}/${{KEY}}/mcp")}}));
+    let run = home.run(&["-vv", "auth", "login", "web", "--credential-store", "file"]);
+    assert_ne!(run.code(), 0, "{}", run.describe());
+    let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
+    assert!(!stderr.contains("t3nant-k3y"), "{stderr}");
 }
