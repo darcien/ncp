@@ -1341,6 +1341,17 @@ async fn rejected_refresh_asks_for_a_new_login() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn login_after_insufficient_scope_asks_for_the_old_and_the_new_scopes() {
+    step_up_keeps_the_scopes("step-up", false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_scopes_of_a_403_stay_with_tokens_in_the_native_store() {
+    step_up_keeps_the_scopes("step-up-native", true).await;
+}
+
+/// A call that gets a 403 for a new scope, then a login, then the call
+/// again, with the tokens in the file or in the native store.
+async fn step_up_keeps_the_scopes(name: &str, native: bool) {
     let auth = ncp_testkit::auth_server::serve_auth(AuthSettings {
         scopes_supported: vec!["a".into()],
         ..AuthSettings::default()
@@ -1354,8 +1365,13 @@ async fn login_after_insufficient_scope_asks_for_the_old_and_the_new_scopes() {
     let fixture = ncp_testkit::serve_http_with_oauth(Mode::Modern, &auth, Some(step_up))
         .await
         .unwrap();
-    let home = oauth_home("step-up", &fixture.url);
-    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    let home = oauth_home(name, &fixture.url);
+    let (home, login): (Home, &[&str]) = if native {
+        (home.with_fake_keychain(), &["auth", "login", "web"])
+    } else {
+        (home, &LOGIN_TO_FILE)
+    };
+    assert_eq!(home.run(login).code(), 0);
     let call = ["tool", "call", "web", "echo", "text=hi"];
     let run = home.run(&call);
     assert_eq!(run.code(), 4, "{}", run.describe());
@@ -1365,7 +1381,7 @@ async fn login_after_insufficient_scope_asks_for_the_old_and_the_new_scopes() {
         "{error}"
     );
     assert_eq!(error["hint"], "ncp auth login web");
-    let run = home.run(&LOGIN_TO_FILE);
+    let run = home.run(login);
     assert_eq!(run.code(), 0, "{}", run.describe());
     let scope = auth.record().authorize_scope.unwrap();
     let scopes: Vec<&str> = scope.split_whitespace().collect();
