@@ -323,9 +323,8 @@ behavior. Do the items in order. Each item is one or more small commits.
 
 ## Milestone 14: release build (gate)
 
-Status: not done. Items 1 to 3 ran once as a trial (commit c260b21). There
-is no release. The files in `dist/` are old: do items 1 to 3 again after
-milestone 13. Item 4 waits for the user.
+Status: items 1 to 3 done on 2026-10-10 at commit 3066c47 (report
+`docs/research/release-build-2026-10-10.md`). Item 4 waits for the user.
 
 1. Static musl builds for `x86_64` and `aarch64` in the Linux harness, macOS
    builds for both architectures, and checksums (D3).
