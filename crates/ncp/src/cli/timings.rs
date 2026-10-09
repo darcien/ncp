@@ -74,6 +74,14 @@ fn cpu_time() -> Option<Duration> {
     Some(time(usage.user_time()) + time(usage.system_time()))
 }
 
+/// The connect time with no DNS time. reqwest looks up the name inside
+/// its connector, so each lookup is in the time of a connect too.
+fn connect_without_dns(record: &Record) -> Option<Duration> {
+    record
+        .connect
+        .map(|connect| connect.saturating_sub(record.dns.unwrap_or_default()))
+}
+
 /// Milliseconds with one decimal: a local step takes less than 1 ms.
 pub fn ms(duration: Duration) -> f64 {
     (duration.as_secs_f64() * 10_000.0).round() / 10.0
@@ -92,7 +100,7 @@ fn steps(
         ("credentialsMs", "credentials", record.credentials),
         ("serverStartMs", "server start", record.server_start),
         ("dnsMs", "dns", record.dns),
-        ("connectMs", "connect", record.connect),
+        ("connectMs", "connect", connect_without_dns(record)),
     ]
     .into_iter()
     .filter_map(|(json, text, value)| value.map(|value| (json, text, value)))
@@ -159,7 +167,7 @@ mod tests {
         );
         assert_eq!(
             text,
-            "timings: total 41.0 ms, cpu 8.0 ms, config 0.4 ms, dns 2.0 ms, connect 4.2 ms, \
+            "timings: total 41.0 ms, cpu 8.0 ms, config 0.4 ms, dns 2.0 ms, connect 2.2 ms, \
              responses 18.0 ms 9.5 ms\n"
         );
     }
@@ -171,7 +179,7 @@ mod tests {
         assert_eq!(
             value,
             json!({"timings": {"totalMs": 41.0, "configMs": 0.4, "dnsMs": 2.0,
-                "connectMs": 4.2, "responseMs": [18.0, 9.5]}})
+                "connectMs": 2.2, "responseMs": [18.0, 9.5]}})
         );
     }
 
