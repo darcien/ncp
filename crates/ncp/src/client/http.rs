@@ -48,15 +48,59 @@ pub fn builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
 }
 
-/// The client of `ncp`. The observer gets the time of each DNS lookup and
-/// each new connection.
+/// The client of the MCP connection. The observer gets the time of each
+/// DNS lookup and each new connection.
+///
+/// The client follows no redirect: the headers of an entry can hold
+/// credentials, and reqwest removes only the standard credential headers
+/// at a redirect to another host. rmcp has the same default, so that
+/// custom headers do not go to the target of a redirect. rmcp keeps only
+/// the status of the answer, so the record gets the new location.
 ///
 /// # Errors
 ///
 /// Returns an error when the file in `SSL_CERT_FILE` gives no root
 /// certificate, or when reqwest cannot make the client.
-pub fn client(env: &Env, observer: &Observer) -> Result<reqwest::Client, HttpError> {
-    Ok(configured(env, observer)?.build()?)
+pub fn client(
+    env: &Env,
+    observer: &Observer,
+    record: &RedirectRecord,
+) -> Result<reqwest::Client, HttpError> {
+    let record = record.clone();
+    let stop = reqwest::redirect::Policy::custom(move |attempt| {
+        record.keep(Redirected {
+            status: attempt.status().as_u16(),
+            location: crate::redact::url(attempt.url().as_str()),
+        });
+        attempt.stop()
+    });
+    Ok(configured(env, observer)?.redirect(stop).build()?)
+}
+
+/// A redirect of the MCP connection. The location shows with its secrets
+/// hidden.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("the server answered {status} with a redirect to {location}, and ncp follows no redirect")]
+pub struct Redirected {
+    pub status: u16,
+    pub location: String,
+}
+
+/// The last redirect that the client did not follow.
+#[derive(Debug, Clone, Default)]
+pub struct RedirectRecord(std::sync::Arc<std::sync::Mutex<Option<Redirected>>>);
+
+impl RedirectRecord {
+    fn keep(&self, redirected: Redirected) {
+        if let Ok(mut last) = self.0.lock() {
+            *last = Some(redirected);
+        }
+    }
+
+    #[must_use]
+    pub fn last(&self) -> Option<Redirected> {
+        self.0.lock().ok().and_then(|last| last.clone())
+    }
 }
 
 /// The builder with the settings of each client of `ncp`: the proxy, the
@@ -284,7 +328,12 @@ mod tests {
 
     #[test]
     fn empty_cert_file_variable_is_an_error_on_each_host() {
-        let error = client(&env(&[(CERT_FILE, "")]), &Observer::default()).unwrap_err();
+        let error = client(
+            &env(&[(CERT_FILE, "")]),
+            &Observer::default(),
+            &RedirectRecord::default(),
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("SSL_CERT_FILE"), "{error}");
     }
 
@@ -295,9 +344,13 @@ mod tests {
         let path = dir.join("empty.pem");
         std::fs::write(&path, "not a certificate\n").unwrap();
         let path = path.to_string_lossy().to_string();
-        let error = client(&env(&[(CERT_FILE, &path)]), &Observer::default())
-            .unwrap_err()
-            .to_string();
+        let error = client(
+            &env(&[(CERT_FILE, &path)]),
+            &Observer::default(),
+            &RedirectRecord::default(),
+        )
+        .unwrap_err()
+        .to_string();
         assert!(
             error.contains(&path) && error.contains(CERT_FILE),
             "{error}"

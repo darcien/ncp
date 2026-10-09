@@ -242,7 +242,12 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
                 challenge: challenge.as_deref(),
             };
             let Some(authorized) = stored_login(context, &login).await? else {
-                return Err(connect_failure(context.env, server, &error));
+                return Err(connect_failure(
+                    context.env,
+                    server,
+                    &error,
+                    prepared.redirects.last(),
+                ));
             };
             let launch = Launch {
                 authorized: Some(&authorized),
@@ -252,7 +257,7 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
         }
         (result, ..) => result,
     }
-    .map_err(|error| connect_failure(context.env, server, &error))?;
+    .map_err(|error| connect_failure(context.env, server, &error, prepared.redirects.last()))?;
     prepared.save_era(context, server, connection.era());
     Ok(connection)
 }
@@ -319,7 +324,7 @@ pub async fn open_with_login(
     };
     let connection = Box::pin(client::connect(&launch))
         .await
-        .map_err(|error| connect_failure(context.env, server, &error))?;
+        .map_err(|error| connect_failure(context.env, server, &error, prepared.redirects.last()))?;
     prepared.save_era(context, server, connection.era());
     Ok(connection)
 }
@@ -355,6 +360,8 @@ struct Prepared {
     values: crate::config::Values,
     observer: client::observe::Observer,
     http: Option<reqwest::Client>,
+    /// The redirect that the HTTP client did not follow.
+    redirects: client::http::RedirectRecord,
     server_log: client::stdio::ServerLog,
     progress: client::ProgressSink,
     elicitor: Option<client::Elicitor>,
@@ -382,6 +389,7 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
     let observer = diagnostics::observer(ui, name, context.timings.clone(), shown_url(&shown));
     // Only an http server needs the HTTP client. Thus a bad SSL_CERT_FILE
     // does not stop a stdio server.
+    let redirects = client::http::RedirectRecord::default();
     let http = match &server.transport {
         Transport::Http(remote) => {
             // The route costs a read of the system settings on macOS.
@@ -389,7 +397,7 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
                 ui.debug(Some(name), &route_text(context.env, server, remote));
             }
             Some(
-                client::http::client(context.env, &observer)
+                client::http::client(context.env, &observer, &redirects)
                     .map_err(|error| Failure::protocol(error.to_string()).server(name))?,
             )
         }
@@ -401,6 +409,7 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
         values,
         observer,
         http,
+        redirects,
         server_log: ui.server_log(name),
         progress: ui.progress(name),
         elicitor: context
@@ -471,9 +480,19 @@ fn route_text(env: &Env, server: &Server, remote: &config::RemoteServer) -> Stri
     }
 }
 
-fn connect_failure(env: &Env, server: &Server, error: &ConnectError) -> Failure {
+fn connect_failure(
+    env: &Env,
+    server: &Server,
+    error: &ConnectError,
+    redirected: Option<client::http::Redirected>,
+) -> Failure {
     if let Some(text) = error.token_store_error() {
         return token_store_failure(server, &text);
+    }
+    if let Some(redirected) = redirected.filter(|_| !error.needs_authorization()) {
+        return Failure::protocol(redirected.to_string())
+            .hint("put the new URL in the entry when you trust it")
+            .server(server.name.as_str());
     }
     let exit = match error {
         ConnectError::Cancelled => return interrupted().server(server.name.as_str()),
@@ -590,8 +609,8 @@ pub fn interrupted() -> Failure {
 
 /// The store of the OAuth tokens failed, for example at the save of a
 /// refresh. A file that fails is a local error. A native store that fails
-/// (a locked keyring, or a token set longer than the line of `security`,
-/// design B51) is an authorization error: the file can keep the tokens.
+/// (for example a locked keyring, design B51) is an authorization error:
+/// the file can keep the tokens.
 fn token_store_failure(server: &Server, text: &str) -> Failure {
     if let Some(text) = crate::oauth::store::file_failure(text) {
         return Failure::protocol(format!("cannot keep the OAuth tokens: {text}"))

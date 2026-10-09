@@ -2619,3 +2619,47 @@ fn a_page_that_is_not_safe_is_refused_and_no_page_is_a_protocol_error() {
     let run = home.run(&["tool", "call", "fx", "needs-page", "text=none"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
 }
+
+/// A server that answers each request with the status line and headers,
+/// and counts its connections.
+fn raw_server(answer: String) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    use std::io::{Read as _, Write as _};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = count.clone();
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut buffer = [0_u8; 8192];
+            let _ = stream.read(&mut buffer);
+            let _ = stream.write_all(answer.as_bytes());
+        }
+    });
+    (url, count)
+}
+
+#[test]
+fn http_server_that_redirects_stops_and_sends_no_header_to_the_new_location() {
+    let ok = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string();
+    let (target, target_hits) = raw_server(ok);
+    let location = format!("{target}?api_key=k1");
+    let (url, _) = raw_server(format!(
+        "HTTP/1.1 307 Temporary Redirect\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    ));
+    let home = Home::new("redirect");
+    home.configure(&json!({"web": {"type": "http", "url": url,
+        "headers": {"X-Api-Key": "secret-value"}}}));
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 3, "{}", run.describe());
+    let error = run.error();
+    let message = error["message"].as_str().unwrap();
+    assert!(message.contains("307"), "{message}");
+    assert!(message.contains(&target), "{message}");
+    assert!(
+        !message.contains("k1"),
+        "the location hides its secrets: {message}"
+    );
+    assert!(error["hint"].as_str().unwrap().contains("new URL"));
+    assert_eq!(target_hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
