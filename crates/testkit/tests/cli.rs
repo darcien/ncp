@@ -2376,3 +2376,17 @@ fn text_diagnostics_of_a_stdio_server_show_debug_trace_and_server_start() {
         "the timings come last"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_to_the_file_waits_at_most_the_cleanup_limit_for_a_native_store_with_no_answer() {
+    let (_auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    let home = oauth_home("cleanup-limit", &fixture.url).with_fake_keychain();
+    // The native store gives no answer, as at an unlock dialog.
+    std::fs::write(home.root.join("keychain/delay"), "60000").unwrap();
+    let started = std::time::Instant::now();
+    let run = home.run(&LOGIN_TO_FILE);
+    let elapsed = started.elapsed();
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(elapsed < std::time::Duration::from_secs(30), "{elapsed:?}");
+    assert!(!notes(&run, "warning").is_empty(), "{}", run.describe());
+}
