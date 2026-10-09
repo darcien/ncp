@@ -1,13 +1,7 @@
 # Known failures of ncp in the official conformance suite. Each entry has
 # its reason. The suite fails when an entry passes, so that this list stays
-# current. The report is docs/research/conformance.md.
+# current. The reports are docs/research/conformance*.md.
 client:
-  # Elicitation comes after the MVP. With no TTY, ncp
-  # stops with exit 5 (input required) and does not answer.
-  - elicitation-sep1034-client-defaults
-  # A multi-round tool call (MRTR): ncp gives the
-  # input_required result to the caller with exit 5 and does not continue.
-  - sep-2322-client-request-state
   # A Client ID Metadata Document needs a stable HTTPS URL. Its place is a
   # release decision of the user, so CIMD is off.
   - auth/basic-cimd:cimd-client-id-used

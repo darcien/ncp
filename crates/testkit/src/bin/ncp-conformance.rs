@@ -16,7 +16,7 @@
 
 use std::{
     path::{Path, PathBuf},
-    process::{Command, ExitCode, Output},
+    process::{Command, ExitCode, Output, Stdio},
 };
 
 use ncp::{
@@ -45,8 +45,9 @@ struct Run {
 
 impl Run {
     fn ncp(&self, args: &[&str]) -> Result<Output, String> {
+        use std::io::Write as _;
         let home = self.home.display().to_string();
-        let output = Command::new(&self.ncp)
+        let mut child = Command::new(&self.ncp)
             .args(args)
             .env_clear()
             .env("HOME", &home)
@@ -54,8 +55,21 @@ impl Run {
             .env("XDG_CACHE_HOME", format!("{home}/cache"))
             .env("XDG_STATE_HOME", format!("{home}/state"))
             .env("NCP_TEST_BROWSER", "follow")
+            // A person at a TTY who takes each default, types y where a
+            // value is necessary, and says yes to send.
+            .env("NCP_TEST_TTY", "1")
             .env("PATH", std::env::var("PATH").unwrap_or_default())
-            .output()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("cannot run {}: {error}", self.ncp.display()))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let answers = "\n".repeat(20) + &"y\n".repeat(20);
+            let _ = stdin.write_all(answers.as_bytes());
+        }
+        let output = child
+            .wait_with_output()
             .map_err(|error| format!("cannot run {}: {error}", self.ncp.display()))?;
         eprintln!(
             "$ ncp {}\nexit {:?}\n{}{}",
