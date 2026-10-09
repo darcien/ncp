@@ -10,12 +10,12 @@
 # suite starts its servers on localhost. The proxy variables are removed,
 # because the suite uses localhost URLs.
 #
-# Each version runs three times: the frozen requirement set of the
-# version, all scenarios of the version, and all scenarios again with the
-# era probe of ncp in place of the era that the adapter
-# writes. expected-failures.yaml lists the known
-# failures with their reasons. The suite fails on a new failure and on an
-# entry that passes.
+# Each version runs four times: the frozen requirement set of the
+# version, all scenarios of the version, all scenarios again with the era
+# probe of ncp in place of the era that the adapter writes, and all
+# scenarios as an agent with no TTY. expected-failures.yaml and
+# expected-failures-agent.yaml list the known failures with their reasons.
+# The suite fails on a new failure and on an entry that passes.
 set -eu
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -32,11 +32,17 @@ adapter="$root/target/debug/ncp-conformance"
 results="$here/results"
 rm -rf "$results"
 
-run() {
+run_with() {
+	expected="$1"
+	shift
 	env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u NO_PROXY \
 		-u http_proxy -u https_proxy -u all_proxy -u no_proxy \
 		node "$suite" client --command "$adapter" \
-		--expected-failures "$here/expected-failures.yaml" "$@"
+		--expected-failures "$here/$expected" "$@"
+}
+
+run() {
+	run_with expected-failures.yaml "$@"
 }
 
 status=0
@@ -46,7 +52,12 @@ for version in 2025-11-25 2026-07-28; do
 	echo "== all scenarios $version"
 	run --suite all --spec-version "$version" -o "$results/all-$version" || status=1
 	echo "== all scenarios $version, with the era probe of ncp"
-	NCP_CONFORMANCE_PROBE=1 run --suite all --spec-version "$version" \
-		-o "$results/probe-$version" || status=1
+	# A subshell: in POSIX sh, a variable set before a function call stays
+	# set after it.
+	(NCP_CONFORMANCE_PROBE=1 run --suite all --spec-version "$version" \
+		-o "$results/probe-$version") || status=1
+	echo "== all scenarios $version, as an agent with no TTY"
+	(NCP_CONFORMANCE_AGENT=1 run_with expected-failures-agent.yaml --suite all \
+		--spec-version "$version" -o "$results/agent-$version") || status=1
 done
 exit "$status"

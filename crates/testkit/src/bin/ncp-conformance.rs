@@ -10,6 +10,10 @@
 //! temporary home with the file credential store and the fake browser,
 //! which follows the redirect of the authorization server.
 //!
+//! By default the adapter acts as a person at a TTY who answers each
+//! question. With `NCP_CONFORMANCE_AGENT` set, it acts as an agent: no TTY
+//! and an empty stdin, so that the suite tests that path too.
+//!
 //! The suite says that a client derives the lifecycle from the protocol
 //! version it gets. `ncp` finds the era itself, so the adapter writes the
 //! era of the version into the era cache before the first command.
@@ -47,24 +51,28 @@ impl Run {
     fn ncp(&self, args: &[&str]) -> Result<Output, String> {
         use std::io::Write as _;
         let home = self.home.display().to_string();
-        let mut child = Command::new(&self.ncp)
+        let agent = std::env::var_os("NCP_CONFORMANCE_AGENT").is_some();
+        let mut command = Command::new(&self.ncp);
+        command.env_clear();
+        if !agent {
+            // A person at a TTY who takes each default, types y where a
+            // value is necessary, and says yes to send.
+            command.env("NCP_TEST_TTY", "1");
+        }
+        let mut child = command
             .args(args)
-            .env_clear()
             .env("HOME", &home)
             .env("XDG_CONFIG_HOME", format!("{home}/config"))
             .env("XDG_CACHE_HOME", format!("{home}/cache"))
             .env("XDG_STATE_HOME", format!("{home}/state"))
             .env("NCP_TEST_BROWSER", "follow")
-            // A person at a TTY who takes each default, types y where a
-            // value is necessary, and says yes to send.
-            .env("NCP_TEST_TTY", "1")
             .env("PATH", std::env::var("PATH").unwrap_or_default())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| format!("cannot run {}: {error}", self.ncp.display()))?;
-        if let Some(mut stdin) = child.stdin.take() {
+        if let Some(mut stdin) = child.stdin.take().filter(|_| !agent) {
             let answers = "\n".repeat(20) + &"y\n".repeat(20);
             let _ = stdin.write_all(answers.as_bytes());
         }
