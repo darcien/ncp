@@ -8,7 +8,9 @@
 //! - `modern-only`: answers at once, and rejects `initialize`.
 //! - `slow-modern-only-N`: answers after N ms, and rejects `initialize`.
 //! - `tools-only`: as `modern`, with no resources and no prompts.
-//! - `cached`: as `modern`, and the tool list is fresh for 60 s (`ttlMs`).
+//! - `cached`: as `modern`, and the tool list is fresh for 60 s (`ttlMs`),
+//!   with no `cacheScope`, so it counts as private.
+//! - `cached-public`: as `cached`, with `cacheScope` public.
 //! - `repeat-cursor`: as `modern`, and `prompts/list` gives the same cursor
 //!   for ever, as a broken server can.
 //!
@@ -60,6 +62,7 @@ pub enum Mode {
     ToolsOnly,
     RepeatCursor,
     Cached,
+    CachedPublic,
 }
 
 impl Mode {
@@ -73,6 +76,7 @@ impl Mode {
             "modern-only" => Ok(Self::ModernOnly),
             "tools-only" => Ok(Self::ToolsOnly),
             "cached" => Ok(Self::Cached),
+            "cached-public" => Ok(Self::CachedPublic),
             "repeat-cursor" => Ok(Self::RepeatCursor),
             other => {
                 let millis = |prefix: &str| {
@@ -306,7 +310,8 @@ impl ServerHandler for Fixture {
                 | Mode::ModernOnly
                 | Mode::ToolsOnly
                 | Mode::RepeatCursor
-                | Mode::Cached => Ok(result),
+                | Mode::Cached
+                | Mode::CachedPublic => Ok(result),
                 Mode::Legacy => Err(ErrorData::new(
                     ErrorCode::METHOD_NOT_FOUND,
                     "Method not found",
@@ -326,10 +331,12 @@ impl ServerHandler for Fixture {
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListToolsResult, ErrorData>> + MaybeSendFuture + '_ {
         let result = ListToolsResult::with_all_items(tools());
-        std::future::ready(Ok(if self.mode == Mode::Cached {
-            result.with_ttl_ms(60_000)
-        } else {
-            result
+        std::future::ready(Ok(match self.mode {
+            Mode::Cached => result.with_ttl_ms(60_000),
+            Mode::CachedPublic => result
+                .with_ttl_ms(60_000)
+                .with_cache_scope(rmcp::model::CacheScope::Public),
+            _ => result,
         }))
     }
 

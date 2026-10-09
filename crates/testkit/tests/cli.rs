@@ -2268,8 +2268,10 @@ fn progress_of_a_call_goes_to_stderr_unless_quiet() {
 fn fresh_tool_list_comes_from_the_cache_with_no_server_start() {
     let home = Home::new("list-cache");
     let started = home.root.join("server.pid");
-    home.configure(&json!({"fx": {"command": FIXTURE, "args": ["cached"],
-        "env": {"NCP_FIXTURE_PID_FILE": started.display().to_string()}}}));
+    home.configure(
+        &json!({"fx": {"command": FIXTURE, "args": ["cached-public"],
+        "env": {"NCP_FIXTURE_PID_FILE": started.display().to_string()}}}),
+    );
     let first = home.run(&["tool", "list", "fx"]);
     assert_eq!(first.code(), 0, "{}", first.describe());
     assert!(started.exists());
@@ -2313,7 +2315,7 @@ fn completion_never_gives_a_name_with_shell_characters() {
 }
 
 fn cached_server(home: &Home, env: &Value) {
-    home.configure(&json!({"fx": {"command": FIXTURE, "args": ["cached"], "env": env}}));
+    home.configure(&json!({"fx": {"command": FIXTURE, "args": ["cached-public"], "env": env}}));
 }
 
 #[test]
@@ -2357,8 +2359,10 @@ fn tool_call_lists_again_when_the_cached_list_does_not_have_the_tool() {
 fn refresh_gets_the_list_again_and_keeps_it() {
     let home = Home::new("cache-refresh");
     let started = home.root.join("server.pid");
-    home.configure(&json!({"fx": {"command": FIXTURE, "args": ["cached"],
-        "env": {"NCP_FIXTURE_PID_FILE": started.display().to_string()}}}));
+    home.configure(
+        &json!({"fx": {"command": FIXTURE, "args": ["cached-public"],
+        "env": {"NCP_FIXTURE_PID_FILE": started.display().to_string()}}}),
+    );
     assert_eq!(home.run(&["tool", "list", "fx"]).code(), 0);
     let cache = home.root.join("cache/ncp/lists/fx.json");
     let before = std::fs::read_to_string(&cache).unwrap();
@@ -2669,4 +2673,100 @@ fn http_server_that_redirects_stops_and_sends_no_header_to_the_new_location() {
     );
     assert!(error["hint"].as_str().unwrap().contains("new URL"));
     assert_eq!(target_hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+fn list_file(home: &Home, server: &str) -> PathBuf {
+    home.root.join(format!("cache/ncp/lists/{server}.json"))
+}
+
+#[test]
+fn private_list_of_a_stdio_server_is_never_kept() {
+    let home = Home::new("cache-private-stdio");
+    home.configure(&json!({"fx": stdio("cached-public")}));
+    assert_eq!(home.run(&["tool", "list", "fx"]).code(), 0);
+    assert!(list_file(&home, "fx").exists());
+    // The same server now says that the list is private: the old file goes.
+    home.configure(&json!({"fx": stdio("cached")}));
+    assert_eq!(home.run(&["tool", "list", "fx"]).code(), 0);
+    assert!(!list_file(&home, "fx").exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn private_list_of_an_http_server_is_kept_only_with_no_credential() {
+    let open = serve_http(Mode::Cached).await.unwrap();
+    let locked = serve_http_with(Mode::Cached, Some("t0ken")).await.unwrap();
+    let home = Home::new("cache-private-http").set("WEB_TOKEN", "t0ken");
+    home.configure(&json!({
+        "open": {"type": "http", "url": open.url},
+        "locked": {"type": "http", "url": locked.url,
+            "headers": {"Authorization": "Bearer ${WEB_TOKEN}"}}
+    }));
+    assert_eq!(home.run(&["tool", "list", "open"]).code(), 0);
+    assert_eq!(home.run(&["tool", "list", "locked"]).code(), 0);
+    assert!(list_file(&home, "open").exists());
+    assert!(!list_file(&home, "locked").exists());
+}
+
+async fn oauth_fixture_in(
+    mode: Mode,
+) -> (
+    ncp_testkit::auth_server::AuthServer,
+    ncp_testkit::HttpFixture,
+) {
+    let auth = ncp_testkit::auth_server::serve_auth(AuthSettings::default())
+        .await
+        .unwrap();
+    let fixture = ncp_testkit::serve_http_with_oauth(mode, &auth, None)
+        .await
+        .unwrap();
+    (auth, fixture)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn private_list_after_a_login_is_not_kept_and_a_public_one_is() {
+    let (_auth, private) = oauth_fixture_in(Mode::Cached).await;
+    let home = oauth_home("cache-oauth-private", &private.url);
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    assert_eq!(home.run(&["tool", "list", "web"]).code(), 0);
+    assert!(!list_file(&home, "web").exists());
+
+    let (_auth, public) = oauth_fixture_in(Mode::CachedPublic).await;
+    let home = oauth_home("cache-oauth-public", &public.url);
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    assert_eq!(home.run(&["tool", "list", "web"]).code(), 0);
+    assert!(list_file(&home, "web").exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_logout_and_a_secret_change_remove_the_cached_lists() {
+    let (_auth, fixture) = oauth_fixture_in(Mode::CachedPublic).await;
+    let home = oauth_home("cache-removal", &fixture.url);
+    let cached = |home: &Home| {
+        assert_eq!(home.run(&["tool", "list", "web"]).code(), 0);
+        assert!(list_file(home, "web").exists());
+    };
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    cached(&home);
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    assert!(
+        !list_file(&home, "web").exists(),
+        "a login removes the list"
+    );
+    cached(&home);
+    assert_eq!(home.run(&["auth", "logout", "web"]).code(), 0);
+    assert!(
+        !list_file(&home, "web").exists(),
+        "a logout removes the list"
+    );
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    cached(&home);
+    let run = home.run_with_stdin(
+        &["secret", "set", "ANY", "--credential-store", "file"],
+        "v\n",
+    );
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(
+        !list_file(&home, "web").exists(),
+        "a change of a secret removes the lists"
+    );
 }

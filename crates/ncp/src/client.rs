@@ -987,3 +987,24 @@ impl Connection {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hints_of_pages_take_the_shorter_time_and_private_from_any_page() {
+        let public = |ttl| CacheHints {
+            ttl_ms: ttl,
+            private: false,
+        };
+        assert_eq!(public(Some(5)).and(public(Some(3))), public(Some(3)));
+        assert_eq!(public(Some(5)).and(public(None)), public(None));
+        assert!(public(Some(5)).and(CacheHints::of(Some(5), None)).private);
+        assert!(
+            !CacheHints::of(Some(5), Some(&rmcp::model::CacheScope::Public))
+                .and(public(Some(5)))
+                .private
+        );
+    }
+}

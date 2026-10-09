@@ -58,17 +58,28 @@ impl CachedTools {
 /// wrong `ttlMs` must not keep an old list for days.
 pub const MAX_TTL_MS: u64 = 24 * 60 * 60 * 1000;
 
+/// What a list can depend on beyond the entry as the file writes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Access {
+    /// A stdio server gets the environment of `ncp`, which can hold a
+    /// credential that the entry does not show.
+    Stdio,
+    /// An http server, with or without a credential: an OAuth token or a
+    /// `${NAME}` value.
+    Http { credentials: bool },
+}
+
 /// The time to keep a list, or `None` when `ncp` must not keep it.
 ///
 /// A private list must not be shared across authorization contexts (MCP
 /// 2026-07-28, server/utilities/caching). The cache has no copy of a
-/// credential, so it cannot see a changed token: a private list is kept
-/// only when the connection used no credential, that is no OAuth token
-/// and no `${NAME}` value.
+/// credential, so it cannot see a changed one: a private list is kept only
+/// from an http server with no credential.
 #[must_use]
-pub fn keep_for(ttl_ms: Option<u64>, private: bool, used_credentials: bool) -> Option<u64> {
+pub fn keep_for(ttl_ms: Option<u64>, private: bool, access: Access) -> Option<u64> {
     let ttl = ttl_ms.filter(|ttl| *ttl > 0)?;
-    (!private || !used_credentials).then_some(ttl.min(MAX_TTL_MS))
+    let shared = !private || access == Access::Http { credentials: false };
+    shared.then_some(ttl.min(MAX_TTL_MS))
 }
 
 /// The digest of the entry: the target and the `env`, `headers`,
@@ -185,13 +196,17 @@ mod tests {
     }
 
     #[test]
-    fn private_list_is_kept_only_when_no_credential_was_used() {
-        assert_eq!(keep_for(Some(5), false, true), Some(5));
-        assert_eq!(keep_for(Some(5), true, false), Some(5));
-        assert_eq!(keep_for(Some(5), true, true), None);
-        assert_eq!(keep_for(None, false, false), None);
-        assert_eq!(keep_for(Some(0), false, false), None);
-        assert_eq!(keep_for(Some(u64::MAX), false, false), Some(MAX_TTL_MS));
+    fn private_list_is_kept_only_from_an_http_server_with_no_credential() {
+        let open = Access::Http { credentials: false };
+        let with_credential = Access::Http { credentials: true };
+        assert_eq!(keep_for(Some(5), false, with_credential), Some(5));
+        assert_eq!(keep_for(Some(5), false, Access::Stdio), Some(5));
+        assert_eq!(keep_for(Some(5), true, open), Some(5));
+        assert_eq!(keep_for(Some(5), true, with_credential), None);
+        assert_eq!(keep_for(Some(5), true, Access::Stdio), None);
+        assert_eq!(keep_for(None, false, open), None);
+        assert_eq!(keep_for(Some(0), false, open), None);
+        assert_eq!(keep_for(Some(u64::MAX), false, open), Some(MAX_TTL_MS));
     }
 
     #[test]

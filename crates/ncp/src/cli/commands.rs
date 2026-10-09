@@ -216,8 +216,15 @@ async fn list(
 ) -> Result<Vec<Tool>, Failure> {
     match connection.list_tools_fresh_for(context.limits()).await {
         Ok((tools, hints)) => {
-            let used_credentials = connection.is_authorized() || !server.value_names().is_empty();
-            let keep = list_cache::keep_for(hints.ttl_ms, hints.private, used_credentials);
+            let access = match server.transport {
+                crate::config::Transport::Stdio(_) => list_cache::Access::Stdio,
+                crate::config::Transport::Http(_) | crate::config::Transport::Sse(_) => {
+                    list_cache::Access::Http {
+                        credentials: connection.is_authorized() || !server.value_names().is_empty(),
+                    }
+                }
+            };
+            let keep = list_cache::keep_for(hints.ttl_ms, hints.private, access);
             keep_tools(context, server, &tools, keep, has_instructions(connection));
             Ok(tools)
         }
