@@ -281,7 +281,8 @@ Design and method in `docs/research/test-harness.md`.
 
 ## Milestone 13: decisions of the reviews of 2026-10-09 and 2026-10-10
 
-Status: not started. Build only after the user approves.
+Status: done. The user approved the build on 2026-10-10. Three review
+rounds ran; the open points are in the backlog.
 
 The user accepted these decisions. The requirements and the design have the
 behavior. Do the items in order. Each item is one or more small commits.
