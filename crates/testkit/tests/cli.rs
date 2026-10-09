@@ -2412,6 +2412,23 @@ fn a_request_that_needs_a_page_gives_exit_5_with_the_pages() {
     let last: Value = serde_json::from_str(&stderr[stderr.rfind("{\"error\"").unwrap()..]).unwrap();
     assert_eq!(
         last["error"]["hint"],
-        "when the page is done, run the command again"
+        "open the page, then run the command again"
     );
+}
+
+#[test]
+fn a_page_that_is_not_safe_is_refused_and_no_page_is_a_protocol_error() {
+    let home = Home::new("needs-page-unsafe");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let run = home.run(&["tool", "call", "fx", "needs-page", "text=unsafe"]);
+    assert_eq!(run.code(), 5, "{}", run.describe());
+    let error = run.error();
+    assert!(error.get("pages").is_none(), "{error}");
+    let message = error["message"].as_str().unwrap();
+    assert!(
+        message.contains("refused a page") && !message.contains("alert"),
+        "{message}"
+    );
+    let run = home.run(&["tool", "call", "fx", "needs-page", "text=none"]);
+    assert_eq!(run.code(), 3, "{}", run.describe());
 }

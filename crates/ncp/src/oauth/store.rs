@@ -241,9 +241,10 @@ impl RmcpStore for TokenStore {
 
     async fn clear(&self) -> Result<(), AuthError> {
         let (store, key) = (self.store.clone(), self.key.clone());
-        store::run_blocking(store::CALL_LIMIT, move || store.delete(&key))
-            .await
-            .map_err(|error| store_error(&error))?;
+        let started = std::time::Instant::now();
+        let deleted = store::run_blocking(store::CALL_LIMIT, move || store.delete(&key)).await;
+        self.time(started);
+        deleted.map_err(|error| store_error(&error))?;
         *self.copy.lock().await = Cached::Read(Box::new(None));
         *self.required_scopes.lock().await = None;
         Ok(())

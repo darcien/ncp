@@ -876,13 +876,17 @@ fn check_arguments(
         Outcome::Invalid(problems) => {
             // The top-level property of each problem, so that the example
             // shows it too.
-            let mut failed: Vec<&str> = problems
+            // The path is a JSON pointer (RFC 6901 §4): `~1` is `/` and
+            // `~0` is `~`.
+            let mut failed: Vec<String> = problems
                 .iter()
                 .filter_map(|problem| problem.path.split('/').nth(1))
                 .filter(|name| !name.is_empty())
+                .map(|name| name.replace("~1", "/").replace("~0", "~"))
                 .collect();
             failed.sort_unstable();
             failed.dedup();
+            let failed: Vec<&str> = failed.iter().map(String::as_str).collect();
             let example = render::example_call_with(server, tool, &failed);
             let problems = problems.iter().fold(String::new(), |mut text, problem| {
                 let path = if problem.path.is_empty() {

@@ -236,19 +236,32 @@ pub fn printable(text: &str) -> Cow<'_, str> {
     }
 }
 
-/// A Unicode format character that changes the order of text or has no
-/// width: bidirectional marks, embeddings, overrides and isolates,
-/// zero-width characters, the soft hyphen and the byte order mark.
+/// A Unicode character that changes the order of text, has no width, or
+/// looks like a space: bidirectional marks, embeddings, overrides and
+/// isolates, zero-width characters, the soft hyphen, the byte order mark,
+/// line and paragraph separators, Hangul fillers, the supplementary
+/// variation selectors and tag characters. Text in tag characters is
+/// invisible, and a server can hide instructions in it. The variation
+/// selectors U+FE00 to U+FE0F stay: many emoji have one.
 fn invisible_format(c: char) -> bool {
     matches!(
         c,
         '\u{ad}'
+            | '\u{34f}'
             | '\u{61c}'
+            | '\u{115f}'
+            | '\u{1160}'
+            | '\u{180e}'
             | '\u{200b}'..='\u{200f}'
-            | '\u{202a}'..='\u{202e}'
+            | '\u{2028}'..='\u{202e}'
             | '\u{2060}'..='\u{2064}'
             | '\u{2066}'..='\u{2069}'
+            | '\u{3164}'
             | '\u{feff}'
+            | '\u{ffa0}'
+            | '\u{fff9}'..='\u{fffb}'
+            | '\u{e0000}'..='\u{e007f}'
+            | '\u{e0100}'..='\u{e01ef}'
     )
 }
 
@@ -349,14 +362,24 @@ pub fn json_line(value: &Value) -> String {
     format!("{}\n", escape_raw_controls(value.to_string()))
 }
 
-/// JSON text with DEL and the C1 control characters as `\u00XX` escapes,
-/// which keeps it valid JSON.
+/// JSON text with DEL, the C1 control characters and the invisible
+/// characters of `printable` as `\uXXXX` escapes (a surrogate pair above
+/// U+FFFF), which keeps it valid JSON.
 fn escape_raw_controls(text: String) -> String {
-    if text.chars().any(is_raw_control) {
+    let escaped = |c: char| is_raw_control(c) || invisible_format(c);
+    if text.chars().any(escaped) {
         text.chars()
             .map(|c| {
-                if is_raw_control(c) {
-                    format!("\\u{:04x}", u32::from(c))
+                if escaped(c) {
+                    c.encode_utf16(&mut [0; 2])
+                        .iter()
+                        .fold(String::new(), |mut text, unit| {
+                            let _ = std::fmt::Write::write_fmt(
+                                &mut text,
+                                format_args!("\\u{unit:04x}"),
+                            );
+                            text
+                        })
                 } else {
                     c.to_string()
                 }
@@ -509,6 +532,11 @@ mod tests {
             "a\\u{202e}b\\u{200b}c\\u{2066}"
         );
         assert_eq!(printable("é ü 日本"), "é ü 日本");
+        assert_eq!(printable("a\u{e0041}"), "a\\u{e0041}");
+        let line = json_line(&json!({"m": "a\u{202e}b\u{e0041}"}));
+        assert_eq!(line, "{\"m\":\"a\\u202eb\\udb40\\udc41\"}\n");
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["m"], "a\u{202e}b\u{e0041}");
     }
 
     #[test]

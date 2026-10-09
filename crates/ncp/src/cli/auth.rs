@@ -506,9 +506,12 @@ async fn add_required_scopes(
         let secret = items::to_secret("tokens", &tokens)
             .map_err(|error| Failure::protocol(error.to_string()))?;
         let saved = key.clone();
-        secrets::call(context, &store, move |store| store.save(&saved, &secret))
-            .await
-            .map_err(|error| secrets::store_failure(&error))?;
+        let started = std::time::Instant::now();
+        let result = secrets::call(context, &store, move |store| store.save(&saved, &secret)).await;
+        if let Some(timer) = credentials_timer(context) {
+            timer(started.elapsed());
+        }
+        result.map_err(|error| secrets::store_failure(&error))?;
         context.ui.debug(
             Some(server.name.as_str()),
             &format!("kept the scopes {} for the next login", required.join(" ")),

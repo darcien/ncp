@@ -185,6 +185,28 @@ async fn elicit_legacy(
     ))
 }
 
+/// The error that asks the user to open a page. The text "unsafe" gives a
+/// page that ncp must not open, and "none" gives no page.
+fn needs_page(text: &str) -> ErrorData {
+    let url = match text {
+        "unsafe" => Some("javascript:alert(1)"),
+        "none" => None,
+        _ => Some("https://login.example.test/start"),
+    };
+    let pages: Vec<serde_json::Value> = url
+        .into_iter()
+        .map(|url| {
+            json!({"mode": "url", "elicitationId": "p1", "url": url,
+                "message": "Connect your account"})
+        })
+        .collect();
+    ErrorData::new(
+        rmcp::model::ErrorCode(-32042),
+        "This request needs a page",
+        Some(json!({ "elicitations": pages })),
+    )
+}
+
 fn tools() -> Vec<Tool> {
     let text_arg =
         |name: &str| schema(json!({"type": "object", "properties": {name: {"type": "string"}}}));
@@ -466,14 +488,7 @@ impl ServerHandler for Fixture {
             "elicit" => elicit_form(&request),
             "elicit-url" => Ok(elicit_url(&request, argument(&arguments, "text"))),
             "elicit-legacy" => elicit_legacy(&context).await,
-            "needs-page" => Err(ErrorData::new(
-                rmcp::model::ErrorCode(-32042),
-                "This request needs a page",
-                Some(
-                    json!({"elicitations": [{"mode": "url", "elicitationId": "p1",
-                    "url": "https://login.example.test/start", "message": "Connect your account"}]}),
-                ),
-            )),
+            "needs-page" => Err(needs_page(argument(&arguments, "text"))),
             "ask" => Ok(CallToolResponse::InputRequired(
                 InputRequiredResult::from_request_state("state-1"),
             )),

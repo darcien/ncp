@@ -18,20 +18,22 @@ pub struct Page {
     pub url: String,
 }
 
-/// The pages in the data of a `URLElicitationRequiredError`. An item with
-/// no URL is left out.
+/// The pages in the data of a `URLElicitationRequiredError`. A page that
+/// is safe to open (`safe_url`) has its URL in normal form; another page
+/// gives the reason that `ncp` refuses it. An item with no URL is left out.
 #[must_use]
-pub fn pages(data: Option<&Value>) -> Vec<Page> {
+pub fn pages(data: Option<&Value>) -> Vec<Result<Page, String>> {
     data.and_then(|data| data.get("elicitations"))
         .and_then(Value::as_array)
         .map(|items| {
             items
                 .iter()
                 .filter_map(|item| {
-                    Some(Page {
+                    let url = safe_url(&text(item, "url")?);
+                    Some(url.map(|url| Page {
                         message: text(item, "message").unwrap_or_default(),
-                        url: text(item, "url")?,
-                    })
+                        url: url.to_string(),
+                    }))
                 })
                 .collect()
         })
@@ -110,27 +112,62 @@ impl TextFormat {
 
     fn name(self) -> &'static str {
         match self {
-            Self::Email => "email address",
-            Self::Uri => "URI",
-            Self::Date => "date, YYYY-MM-DD",
-            Self::DateTime => "date and time, YYYY-MM-DDThh:mm:ssZ",
+            Self::Email => "an email address",
+            Self::Uri => "a URI",
+            Self::Date => "a date, YYYY-MM-DD",
+            Self::DateTime => "a date and time, YYYY-MM-DDThh:mm:ssZ",
         }
     }
 
     fn accepts(self, text: &str) -> bool {
         match self {
             Self::Email => text
-                .split_once('@')
-                .is_some_and(|(local, domain)| !local.is_empty() && domain.contains('.')),
+                .rsplit_once('@')
+                .is_some_and(|(local, domain)| !local.is_empty() && !domain.is_empty()),
             Self::Uri => url::Url::parse(text).is_ok(),
             Self::Date => is_date(text),
             Self::DateTime => {
                 text.get(..10).is_some_and(is_date)
-                    && text[10..].starts_with(['T', 't'])
-                    && (text.ends_with(['Z', 'z']) || text[11..].contains(['+', '-']))
+                    && text
+                        .get(10..11)
+                        .is_some_and(|t| t.eq_ignore_ascii_case("t"))
+                    && text.get(11..19).is_some_and(is_time)
+                    && text.get(19..).is_some_and(is_offset)
             }
         }
     }
+}
+
+/// A time as `hh:mm:ss` in range (a leap second is 60).
+fn is_time(text: &str) -> bool {
+    let parts: Vec<&str> = text.split(':').collect();
+    let number = |part: &str, top: u32| {
+        part.len() == 2
+            && part.chars().all(|c| c.is_ascii_digit())
+            && part.parse::<u32>().is_ok_and(|value| value <= top)
+    };
+    matches!(parts.as_slice(), [hours, minutes, seconds]
+        if number(hours, 23) && number(minutes, 59) && number(seconds, 60))
+}
+
+/// The end of a date-time after the seconds: optional fractions, then `Z`
+/// or an offset `+hh:mm` or `-hh:mm`.
+fn is_offset(text: &str) -> bool {
+    let rest = match text.strip_prefix('.') {
+        Some(fraction) => {
+            let rest = fraction.trim_start_matches(|c: char| c.is_ascii_digit());
+            if rest.len() == fraction.len() {
+                // A dot with no digit.
+                return false;
+            }
+            rest
+        }
+        None => text,
+    };
+    rest.eq_ignore_ascii_case("z")
+        || rest
+            .strip_prefix(['+', '-'])
+            .is_some_and(|offset| offset.len() == 5 && is_time(&format!("{offset}:00")))
 }
 
 /// A date as `YYYY-MM-DD` with a month and a day in range.
@@ -222,8 +259,10 @@ pub fn parse(params: &Value) -> Result<Request, RequestError> {
     }
 }
 
+/// The choices of a list, or `None` when the list is empty or an item is
+/// not a choice: a field with no choice cannot get an answer.
 fn choices(list: &Value) -> Option<Vec<Choice>> {
-    let items = list.as_array()?;
+    let items = list.as_array().filter(|items| !items.is_empty())?;
     items
         .iter()
         .map(|item| match item {
@@ -263,11 +302,14 @@ fn single_choices(property: &Value) -> Option<Vec<Choice>> {
 fn field(name: &str, property: &Value, required: bool) -> Result<Field, RequestError> {
     let number = |key: &str| property.get(key).and_then(Value::as_f64);
     let kind = match property.get("type").and_then(Value::as_str) {
-        // A `oneOf` whose items do not all have a `const` is not a list
-        // that ncp can show; free text would send a value that is not in it.
-        Some("string") if property.get("oneOf").is_some() => single_choices(property)
-            .map(Kind::Choice)
-            .ok_or_else(|| RequestError::FieldType(name.to_string(), "oneOf".into()))?,
+        // A list that is empty, or whose items do not all have a value,
+        // is not a list that ncp can show; free text would send a value
+        // that is not in it.
+        Some("string") if property.get("oneOf").is_some() || property.get("enum").is_some() => {
+            single_choices(property)
+                .map(Kind::Choice)
+                .ok_or_else(|| RequestError::FieldType(name.to_string(), "list".into()))?
+        }
         Some("string") => match single_choices(property) {
             Some(list) => Kind::Choice(list),
             None => Kind::Text {
@@ -331,7 +373,18 @@ pub fn hint(field: &Field) -> String {
         Kind::Number { .. } => "number".to_string(),
         Kind::Boolean => "yes or no".to_string(),
         Kind::Choice(list) => format!("one of: {}", titles(list)),
-        Kind::Choices { list, .. } => format!("some of, with commas: {}", titles(list)),
+        Kind::Choices {
+            list,
+            min_items,
+            max_items,
+        } => match (min_items, max_items) {
+            (None, None) => format!("some of, with commas: {}", titles(list)),
+            (minimum, maximum) => format!(
+                "{} of, with commas: {}",
+                count_text(minimum.unwrap_or(0), *maximum),
+                titles(list)
+            ),
+        },
     };
     let need = if field.required { ", required" } else { "" };
     let default = field
@@ -340,6 +393,15 @@ pub fn hint(field: &Field) -> String {
         .map(|value| format!(" [{}]", shown(value)))
         .unwrap_or_default();
     format!("{} ({kind}{need}){default}", field.label)
+}
+
+/// The count of values that a multi-select takes, as words.
+fn count_text(minimum: u64, maximum: Option<u64>) -> String {
+    match maximum {
+        Some(maximum) if maximum == minimum => format!("{minimum}"),
+        Some(maximum) => format!("{minimum} to {maximum}"),
+        None => format!("at least {minimum}"),
+    }
 }
 
 fn titles(list: &[Choice]) -> String {
@@ -454,14 +516,18 @@ pub fn answer(field: &Field, typed: &str) -> Result<Option<Value>, String> {
                 .map(str::trim)
                 .filter(|word| !word.is_empty())
                 .map(|word| pick(list, word))
-                .collect::<Result<Vec<_>, _>>()?;
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .fold(Vec::new(), |mut values, value| {
+                    if !values.contains(&value) {
+                        values.push(value);
+                    }
+                    values
+                });
             let count = values.len() as u64;
             let minimum = min_items.unwrap_or(u64::from(field.required));
             if count < minimum || max_items.is_some_and(|max| count > max) {
-                return Err(format!(
-                    "choose {minimum} to {} values",
-                    max_items.map_or("any".into(), |max| max.to_string())
-                ));
+                return Err(format!("choose {}", count_text(minimum, *max_items)));
             }
             Ok(Some(Value::Array(values)))
         }
@@ -573,6 +639,10 @@ mod tests {
         assert!(check("date-time", "2026-10-09T10:00:00Z"));
         assert!(check("date-time", "2026-10-09T10:00:00+11:00"));
         assert!(!check("date-time", "2026-10-09") && !check("date-time", "2026-10-09T10:00"));
+        assert!(check("date-time", "2026-10-09t10:00:00.5z"));
+        assert!(!check("date-time", "2026-10-09TZ") && !check("date-time", "2026-10-09Tx-"));
+        assert!(!check("date-time", "2026-10-09T10:00:00.Z"));
+        assert!(check("email", "root@localhost") && !check("email", "@x"));
         // An unknown format is free text.
         assert!(check("color", "anything"));
     }
@@ -587,6 +657,16 @@ mod tests {
         let free = json!({"type": "array", "items": {"enum": ["a"]}});
         assert!(answer(&one_field(&free, true), " , ").is_err());
         assert_eq!(answer(&one_field(&free, false), " , "), Ok(Some(json!([]))));
+        assert_eq!(
+            answer(&one_field(&tags, false), "a, a"),
+            Ok(Some(json!(["a"])))
+        );
+        assert!(hint(&one_field(&tags, false)).contains("1 to 2 of, with commas"));
+        let empty = json!({"type": "string", "enum": []});
+        assert!(matches!(
+            field("f", &empty, true),
+            Err(RequestError::FieldType(..))
+        ));
     }
 
     #[test]
@@ -668,16 +748,19 @@ mod tests {
     #[test]
     fn pages_come_from_the_data_of_the_error() {
         let data = json!({"elicitations": [
-            {"mode": "url", "elicitationId": "e", "url": "https://a.test/x", "message": "Sign in"},
-            {"mode": "url", "message": "no url"}
+            {"mode": "url", "elicitationId": "e", "url": "https://A.test/x", "message": "Sign in"},
+            {"mode": "url", "message": "no url"},
+            {"mode": "url", "url": "javascript:alert(1)"}
         ]});
+        let found = pages(Some(&data));
         assert_eq!(
-            pages(Some(&data)),
-            [Page {
+            found[0],
+            Ok(Page {
                 message: "Sign in".into(),
                 url: "https://a.test/x".into()
-            }]
+            })
         );
+        assert!(found[1].is_err() && found.len() == 2);
         assert_eq!(pages(None), []);
     }
 

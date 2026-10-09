@@ -604,6 +604,47 @@ fn token_store_failure(server: &Server, text: &str) -> Failure {
 
 /// The failure of a request after the connect.
 #[must_use]
+fn server_error(method: &str, data: &rmcp::ErrorData) -> Failure {
+    Failure::protocol(format!(
+        "{method}: the server returned error {}: {}",
+        data.code.0, data.message
+    ))
+}
+
+/// The failure of a request that needs the user to open pages first, or
+/// `None` when the error names no page. Only a page that is safe to open
+/// goes into the failure; the others show the reason that `ncp` refuses
+/// them, and not their URL.
+fn page_failure(method: &str, data: &rmcp::ErrorData) -> Option<Failure> {
+    let found = crate::elicit::pages(data.data.as_ref());
+    if found.is_empty() {
+        return None;
+    }
+    let list = found.iter().fold(String::new(), |mut list, page| {
+        let _ = match page {
+            Ok(page) => write!(list, "\n{} ({})", page.url, page.message),
+            Err(reason) => write!(list, "\nrefused a page: {reason}"),
+        };
+        list
+    });
+    let pages: Box<[crate::elicit::Page]> = found.into_iter().filter_map(Result::ok).collect();
+    let failure = Failure::new(
+        Exit::InputRequired,
+        format!(
+            "{method}: the server asks you to open a page first ({}):{list}",
+            data.message
+        ),
+    );
+    Some(if pages.is_empty() {
+        failure
+    } else {
+        Failure {
+            pages,
+            ..failure.hint("open the page, then run the command again")
+        }
+    })
+}
+
 pub fn request_failure(server: &Server, method: &str, error: &RequestError) -> Failure {
     if let Some(text) = error.token_store_error() {
         return token_store_failure(server, &text);
@@ -627,24 +668,9 @@ pub fn request_failure(server: &Server, method: &str, error: &RequestError) -> F
         RequestError::Service(rmcp::ServiceError::McpError(data))
             if data.code.0 == crate::elicit::URL_REQUIRED =>
         {
-            let pages = crate::elicit::pages(data.data.as_ref());
-            let list = pages.iter().fold(String::new(), |mut list, page| {
-                let _ = write!(list, "\n{} ({})", page.url, page.message);
-                list
-            });
-            Failure {
-                pages: pages.into(),
-                ..Failure::new(
-                    Exit::InputRequired,
-                    format!("{method}: the server asks you to open a page first:{list}"),
-                )
-                .hint("open the page, then run the command again")
-            }
+            page_failure(method, data).unwrap_or_else(|| server_error(method, data))
         }
-        RequestError::Service(rmcp::ServiceError::McpError(data)) => Failure::protocol(format!(
-            "{method}: the server returned error {}: {}",
-            data.code.0, data.message
-        )),
+        RequestError::Service(rmcp::ServiceError::McpError(data)) => server_error(method, data),
         RequestError::Service(rmcp::ServiceError::TransportSend(error)) => {
             Failure::protocol(format!("{method}: {}", causes(error.error.as_ref())))
         }

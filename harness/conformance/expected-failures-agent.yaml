@@ -1,6 +1,7 @@
 # Known failures of ncp in the official conformance suite when the adapter
-# acts as an agent: no TTY and an empty stdin. Each entry has its reason. The suite fails when an entry passes, so that this list stays
-# current. The reports are docs/research/conformance*.md.
+# acts as an agent: no TTY and an empty stdin. Each entry has its reason.
+# The suite fails when an entry passes, so that this list stays current.
+# The reports are docs/research/conformance*.md.
 client:
   # A Client ID Metadata Document needs a stable HTTPS URL. Its place is a
   # release decision of the user, so CIMD is off.

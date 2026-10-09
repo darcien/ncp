@@ -208,15 +208,21 @@ impl Asker {
     /// question. `ncp` does not run the request again: the server can need
     /// time, and the person knows when the page is done.
     async fn open_pages(&self, failure: Failure) -> Failure {
+        let mut opened = false;
         for page in &failure.pages {
             let params =
                 serde_json::json!({"mode": "url", "message": page.message, "url": page.url});
             match self.ask(&params).await {
-                Ok(_) | Err(Stop::End | Stop::TimedOut) => {}
+                Ok(action) => opened |= action == Action::Opened,
+                Err(Stop::End | Stop::TimedOut) => {}
                 Err(Stop::Interrupted) => return session::interrupted().server(&self.server),
             }
         }
-        failure.hint("when the page is done, run the command again")
+        if opened {
+            failure.hint("when the page is done, run the command again")
+        } else {
+            failure
+        }
     }
 }
 
