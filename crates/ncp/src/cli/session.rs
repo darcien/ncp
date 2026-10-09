@@ -239,6 +239,7 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
                 remote,
                 http,
                 observer: &prepared.observer,
+                notes: &prepared.notes,
                 challenge: challenge.as_deref(),
             };
             let Some(authorized) = stored_login(context, &login).await? else {
@@ -285,6 +286,7 @@ async fn stored_login(
         Box::pin(super::auth::stored_login(context, login, found)),
     )
     .await
+    .map_err(|failure| with_tls_hint(context.env, &login.notes.get(), failure))
 }
 
 /// Connects with the stored login of an http server. A server that let a
@@ -313,6 +315,7 @@ pub async fn open_with_login(
         remote,
         http,
         observer: &prepared.observer,
+        notes: &prepared.notes,
         challenge,
     };
     let Some(authorized) = stored_login(context, &login).await? else {
@@ -494,21 +497,17 @@ fn connect_failure(
         .as_ref()
         .filter(|_| !error.needs_authorization())
     {
-        return Failure::protocol(redirected.to_string())
+        return Failure::protocol(hide_expanded_url(server, redirected.to_string()))
             .hint("put the new URL in the entry when you trust it")
             .server(server.name.as_str());
     }
     if notes.unknown_issuer {
         let failure = Failure::protocol(format!(
-            "{}: the certificate of the server has an issuer that no trusted root names",
+            "{}: {UNKNOWN_ISSUER}",
             hide_expanded_url(server, error.to_string())
         ))
         .server(server.name.as_str());
-        return if env.contains_key("SSL_CERT_FILE") {
-            failure.hint("SSL_CERT_FILE replaces the system roots: the file must hold each root that you need, also the public roots")
-        } else {
-            failure
-        };
+        return with_tls_hint(env, notes, failure);
     }
     let exit = match error {
         ConnectError::Cancelled => return interrupted().server(server.name.as_str()),
@@ -549,6 +548,22 @@ fn connect_failure(
     }
 }
 
+/// The text for a certificate of an unknown issuer. rmcp keeps no cause of
+/// a transport error, so `ncp` adds it.
+pub const UNKNOWN_ISSUER: &str =
+    "the certificate of the server has an issuer that no trusted root names";
+
+/// The hint for a certificate of an unknown issuer when `SSL_CERT_FILE` is
+/// set: the file replaces the system roots (design B50).
+#[must_use]
+pub fn with_tls_hint(env: &Env, notes: &client::http::Notes, failure: Failure) -> Failure {
+    if notes.unknown_issuer && env.contains_key("SSL_CERT_FILE") {
+        failure.hint("SSL_CERT_FILE replaces the system roots: the file must hold each root that you need, also the public roots")
+    } else {
+        failure
+    }
+}
+
 /// A request to a loopback host through a proxy on another host cannot
 /// reach the server, because no exception for loopback exists (design C5).
 /// The failure then names the route and the fix.
@@ -586,10 +601,11 @@ fn hide_expanded_url(server: &Server, message: String) -> String {
             let shown = crate::redact::url(url);
             let message = message.replace(remote.url.as_str(), &shown);
             // reqwest names the URL in its parsed form.
-            match url::Url::parse(remote.url.as_str()) {
+            let message = match url::Url::parse(remote.url.as_str()) {
                 Ok(parsed) => message.replace(parsed.as_str(), &shown),
                 Err(_) => message,
-            }
+            };
+            crate::redact::values(&message, &remote.url_values)
         }
         _ => message,
     }
@@ -721,6 +737,29 @@ pub fn request_failure(server: &Server, method: &str, error: &RequestError) -> F
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tls_hint_comes_only_for_an_unknown_issuer_with_ssl_cert_file() {
+        let env = |pairs: &[(&str, &str)]| -> Env {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let noted = client::http::Notes {
+            unknown_issuer: true,
+            ..client::http::Notes::default()
+        };
+        let set = env(&[("SSL_CERT_FILE", "/roots.pem")]);
+        let failure = || Failure::protocol("x");
+        assert!(with_tls_hint(&set, &noted, failure()).hint.is_some());
+        assert!(with_tls_hint(&env(&[]), &noted, failure()).hint.is_none());
+        assert!(
+            with_tls_hint(&set, &client::http::Notes::default(), failure())
+                .hint
+                .is_none()
+        );
+    }
 
     #[test]
     fn finds_joined_server_and_tool_names() {

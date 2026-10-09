@@ -15,7 +15,7 @@ use tokio::time::Instant;
 
 use crate::{
     client::{
-        http::{HttpError, configured},
+        http::{ConnectNotes, HttpError, configured, noted},
         observe::{Event, HttpExchange, Observer},
     },
     expand::Env,
@@ -47,10 +47,10 @@ impl OAuthHttp {
     ///
     /// Returns an error when the file in `SSL_CERT_FILE` gives no root
     /// certificate, or when reqwest cannot make the client.
-    pub fn new(env: &Env, observer: &Observer) -> Result<Self, HttpError> {
+    pub fn new(env: &Env, observer: &Observer, notes: &ConnectNotes) -> Result<Self, HttpError> {
         Ok(Self {
-            follow: configured(env, observer)?.build()?,
-            stop: configured(env, observer)?
+            follow: noted(configured(env, observer)?, notes).build()?,
+            stop: noted(configured(env, observer)?, notes)
                 .redirect(reqwest::redirect::Policy::none())
                 .build()?,
             observer: observer.clone(),

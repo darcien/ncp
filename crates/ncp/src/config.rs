@@ -166,6 +166,10 @@ pub struct RemoteServer {
     /// `oauth.clientId`: a client that the user registered with the
     /// authorization server. With it, `ncp` does no registration.
     pub oauth_client: Option<PreRegisteredClient>,
+    /// The values of the `${NAME}` references in `url`. Output hides each
+    /// of them wherever it occurs, for example in a URL that a library
+    /// makes from the server URL.
+    pub url_values: Vec<String>,
 }
 
 /// A client that the user registered with an authorization server.
@@ -331,8 +335,9 @@ impl Config {
         &self.warnings
     }
 
-    /// The names of all `${NAME}` in `env` and `headers` values, also in
-    /// invalid entries. Only these values can come from a store.
+    /// The names of all `${NAME}` in `env` and `headers` values and in
+    /// `oauth.clientSecret`, also in invalid entries. Only these values can
+    /// come from a store.
     #[must_use]
     pub fn variables(&self) -> &BTreeSet<String> {
         &self.variables
@@ -390,12 +395,18 @@ pub fn parse(text: &str, env: &Env) -> Result<Config, ConfigError> {
     servers
         .values()
         .filter_map(Value::as_object)
-        .filter_map(|entry| {
-            let field = match kind_of(entry).ok()? {
-                Kind::Stdio => "env",
-                Kind::Http | Kind::Sse => "headers",
+        .flat_map(|entry| {
+            let values: Vec<Option<&Value>> = match kind_of(entry) {
+                Ok(Kind::Stdio) => vec![entry.get("env")],
+                Ok(Kind::Http | Kind::Sse) => vec![
+                    entry.get("headers"),
+                    entry
+                        .get("oauth")
+                        .and_then(|oauth| oauth.get("clientSecret")),
+                ],
+                Err(_) => Vec::new(),
             };
-            entry.get(field)
+            values.into_iter().flatten()
         })
         .for_each(|values| variables_in(values, &mut variables));
     Ok(Config {
@@ -524,10 +535,19 @@ fn stdio(object: &Map<String, Value>, env: &Env) -> Result<StdioServer, EntryErr
 fn remote(object: &Map<String, Value>, env: &Env) -> Result<RemoteServer, EntryError> {
     let url = string(object, "url", env)?.ok_or(EntryError::Missing("url"))?;
     let url = ServerUrl::parse(&url)?;
+    let url_values = object
+        .get("url")
+        .and_then(Value::as_str)
+        .map(expand::names)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|name| env.get(name).filter(|value| !value.is_empty()).cloned())
+        .collect();
     Ok(RemoteServer {
         headers: template_map(object, "headers")?,
         oauth_client: oauth_client(object, &url)?,
         url,
+        url_values,
     })
 }
 
@@ -710,6 +730,7 @@ mod tests {
                 url: ServerUrl::parse("https://example.com/mcp").unwrap(),
                 headers: BTreeMap::from([("X-Org".into(), Template::parse("o").unwrap())]),
                 oauth_client: None,
+                url_values: Vec::new(),
             })
         );
         assert_eq!(config.warnings(), &[]);
@@ -865,6 +886,15 @@ mod tests {
                 .is_err()
         );
         assert_eq!(issuer(r#"{"clientId": "c"}"#), Ok(None));
+    }
+
+    #[test]
+    fn a_client_secret_reference_counts_as_a_used_variable() {
+        let config = load(
+            r#"{"mcpServers": {"r": {"type": "http", "url": "https://x/mcp",
+                "oauth": {"clientId": "c", "clientSecret": "${PRE_SECRET}", "issuer": "https://a"}}}}"#,
+        );
+        assert!(config.variables().contains("PRE_SECRET"));
     }
 
     #[test]

@@ -82,12 +82,17 @@ pub fn client(
         });
         attempt.stop()
     });
-    Ok(configured(env, observer)?
-        .connector_layer(NotedConnectLayer {
-            notes: notes.clone(),
-        })
+    Ok(noted(configured(env, observer)?, notes)
         .redirect(stop)
         .build()?)
+}
+
+/// The builder with a layer that writes a certificate of an unknown issuer
+/// to the notes.
+pub fn noted(builder: reqwest::ClientBuilder, notes: &ConnectNotes) -> reqwest::ClientBuilder {
+    builder.connector_layer(NotedConnectLayer {
+        notes: notes.clone(),
+    })
 }
 
 /// A redirect of the MCP connection. The location shows with its secrets

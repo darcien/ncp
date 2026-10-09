@@ -535,6 +535,7 @@ mod tests {
                 url: ServerUrl::parse("https://example.com/mcp").unwrap(),
                 headers: BTreeMap::new(),
                 oauth_client: None,
+                url_values: Vec::new(),
             }),
         );
         assert_eq!(target(&http), "https://example.com/mcp");

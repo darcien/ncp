@@ -2732,23 +2732,27 @@ fn raw_server(answer: String) -> (String, std::sync::Arc<std::sync::atomic::Atom
 fn http_server_that_redirects_stops_and_sends_no_header_to_the_new_location() {
     let ok = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string();
     let (target, target_hits) = raw_server(ok);
-    let location = format!("{target}?page=2");
+    // A trailing-slash redirect that keeps the query, with the value of
+    // ${KEY} in it.
+    let location = format!("{target}/?api_key=k1-secret&page=2");
     let (url, _) = raw_server(format!(
-        "HTTP/1.1 307 Temporary Redirect\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        "HTTP/1.1 308 Permanent Redirect\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
     ));
-    let home = Home::new("redirect");
-    home.configure(&json!({"web": {"type": "http", "url": url,
-        "headers": {"X-Api-Key": "secret-value"}}}));
+    let home = Home::new("redirect").set("KEY", "k1-secret");
+    home.configure(
+        &json!({"web": {"type": "http", "url": format!("{url}?api_key=${{KEY}}"),
+        "headers": {"X-Api-Key": "secret-value"}}}),
+    );
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
     let error = run.error();
     let message = error["message"].as_str().unwrap();
-    assert!(message.contains("307"), "{message}");
-    assert!(message.contains(&target), "{message}");
+    assert!(message.contains("308"), "{message}");
     assert!(
-        !message.contains("k1"),
-        "the location hides its secrets: {message}"
+        message.contains(&format!("{target}/?api_key=****&page=2")),
+        "{message}"
     );
+    assert!(!run.describe().contains("k1-secret"), "{message}");
     assert!(error["hint"].as_str().unwrap().contains("new URL"));
     assert_eq!(target_hits.load(std::sync::atomic::Ordering::SeqCst), 0);
 }

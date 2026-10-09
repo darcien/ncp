@@ -51,6 +51,7 @@ fn http_server(url: &str, headers: &[(&str, &str)]) -> Server {
                 .map(|(k, v)| (k.to_string(), Template::parse(v).unwrap()))
                 .collect(),
             oauth_client: None,
+            url_values: Vec::new(),
         }),
     )
 }
@@ -605,6 +606,7 @@ async fn rejects_sse_server() {
             url: ServerUrl::parse("http://localhost:1/sse").unwrap(),
             headers: BTreeMap::new(),
             oauth_client: None,
+            url_values: Vec::new(),
         }),
     );
     let error = Setup::new(server).connect().await.err().unwrap();

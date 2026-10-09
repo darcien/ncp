@@ -77,13 +77,20 @@ pub(super) async fn command(context: &Context<'_>, command: AuthCommand) -> Resu
                 limit.as_secs()
             ))
             .hint("give a longer limit with --timeout <SECONDS>");
+            let notes = crate::client::http::ConnectNotes::default();
             let name = limited(
                 context,
                 limit,
                 timeout,
-                Box::pin(login(context, &server, no_browser, credential_store)),
+                Box::pin(login(
+                    context,
+                    &server,
+                    no_browser,
+                    (credential_store, &notes),
+                )),
             )
-            .await?;
+            .await
+            .map_err(|failure| session::with_tls_hint(context.env, &notes.get(), failure))?;
             // After the limit of the login: the tokens are saved, and the
             // cleanup has its own short limit.
             remove_old_tokens(context, &name, credential_store).await
@@ -211,7 +218,7 @@ async fn login(
     context: &Context<'_>,
     word: &str,
     no_browser: bool,
-    place: CredentialPlace,
+    (place, notes): (CredentialPlace, &crate::client::http::ConnectNotes),
 ) -> Result<ServerName, Failure> {
     let loaded = session::load_config(&context.paths.config_file, context.env)?;
     let server = select(context, &loaded, word).await?;
@@ -224,7 +231,7 @@ async fn login(
         context.timings.clone(),
         session::shown_url(server),
     );
-    let http = OAuthHttp::new(context.env, &observer)
+    let http = OAuthHttp::new(context.env, &observer, notes)
         .map_err(|error| Failure::protocol(error.to_string()).server(name))?;
     let mut manager = AuthorizationManager::new_with_oauth_http_client(
         remote.url.without_query(),
@@ -399,6 +406,7 @@ pub(super) struct StoredLogin<'a> {
     pub remote: &'a RemoteServer,
     pub http: &'a reqwest::Client,
     pub observer: &'a crate::client::observe::Observer,
+    pub notes: &'a crate::client::http::ConnectNotes,
     /// The `WWW-Authenticate` challenge of the `401` answer.
     pub challenge: Option<&'a str>,
 }
@@ -421,6 +429,7 @@ pub(super) async fn stored_login(
         remote,
         http,
         observer,
+        notes,
         challenge,
     } = *login;
     let name = server.name.as_str();
@@ -430,7 +439,7 @@ pub(super) async fn stored_login(
     let client_id = item.tokens.client_id.clone();
     let stored_binding = item.binding.clone();
     context.ui.debug(Some(name), "read the stored OAuth tokens");
-    let oauth_http = OAuthHttp::new(context.env, observer)
+    let oauth_http = OAuthHttp::new(context.env, observer, notes)
         .map_err(|error| Failure::protocol(error.to_string()).server(name))?;
     let mut manager = AuthorizationManager::new_with_oauth_http_client(
         remote.url.without_query(),
@@ -999,6 +1008,10 @@ async fn select<'a>(
     })
 }
 
+/// The limit of the issuer lookup for the hint of an entry with a client
+/// secret and no issuer.
+const ISSUER_LOOKUP_LIMIT: Duration = Duration::from_secs(10);
+
 /// Adds the issuer that the server names to the failure of an entry with
 /// a client secret and no issuer. Discovery sends no secret.
 async fn with_server_issuer(
@@ -1007,7 +1020,12 @@ async fn with_server_issuer(
     name: &str,
     url: &crate::server::ServerUrl,
 ) -> Failure {
-    let Ok(http) = OAuthHttp::new(context.env, &crate::client::observe::Observer::default()) else {
+    let notes = crate::client::http::ConnectNotes::default();
+    let Ok(http) = OAuthHttp::new(
+        context.env,
+        &crate::client::observe::Observer::default(),
+        &notes,
+    ) else {
         return failure;
     };
     let Ok(manager) =
@@ -1015,12 +1033,14 @@ async fn with_server_issuer(
     else {
         return failure;
     };
-    match discover(&manager, None).await {
-        Ok(metadata) => failure.hint(format!(
+    // The lookup only adds a hint: a slow server must not hide the usage
+    // error behind the limit of the login.
+    match tokio::time::timeout(ISSUER_LOOKUP_LIMIT, discover(&manager, None)).await {
+        Ok(Ok(metadata)) => failure.hint(format!(
             "when you registered the client at {issuer}, add \"issuer\": \"{issuer}\" to the \"oauth\" object of {name}",
             issuer = issuer_of(&metadata)
         )),
-        Err(_) => failure,
+        Ok(Err(_)) | Err(_) => failure,
     }
 }
 

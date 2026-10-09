@@ -110,45 +110,33 @@ impl Asker {
         }
     }
 
-    /// A yes or no question, for example to open a page.
+    /// A yes or no question, for example to open a page. The answer is a
+    /// letter or the whole word.
     async fn decision(&self, question: &str) -> Result<Decision, Stop> {
         loop {
             self.say(&format!("{question} [y]es, [n]o, [c]ancel: "));
-            match self
-                .line()
-                .await?
-                .trim()
-                .to_ascii_lowercase()
-                .chars()
-                .next()
-            {
-                Some('y') => return Ok(Decision::Yes),
-                Some('n') => return Ok(Decision::No),
-                Some('c') => return Ok(Decision::Cancel),
+            match self.line().await?.trim().to_ascii_lowercase().as_str() {
+                "y" | "yes" => return Ok(Decision::Yes),
+                "n" | "no" => return Ok(Decision::No),
+                "c" | "cancel" => return Ok(Decision::Cancel),
                 _ => self.say("Type y, n or c.\n"),
             }
         }
     }
 
-    /// The last question of a form. `y` also sends and `n` also declines,
-    /// as a person can type yes or no.
+    /// The last question of a form. The answer is a letter or the whole
+    /// word, so that "change" cannot cancel. `y` also sends and `n` also
+    /// declines, as a person can type yes or no.
     async fn form_decision(&self, server: &str) -> Result<FormDecision, Stop> {
         loop {
             self.say(&format!(
                 "Send these values to {server}? [s]end, c[h]ange a field, [d]ecline, [c]ancel: "
             ));
-            match self
-                .line()
-                .await?
-                .trim()
-                .to_ascii_lowercase()
-                .chars()
-                .next()
-            {
-                Some('s' | 'y') => return Ok(FormDecision::Send),
-                Some('h') => return Ok(FormDecision::Change),
-                Some('d' | 'n') => return Ok(FormDecision::Decline),
-                Some('c') => return Ok(FormDecision::Cancel),
+            match self.line().await?.trim().to_ascii_lowercase().as_str() {
+                "s" | "send" | "y" | "yes" => return Ok(FormDecision::Send),
+                "h" | "change" => return Ok(FormDecision::Change),
+                "d" | "decline" | "n" | "no" => return Ok(FormDecision::Decline),
+                "c" | "cancel" => return Ok(FormDecision::Cancel),
                 _ => self.say("Type s, h, d or c.\n"),
             }
         }

@@ -34,6 +34,10 @@ pub enum Input {
 pub enum ArgumentError {
     #[error("argument {0:?} is not key=value, a JSON object, or -")]
     NotPair(String),
+    #[error(
+        "argument {0:?} is key:=json, which ncp does not read; give the arguments as one JSON object, for example '{{\"n\": 12}}'"
+    )]
+    JsonPair(String),
     #[error("argument {0:?} has an empty key")]
     EmptyKey(String),
     #[error("key {0:?} is given more than one time")]
@@ -99,6 +103,10 @@ fn pair(word: &str) -> Result<Pair, ArgumentError> {
         .ok_or_else(|| ArgumentError::NotPair(word.to_string()))?;
     if key.is_empty() {
         return Err(ArgumentError::EmptyKey(word.to_string()));
+    }
+    // An older form: a key that ends in `:` would go out with a wrong name.
+    if key.ends_with(':') {
+        return Err(ArgumentError::JsonPair(word.to_string()));
     }
     Ok((key.to_string(), value.to_string()))
 }
@@ -275,13 +283,17 @@ mod tests {
     }
 
     #[test]
-    fn reads_a_value_with_an_at_sign_or_a_colon_as_text() {
+    fn reads_an_at_sign_as_text_and_refuses_the_json_pair_form() {
         assert_eq!(
-            parse(&words(&["scope=@acme/pkg", "n:=12"])),
+            parse(&words(&["scope=@acme/pkg", "a:b=1"])),
             Ok(Input::Pairs(vec![
                 text("scope", "@acme/pkg"),
-                text("n:", "12")
+                text("a:b", "1")
             ]))
+        );
+        assert_eq!(
+            parse(&words(&["n:=12"])),
+            Err(ArgumentError::JsonPair("n:=12".into()))
         );
     }
 

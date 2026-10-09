@@ -8,6 +8,8 @@
 //! empty value shows as empty. Thus the user can see if a value is set or
 //! empty, but never its length.
 
+use std::fmt::Write as _;
+
 use serde_json::Value;
 
 /// The text of a hidden value.
@@ -106,6 +108,43 @@ fn hide_query(query: &str) -> String {
         .join("&")
 }
 
+/// The text with each of the values hidden, also in its percent-encoded
+/// forms: a URL that a library makes from the server URL can hold a value
+/// of `${NAME}` in another place or encoding.
+#[must_use]
+pub fn values(text: &str, secrets: &[String]) -> String {
+    let mut forms: Vec<String> = secrets
+        .iter()
+        .filter(|value| !value.is_empty())
+        .flat_map(|value| {
+            [
+                value.clone(),
+                url::form_urlencoded::byte_serialize(value.as_bytes()).collect(),
+                percent_encoded(value),
+            ]
+        })
+        .collect();
+    // The longest first, so that a value inside another one cannot leave a
+    // part of it.
+    forms.sort_by_key(|form| std::cmp::Reverse(form.len()));
+    forms
+        .iter()
+        .fold(text.to_string(), |text, form| text.replace(form, HIDDEN))
+}
+
+/// Each byte that is not an unreserved URL character (RFC 3986 §2.3) as
+/// `%XX`.
+fn percent_encoded(value: &str) -> String {
+    value.bytes().fold(String::new(), |mut text, byte| {
+        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+            text.push(char::from(byte));
+        } else {
+            let _ = write!(text, "%{byte:02X}");
+        }
+        text
+    })
+}
+
 /// True when the OAuth field or form parameter holds a secret.
 #[must_use]
 pub fn is_oauth_secret(name: &str) -> bool {
@@ -199,6 +238,15 @@ mod tests {
             "https://example.com/cb?access_token=&state=s"
         );
         assert_eq!(url("not a url"), "****");
+    }
+
+    #[test]
+    fn values_hide_each_value_also_when_percent_encoded() {
+        let secrets = vec!["k 1/x".to_string(), String::new()];
+        assert_eq!(
+            values("a=k 1/x b=k+1%2Fx c=k%201%2Fx d", &secrets),
+            "a=**** b=**** c=**** d"
+        );
     }
 
     #[test]
