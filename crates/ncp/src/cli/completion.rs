@@ -226,14 +226,24 @@ fn is_plain_name(name: &str) -> bool {
 }
 
 /// Writes the tool names of the server from the list cache, one on each
-/// line, also from an old list: a name is only a proposal. Nothing goes
-/// out for an unknown server or with no cache.
+/// line, also from an old list: a name is only a proposal. The list must
+/// be of the configured entry, so that a renamed or changed server gets no
+/// names of another one. Nothing goes out for an unknown server or with no
+/// cache.
 pub fn tools(env: &Env, server: &str) {
     let names = Paths::from_env(env)
         .ok()
-        .zip(crate::server::ServerName::parse(server).ok())
-        .and_then(|(paths, server)| {
-            crate::list_cache::load(&crate::list_cache::path(&paths.cache_dir, &server))
+        .and_then(|paths| {
+            let text = std::fs::read_to_string(&paths.config_file).ok()?;
+            let config = config::parse(&text, env).ok()?;
+            let entry = config
+                .servers()
+                .find(|entry| entry.name.as_str() == server)?;
+            let cached =
+                crate::list_cache::load(&crate::list_cache::path(&paths.cache_dir, &entry.name))?;
+            (cached.target == entry.target
+                && cached.entry == crate::list_cache::entry_digest(entry))
+            .then_some(cached)
         })
         .map(|cached| {
             let mut names: Vec<String> = cached

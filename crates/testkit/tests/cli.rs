@@ -2304,3 +2304,19 @@ fn input_that_ncp_cannot_give_or_no_answer_ends_the_rounds() {
     assert_eq!(ended.code(), 0, "{}", ended.describe());
     assert_eq!(text_of(&ended.stdout()), r#"{"action":"cancel"}"#);
 }
+
+#[test]
+fn tool_completion_offers_no_names_of_a_changed_or_removed_entry() {
+    let home = Home::new("completion-entry");
+    cached_server(&home, &json!({}));
+    assert_eq!(home.run(&["tool", "list", "fx"]).code(), 0);
+    let names = |home: &Home| {
+        String::from_utf8_lossy(&home.run(&["__complete-tools", "fx"]).0.stdout).to_string()
+    };
+    assert!(names(&home).contains("echo"));
+    // The same name for another server.
+    home.configure(&json!({"fx": stdio("modern")}));
+    assert_eq!(names(&home), "");
+    home.configure(&json!({}));
+    assert_eq!(names(&home), "");
+}
