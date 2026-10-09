@@ -204,6 +204,13 @@ impl RmcpStore for TokenStore {
             .map(|secret| parse_item(&secret))
             .transpose()
             .map_err(|error| AuthError::CredentialStoreError(error.to_string()))?;
+        // A read after the refresh lock can find tokens that another
+        // process saved for another server: they must not be used here.
+        if let (Some(expected), Some(item)) = (&self.binding, &item)
+            && item.binding.as_ref() != Some(expected)
+        {
+            return Err(AuthError::AuthorizationRequired);
+        }
         let (tokens, required_scopes) = match item {
             Some(item) => (Some(item.tokens), item.required_scopes),
             None => (None, None),
@@ -384,6 +391,29 @@ mod tests {
         refresh.save(tokens("c1")).await.unwrap();
         let again = parse_item(&backing.inner.load(&key).unwrap().unwrap()).unwrap();
         assert!(again.binding.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_read_refuses_tokens_of_another_binding() {
+        let backing = Arc::new(Counting::default());
+        let binding = |resource: &str| items::TokenBinding {
+            resource: resource.into(),
+            issuer: "https://as".into(),
+        };
+        TokenStore::new(server(), backing.clone())
+            .fresh()
+            .with_binding(binding("https://b/mcp"))
+            .save(tokens("c1"))
+            .await
+            .unwrap();
+        let adapter =
+            TokenStore::new(server(), backing.clone()).with_binding(binding("https://a/mcp"));
+        assert!(matches!(
+            adapter.load().await,
+            Err(AuthError::AuthorizationRequired)
+        ));
+        let same = TokenStore::new(server(), backing).with_binding(binding("https://b/mcp"));
+        assert!(same.load().await.unwrap().is_some());
     }
 
     #[tokio::test]
