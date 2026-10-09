@@ -23,9 +23,9 @@ written in Rust on the official SDK `rmcp`.
   `falls_back_to_initialize_when_discover_times_out`.
 - Research and history are in `docs/research/`. Do not change old reports.
   Add a new report instead.
-- Prior art: use the official MCP SDKs and test parts, and tools of
-  established vendors (for example frontier AI labs and major editors). A
-  small project of one person is context, not evidence for a decision.
+- Take prior art from the official MCP specification, SDKs and test parts,
+  and from tools of established vendors (frontier AI labs and major editors).
+- Use a small project of one person only as an example.
 
 ## Workflow
 
