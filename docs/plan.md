@@ -9,6 +9,8 @@ what is next, what is blocked, and why.
 
 ## Milestone 1: early tests of risks
 
+Status: done.
+
 Prove the parts that come only from reading code. Each test uses only local
 servers. Put test code in `.scratch/`. Write the results in a new report,
 `docs/research/early-tests.md`. A failed or blocked test is a valid result:
@@ -31,6 +33,8 @@ record it and continue.
 
 ## Milestone 2: domain core
 
+Status: done.
+
 Pure functions and types. No I/O, no command line.
 
 1. Configuration model: parse the `mcpServers` JSON core. A `url` entry needs
@@ -43,6 +47,8 @@ Pure functions and types. No I/O, no command line.
 
 ## Milestone 3: credential store
 
+Status: done.
+
 1. One internal interface for the credential store.
 2. An in-memory store for tests.
 3. The opt-in `0600` file store.
@@ -50,6 +56,8 @@ Pure functions and types. No I/O, no command line.
    but do not use them in automated tests.
 
 ## Milestone 4: client core
+
+Status: done.
 
 A library API with no command line.
 
@@ -108,6 +116,8 @@ Stop and ask the user (from AGENTS.md, and the points below):
 
 ## Milestone 6: client core changes from the design
 
+Status: done.
+
 Library changes with no command line.
 
 1. Era cache (C3): remove the cause of a legacy era. A cached legacy era
@@ -127,6 +137,8 @@ Library changes with no command line.
 4. `${env:NAME}` as a second form of `${NAME}` in the configuration.
 
 ## Milestone 7: command line
+
+Status: done.
 
 The minimum for a person or an agent to list and call tools. Design
 sections 1 to 4 give the details. Items marked "later" in the design wait
@@ -156,6 +168,8 @@ check: `jsonschema` with `default-features = false`.
 
 ## Milestone 8: Ctrl-C
 
+Status: done.
+
 1. Ctrl-C during a request sends the cancel request, stops a stdio server
    with the stop steps, and exits with 130 (P10).
 2. Ctrl-C during the server start or the handshake stops the server and
@@ -165,6 +179,8 @@ check: `jsonschema` with `default-features = false`.
    call does not delay the exit by more than 3 s.
 
 ## Milestone 9: secrets
+
+Status: done.
 
 Design section 2.4, decisions C1 and C2.
 
@@ -197,6 +213,8 @@ Design section 2.4, decisions C1 and C2.
 
 ## Milestone 10: diagnostics and proxy
 
+Status: done.
+
 Design sections 2.3 and 4, decision C5.
 
 1. `-v`: the source of each variable (never the value), the proxy route and
@@ -221,6 +239,8 @@ Design sections 2.3 and 4, decision C5.
 
 ## Milestone 11: OAuth
 
+Status: done.
+
 Design section 5, decision C4, requirements A1 to A12.
 
 1. Discovery (A2), PKCE (A1), the `resource` parameter (A3), the `iss`
@@ -238,6 +258,8 @@ Design section 5, decision C4, requirements A1 to A12.
 6. Tests: a local authorization server fixture. No third-party server.
 
 ## Milestone 12: conformance
+
+Status: done.
 
 Design and method in `docs/research/test-harness.md`.
 
@@ -257,7 +279,52 @@ Design and method in `docs/research/test-harness.md`.
    both protocol versions. Done when each failure is fixed or listed in the
    expected failures with a reason.
 
-## Milestone 13: release build (gate)
+## Milestone 13: decisions of the reviews of 2026-10-09 and 2026-10-10
+
+Status: not started. Build only after the user approves.
+
+The user accepted these decisions. The requirements and the design have the
+behavior. Do the items in order. Each item is one or more small commits.
+
+1. macOS store: long values in parts (S7, B66).
+2. Client selection, `oauth.clientSecret` and `oauth.issuer` (A5, A6, B67,
+   B68). Remove the pre-registration scenario from the expected failures of
+   the conformance suite.
+3. Token binding (A13, B70).
+4. No redirects on the MCP connection (N6, B69).
+5. Verbose output hides only the secrets of S3 (I6, B43). Remove the guess
+   from the name of a URL query parameter.
+6. `SSL_CERT_FILE` replaces the system roots on macOS too (N4, B50). Add the
+   hint for an unknown issuer, and a Linux test that proves the rule.
+7. Remove `key:=json`, `key=@path` (also for prompt arguments) and
+   `--color` (B57, B58, B60). Keep the indent of later message lines.
+8. List cache: never keep a private list of a stdio server (B62). Add tests:
+   a private list after OAuth or `${NAME}` is not written; a login, a
+   logout and a change of a secret remove the lists; the merge of pages;
+   a public list with a credential is kept.
+9. Elicitation (B63):
+   - With no TTY, a legacy request gets `-32602`, then exit 5. Correct the
+     comment in `harness/conformance/expected-failures-agent.yaml`.
+   - The user can change a field before the answer goes out.
+   - A warning for a host with a Punycode label.
+   - The error after a wrong answer escapes server text also with JSON
+     output on a TTY.
+   - Tests for these, and for form cancel and Ctrl-C during a question.
+10. Fixes with no new decision:
+    - The OAuth callback shows `error_description` only after the `iss`
+      check (MCP 2026-07-28, authorization).
+    - The token search treats an unavailable native store as the other
+      store searches do, not as empty.
+    - One function for the rule "HTTPS, or HTTP to a loopback host".
+    - U+200D (zero width joiner) is not escaped, so that emoji stay whole.
+11. Check the claims in `.scratch/backlog/review-claims.md`. Fix each claim
+    that is true. Remove the file when done.
+
+## Milestone 14: release build (gate)
+
+Status: not done. Items 1 to 3 ran once as a trial (commit c260b21). There
+is no release. The files in `dist/` are old: do items 1 to 3 again after
+milestone 13. Item 4 waits for the user.
 
 1. Static musl builds for `x86_64` and `aarch64` in the Linux harness, macOS
    builds for both architectures, and checksums (D3).
