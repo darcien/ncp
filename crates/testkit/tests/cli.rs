@@ -2067,6 +2067,11 @@ fn fresh_tool_list_comes_from_the_cache_with_no_server_start() {
     std::fs::remove_file(&started).unwrap();
     let second = home.run(&["tool", "list", "fx"]);
     assert_eq!(second.stdout(), first.stdout());
+    assert_eq!(
+        notes(&second, "hint"),
+        notes(&first, "hint"),
+        "the same hints"
+    );
     let show = home.run(&["tool", "show", "fx", "echo"]);
     assert_eq!(show.code(), 0, "{}", show.describe());
     assert!(!started.exists(), "a server started for a fresh list");

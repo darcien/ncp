@@ -29,18 +29,22 @@ pub struct CachedTools {
     /// Milliseconds since the Unix epoch.
     pub fetched_at_ms: u64,
     pub ttl_ms: u64,
+    /// The server has `instructions` in its handshake, so that a list from
+    /// the cache gives the same hint as a live list.
+    #[serde(default)]
+    pub has_instructions: bool,
     pub tools: Vec<Tool>,
 }
 
 impl CachedTools {
     /// The tools when they are fresh for this target at this time.
     #[must_use]
-    pub fn fresh_for(&self, target: &Target, entry: u64, now_ms: u64) -> Option<&[Tool]> {
+    pub fn fresh_for(&self, target: &Target, entry: u64, now_ms: u64) -> Option<&Self> {
         let fresh = &self.target == target
             && self.entry == entry
             && now_ms >= self.fetched_at_ms
             && now_ms - self.fetched_at_ms < self.ttl_ms;
-        fresh.then_some(self.tools.as_slice())
+        fresh.then_some(self)
     }
 
     /// The age of the list.
@@ -149,6 +153,7 @@ mod tests {
             entry: 7,
             fetched_at_ms: 1_000,
             ttl_ms: 500,
+            has_instructions: false,
             tools: vec![Tool::new("echo", "Echo", Arc::new(serde_json::Map::new()))],
         }
     }
@@ -157,7 +162,12 @@ mod tests {
     fn list_is_fresh_only_within_its_time_and_for_its_target() {
         let cached = cached();
         let a = target("https://a.test/mcp");
-        assert_eq!(cached.fresh_for(&a, 7, 1_499).map(<[Tool]>::len), Some(1));
+        assert_eq!(
+            cached
+                .fresh_for(&a, 7, 1_499)
+                .map(|fresh| fresh.tools.len()),
+            Some(1)
+        );
         assert!(cached.fresh_for(&a, 7, 1_500).is_none());
         assert!(
             cached

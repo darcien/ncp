@@ -218,7 +218,10 @@ async fn list(
         Ok((tools, hints)) => {
             let used_credentials = connection.is_authorized() || !server.value_names().is_empty();
             let keep = list_cache::keep_for(hints.ttl_ms, hints.private, used_credentials);
-            keep_tools(context, server, &tools, keep);
+            let has_instructions = connection
+                .server_info()
+                .is_some_and(|info| info.instructions.is_some());
+            keep_tools(context, server, &tools, keep, has_instructions);
             Ok(tools)
         }
         Err(error) => {
@@ -231,7 +234,13 @@ async fn list(
 /// Keeps the tools in the cache for the time of `list_cache::keep_for`.
 /// A list that `ncp` must not keep removes the old file. A cache that
 /// cannot be written gives a warning: `ncp` works the same with no cache.
-fn keep_tools(context: &Context<'_>, server: &Server, tools: &[Tool], ttl_ms: Option<u64>) {
+fn keep_tools(
+    context: &Context<'_>,
+    server: &Server,
+    tools: &[Tool],
+    ttl_ms: Option<u64>,
+    has_instructions: bool,
+) {
     if !context.cache.writes() {
         return;
     }
@@ -243,6 +252,7 @@ fn keep_tools(context: &Context<'_>, server: &Server, tools: &[Tool], ttl_ms: Op
                 entry: list_cache::entry_digest(server),
                 fetched_at_ms: list_cache::now_ms(),
                 ttl_ms,
+                has_instructions,
                 tools: tools.to_vec(),
             };
             if let Err(error) = list_cache::save(&path, &cached) {
@@ -259,42 +269,46 @@ fn keep_tools(context: &Context<'_>, server: &Server, tools: &[Tool], ttl_ms: Op
 /// The tools of the cache when they are fresh, so that the command needs
 /// no server start.
 fn cached_tools(context: &Context<'_>, server: &Server) -> Option<Vec<Tool>> {
+    cached_list(context, server).map(|cached| cached.tools)
+}
+
+/// The cached list of the server when it is fresh.
+fn cached_list(context: &Context<'_>, server: &Server) -> Option<list_cache::CachedTools> {
     if !context.cache.reads() {
         return None;
     }
     let cached = list_cache::load(&list_cache::path(&context.paths.cache_dir, &server.name))?;
     let now = list_cache::now_ms();
-    let tools = cached
+    let fresh = cached
         .fresh_for(&server.target, list_cache::entry_digest(server), now)?
-        .to_vec();
+        .clone();
     context.ui.debug(
         Some(server.name.as_str()),
         &format!(
             "tools from the list cache, {} s old",
-            cached.age(now).as_secs()
+            fresh.age(now).as_secs()
         ),
     );
-    Some(tools)
+    Some(fresh)
 }
 
 async fn tool_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
     let loaded = load(context)?;
     let server = select(context, &loaded, word, show_fix)?;
-    if let Some(tools) = cached_tools(context, server) {
-        let name = server.name.as_str();
-        return context.ui.result(
-            || render::tool_list(&tools),
-            || json!({"server": name, "tools": tools}),
-        );
-    }
-    let (tools, has_instructions) = with_connection(context, server, async |connection| {
-        let tools = list(context, server, connection).await?;
-        let has_instructions = connection
-            .server_info()
-            .is_some_and(|info| info.instructions.is_some());
-        Ok((tools, has_instructions))
-    })
-    .await?;
+    let cached = cached_list(context, server).map(|cached| (cached.tools, cached.has_instructions));
+    let (tools, has_instructions) = match cached {
+        Some(cached) => cached,
+        None => {
+            with_connection(context, server, async |connection| {
+                let tools = list(context, server, connection).await?;
+                let has_instructions = connection
+                    .server_info()
+                    .is_some_and(|info| info.instructions.is_some());
+                Ok((tools, has_instructions))
+            })
+            .await?
+        }
+    };
     let name = server.name.as_str();
     if has_instructions {
         context.ui.hint(
