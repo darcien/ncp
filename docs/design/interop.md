@@ -40,64 +40,35 @@ with the dependencies that its lock file pins. The tests need no network.
 
 ## 4. Setup
 
-pnpm installs the server. pnpm 12 has more supply-chain controls than npm,
-and they are on by default or in one file.
+pnpm installs the server. Follow the pnpm guide "Mitigating supply chain
+attacks" (pnpm.io/supply-chain-security) and the mise Node.js cookbook.
 
 All files are in `harness/interop/`:
 
 | File | Content |
 |---|---|
-| `package.json` | `@modelcontextprotocol/server-everything` at `2026.8.31`, the version that `docs/research/test-harness.md` checked. No pnpm version: `mise.toml` is the only place for it. |
+| `package.json` | `@modelcontextprotocol/server-everything` at `2026.8.31`, the version that `docs/research/test-harness.md` checked. |
 | `pnpm-workspace.yaml` | The settings below. |
-| `pnpm-lock.yaml` | Committed. An integrity hash for each package. |
+| `pnpm-lock.yaml` | Committed. |
 | `.gitignore` | `/node_modules`, as in `harness/conformance/`. |
 
-pnpm itself:
+- **pnpm version.** `mise.toml` pins pnpm at an exact version, as it pins
+  all other tools. This is the mise setup with no Corepack. `package.json`
+  has no pnpm version.
+- **Settings.** Set only what differs from the pnpm defaults:
 
-- `mise.toml` pins pnpm at an exact version, as it pins the other tools.
-  Use the newest pnpm 12 release that is at least one day old. mise gets it
-  with its default backend (aqua, from the GitHub releases of pnpm), the
-  same as `typos`, `shellcheck` and `cargo-deny`.
-- Use an exact version, not a major version such as `12`. A major version
-  selects the newest release at install time, so two installs can differ.
-- mise can also read the version from `devEngines.packageManager` in
-  `package.json` (setting `idiomatic_version_file_enable_tools`). Do not
-  use this: all other tools have their version in `mise.toml`, and one
-  place for each version is simpler.
+  ```yaml
+  minimumReleaseAgeStrict: true
+  trustPolicy: no-downgrade
+  ```
 
-Settings in `pnpm-workspace.yaml`:
-
-```yaml
-minimumReleaseAge: 1440
-trustPolicy: no-downgrade
-```
-
-- `minimumReleaseAge: 1440`: pnpm does not resolve a version that is less
-  than one day old. The explicit value makes the rule strict: when no
-  version is old enough, the resolution fails.
-- `trustPolicy: no-downgrade`: pnpm fails when the trust evidence of a
-  package is weaker than that of an earlier release. An example is a
-  release with no provenance after a release from a trusted publisher.
-- Defaults that the design relies on, so do not change them:
-  - `strictDepBuilds` is on, and there are no `allowBuilds` entries. pnpm
-    runs no build scripts of dependencies, and the install fails when a
-    dependency has a build script. Thus a new build script is visible.
-  - `blockExoticSubdeps` is on. Transitive dependencies come only from the
-    registry, not from git or a tarball URL.
-
-Commands:
-
-- `pnpm install --lockfile-only` makes or updates the lock. It runs no
-  package code.
-- `mise run interop:install` runs `pnpm install --frozen-lockfile` in
-  `harness/interop/`. The install fails when the lock does not match
-  `package.json`. pnpm checks the lock again against `minimumReleaseAge`
-  and `trustPolicy`. This is the only online step.
+  Do not add `allowBuilds` entries. With the defaults, an install then
+  fails when a dependency has a build script.
+- **Lock and install.** `pnpm install --lockfile-only` makes or updates
+  the lock. `mise run interop:install` runs `pnpm install
+  --frozen-lockfile`. This is the only online step.
 - On a pin change, review the diff of the direct package and the diff of the
   lock file.
-
-Node is the version in `mise.toml`, the same as for conformance. The
-conformance suite stays on npm.
 
 ## 5. Tests
 
