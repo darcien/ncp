@@ -42,7 +42,8 @@ Stop and ask the user before you:
 
 - Change a MUST requirement, or the plan order.
 - Add a network destination other than crates.io, the Rust toolchain, and
-  pinned packages from the MCP organization.
+  pinned packages from the MCP organization. A pinned package includes the
+  dependencies that its lock file pins.
 - Run code that does not come from these sources.
 - Change how secrets are stored or handled.
 - Add a dependency that `deny.toml` does not accept.
