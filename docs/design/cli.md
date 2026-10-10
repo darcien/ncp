@@ -250,7 +250,13 @@ Rules:
   (`-vv`), `progress`, `serverLog` (a stderr line of a stdio server),
   `login` (the URL of `auth login`) and `timings`. stdout is empty
   after an error, except for codes 1 and 5.
-- All `ncp` field names use camelCase, as the MCP objects do.
+- All `ncp` field names use camelCase. The only reasons are the MCP spec
+  and consistency: `ncp` copies MCP objects with no change, and their
+  names are camelCase (`serverInfo`, `inputSchema`), so one output must
+  not mix two styles. Without the spec, `ncp` would use snake_case, as uv
+  (`version_parts`) and mise (`requested_version`) do. A field that holds
+  the value of a flag has the name of the flag in camelCase, for example
+  `--credential-store` and `credentialStore`.
 
 | Command | stdout |
 |---|---|
