@@ -3,7 +3,7 @@
 Status: proposal, revision 4 (2026-10-11). Not accepted. Build:
 [plan.md](../plan.md) milestone 18 (gate).
 
-Revision 4 records the user decisions A, B, C and D. It uses the terms
+Revision 4 records the user decisions A to E. It uses the terms
 and the commands of `mise trust`, and keeps a refusal for the project
 root, as mise does
 ([mise-trust-merge.md](../research/mise-trust-merge.md)).
@@ -293,7 +293,7 @@ Agreed by all three reviewers, no open question:
   tools show only names. Decision D limits them to one line for each
   server, with no values.
 
-Decided: A, B, C, D, F. Open: E. Each open decision below has the
+Decided: A to F. No decision is open. Each open decision below has the
 question, the options with their prior art, the recommendation with its
 reason, and its cost.
 
@@ -458,7 +458,12 @@ Flow of a person: the first command shows the entries and asks "Trust?
 
 Cost: one command with three options. Changes plan item 4.
 
-### E. Trust key and worktrees
+### E. Trust key and worktrees — decided 2026-10-11
+
+The user chose the path and the bytes, with no inheritance. This matches
+the paranoid mode of mise, which `ncp` already follows for the key
+(decision B). The path is the path where `ncp` found the file (decision
+A).
 
 Question: what does the key of a trust record hold, and does a git
 worktree get the trust of its main checkout?
@@ -483,7 +488,7 @@ Facts:
 | A new worktree or a new clone at another path | no question | asks one time | asks one time |
 
 Options:
-- **Path + bytes, no inheritance (direnv rule).** Recommended. Only option
+- **Path + bytes, no inheritance (direnv rule).** Chosen. Only option
   that closes T1 and T2. The question names the project root, so a new
   path is a new decision. Cost: one trust for each new folder.
 - Bytes only. Fewer questions. Opens T1 for repositories that share a
@@ -492,9 +497,23 @@ Options:
   a read of the `.git` file, which a downloaded folder can forge (Claude
   Code CVE-2026-40068).
 
-Later, only if the cost hurts in use: a trusted parent folder in the user
-config (VS Code parent trust, Gemini rules that cover subfolders, mise
-`trusted_config_paths`). A project cannot set it.
+An owner check does not make inheritance safe. git checks owners
+against another user (CVE-2022-24765). A forged `.git` file comes in a
+download that the user extracts, so the user owns it, and the check
+passes.
+
+Later, only if the cost hurts in use:
+- The back-link check of Codex (PTA part 1 Q1): read the `.git` file of
+  the worktree (no symlink, a size limit), then the `gitdir` file in the
+  main repository, and accept only if it points back to this worktree.
+  Only `git worktree add` writes that file, and a download cannot write
+  into the main repository. A hole stays: a worktree removed with
+  `rm -rf` leaves its record, and a later download to the same path
+  passes the check. Inheritance would also need the same bytes as the
+  trusted main checkout.
+- A trusted parent folder in the user config (VS Code parent trust,
+  Gemini rules that cover subfolders, mise `trusted_config_paths`). A
+  project cannot set it.
 
 ### F. JSONC — decided 2026-10-10
 
