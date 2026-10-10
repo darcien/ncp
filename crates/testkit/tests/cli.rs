@@ -654,16 +654,30 @@ fn secret_delete_unused_needs_a_valid_file_and_an_unused_item() {
 }
 
 #[test]
-fn secret_delete_with_a_locked_native_store_removes_nothing() {
+fn secret_delete_with_a_locked_native_store_needs_a_flag() {
     let home = Home::new("delete-locked").with_fake_keychain();
     home.configure(&json!({"s": {"command": "s", "env": {"A": "${A}"}}}));
     home.store_in_file("secret/A", "v");
     std::fs::write(home.root.join("keychain/fail"), "36").unwrap();
     let run = home.run(&["secret", "delete", "A"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    std::fs::remove_file(home.root.join("keychain/fail")).unwrap();
-    let list = home.run(&["secret", "list"]);
-    assert_eq!(list.stdout()["secrets"][0]["places"], json!(["file"]));
+    assert!(
+        run.error()["message"]
+            .as_str()
+            .unwrap()
+            .ends_with("ncp removed nothing"),
+        "{}",
+        run.describe()
+    );
+    assert_eq!(run.error()["hint"], "ncp secret delete A --server <SERVER>");
+    // --all removes what it can reach, with one warning for the native store.
+    let run = home.run(&["secret", "delete", "A", "--all"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(warnings(&run).len(), 1, "{}", run.describe());
+    assert_eq!(
+        run.stdout()["removed"],
+        json!([{"destination": null, "places": ["file"]}])
+    );
 }
 
 #[test]
