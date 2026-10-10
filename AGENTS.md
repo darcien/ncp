@@ -27,6 +27,19 @@ written in Rust on the official SDK `rmcp`.
   and from tools of established vendors (frontier AI labs and major editors).
 - Use a small project of one person only as an example.
 
+## Secrets: no detection
+
+`ncp` knows that a value is a secret only by fact (requirement S10):
+
+- The value comes from `${NAME}` or from a credential store.
+- The value is in a header field that RFC 9110 defines as credentials:
+  `Authorization` (§11.6.2) or `Proxy-Authorization` (§11.7.2).
+- The value is an OAuth token or client credential.
+
+Every other value is not a secret, also when it looks like one. Do not
+propose a detection of secrets by value, by pattern, or by a list of
+names. Do not ask the user about it again. The user decided this rule.
+
 ## Workflow
 
 - Follow `docs/plan.md`. Do the milestones in order.
