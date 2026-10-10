@@ -242,10 +242,10 @@ Accepted risks:
      `--global` writes the global file (`mise use -g`). `--config-file`
      names the file, with no search. `--global` with `--config-file` is a
      usage error: they name two files.
-   - **No project file:** `server add` creates `.mcp.json` (`mise use`):
-     at the git root in a repository, else in the current folder. In the
-     home folder: exit 2, hint `--global` (rule 2). The result names the
-     file. `server remove` creates nothing.
+   - **No project file:** `server add` creates `.mcp.json` in the current
+     folder. In the home folder, it writes the global file, because `ncp`
+     never reads `~/.mcp.json` (rule 2). Both are the rules of `mise use`.
+     The result names the file. `server remove` creates nothing.
    - **Trust after a write:** if the old bytes were trusted, or the file
      is new, `ncp` trusts the new bytes. Else it does not, and gives the
      hint `ncp trust --show`. Reason: else an add trusts team entries that
@@ -313,14 +313,13 @@ Accepted risks:
 - Expansion: before the trust, no `${NAME}` of a project entry reads
   the environment or the store; after it, a `${NAME}` in `headers`
   reaches the fixture server from the environment and from the store.
-- Writes: `server add` writes the project file; `server remove` removes
-  the effective entry, and `--global` the global one; `--global` writes the
-  global file; with no project file, `server add` creates `.mcp.json` at
-  the git root, or in the current folder outside a repository; in the
-  home folder it stops with exit 2; the new bytes are trusted when the
-  old bytes were trusted or the file is new, and not trusted else;
-`server add --global` warns when a trusted project entry has the
-  name.
+- Writes: `server add` writes the project file, and `--global` the
+  global file; `server remove` removes the effective entry; with no
+  project file, `server add` creates `.mcp.json` in the current folder,
+  and in the home folder it writes the global file; the new bytes are
+  trusted when the old bytes were trusted or the file is new, and not
+  trusted else; `server add --global` warns when a trusted project entry
+  has the name.
 - Questions: `server list`, `secret list`, `auth status` and completion
   never ask; completion writes nothing to stderr.
 - Gate: shell completion, did-you-mean, `auth status`, `secret set` and
@@ -587,7 +586,7 @@ an explicit command can create the project file (rule 9).
 |---|---|---|---|---|
 | Default write target | Local `mise.toml` (`mise use`) | `pyproject.toml` of the project (`uv add`) | `local` scope | Project file |
 | Write to the global scope | `mise use -g` | — | `-s user` | `--global` |
-| No project file | Creates one in the current folder | Error; only `uv init` creates | Creates `.mcp.json` with `-s project` | Creates `.mcp.json` at the git root, or in the current folder |
+| No project file | Creates one in the current folder; the global file in the home folder | Error; only `uv init` creates | Creates `.mcp.json` with `-s project` | As mise |
 | Scopes | System, global, each folder | Project only | Local, project, user | Global, project |
 
 Reason: the project file is the file that the team shares, and the
