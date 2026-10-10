@@ -15,13 +15,10 @@ use serde_json::Value;
 /// The text of a hidden value.
 pub const HIDDEN: &str = "****";
 
-/// Header names that always hold a credential.
-const SECRET_HEADERS: [&str; 4] = [
-    "authorization",
-    "proxy-authorization",
-    "cookie",
-    "set-cookie",
-];
+/// Header fields that RFC 9110 defines as credentials: `Authorization`
+/// (§11.6.2) and `Proxy-Authorization` (§11.7.2). No other name: a longer
+/// list is a guess.
+const SECRET_HEADERS: [&str; 2] = ["authorization", "proxy-authorization"];
 
 /// OAuth fields and form parameters that hold a token, a code or a client
 /// secret. The names are standard (RFC 6749, 7591, 7636, 8693), so the list
@@ -217,10 +214,10 @@ mod tests {
     }
 
     #[test]
-    fn credential_headers_and_values_from_variables_are_hidden() {
+    fn rfc_credential_headers_and_values_from_variables_are_hidden() {
         assert_eq!(header("Authorization", "Bearer t", false), "****");
         assert_eq!(header("proxy-authorization", "Basic x", false), "****");
-        assert_eq!(header("Cookie", "a=b", false), "****");
+        assert_eq!(header("Cookie", "a=b", false), "a=b");
         assert_eq!(header("X-Api", "k", true), "****");
         assert_eq!(header("X-Org", "acme", false), "acme");
         assert_eq!(header("X-Api", "", true), "");
