@@ -155,21 +155,41 @@ Accepted risks:
      literal secrets.
 
 5. **The question and the trust command.** (Decision D.)
-   - A command that starts a server or sends a request (`server show`,
-     `tool`, `resource`, `prompt`, `auth login`), or that writes the
-     project file (`server add`, rule 9), when the project file is
-     not trusted and not ignored: with a TTY on stdin and stderr, `ncp` shows
-     the entries and asks "Trust? [y/N]" before it continues. A No writes
-     the ignored record. With no TTY, the project file has no effect, and
-     `ncp` gives a warning that names the file and the command `ncp
-     trust`. A command that names a project entry then stops with exit 2
-     before it starts a process or sends a request.
-   - An ignored file has no effect, and `ncp` does not ask. `-v` names the
-     file.
-   - The other commands (`server list`, `secret list`, `auth status`,
-     `ncp trust --show`, shell completion) never ask. They show the state
-     of the file. Completion writes nothing to stderr. mise and Claude Code
-     also ask only when they act.
+   - **The gate is in the lookup of a server name.** A command that
+     names a server (the `SERVER` argument or `--server`) stops when the
+     name is a key of a project file that is not trusted. A name in both
+     files stops too, because after a trust the project entry wins. This is
+     the same for a person and an agent. Other names, and commands with no
+     server name, work as before and give no message. `server add` always
+     checks, because it writes the project file (rule 9).
+   - **Untrusted file, with a TTY on stdin and stderr:** `ncp` shows the
+     entries and asks "Trust? [y/N]", as `mise` asks. A No writes the
+     ignored record, and the command continues without the file.
+   - **Untrusted file, no TTY:** exit 2 before any action. The error shows
+     the entries and gives the hint `ncp trust`, as mise does. For a name
+     in both files, a second hint gives `ncp trust --ignore`, which keeps
+     the global entry. After a change of a trusted file, the message says
+     "changed since you trusted it" (rule 4 has the old hash).
+   - **Ignored file:** a named project entry gives exit 2: "NAME is in
+     FILE, which you ignored", with the hint `ncp trust`. A name in both
+     files runs the global entry.
+   - `server list` shows the file and its state, and never asks. Shell
+     completion skips an untrusted file and writes nothing.
+   - Example, with `fs` in the untrusted `.mcp.json` and `linear` only in
+     the global file, with no TTY:
+
+     ```
+     $ ncp tool call linear list_issues
+     ...result of linear...
+     $ ncp tool call fs read_file path=README.md
+     error: fs is in /work/app/.mcp.json, which is not trusted:
+       fs  npx -y @modelcontextprotocol/server-filesystem .
+     hint: ncp trust
+     ```
+
+     mise checks at each command that loads its configuration. `ncp`
+     checks only a named server: an agent is not stopped by a file that
+     the command does not use, and the check is one test in the lookup.
    - The commands, with the names of `mise trust`, for the project file of
      the current folder:
      - `ncp trust` trusts the file at once, shows its entries, and removes
@@ -309,8 +329,10 @@ Accepted risks:
 - Merge: before the trust, a global entry works and the project entry of
   the same name does nothing; after it, the project entry replaces the
   global entry.
-- Trust: with no TTY, a warning and no start (a stdio fixture that
-  writes a marker file); a project entry named in a command gives exit 2;
+- Trust: with no TTY, a named project entry gives exit 2 with the
+  entries and no start (a stdio fixture that writes a marker file); a
+  global entry runs with no message; a name in both files gives exit 2
+  and the hint `ncp trust --ignore`; a changed file says so;
   a trusted record runs; a No at the question writes the ignored record;
   an ignored record does not ask, also after a change of the file; `ncp
   trust` works with no TTY and removes the ignored record; `ncp trust
@@ -422,7 +444,7 @@ Where `ncp` differs from mise, and why:
 | Automatic trust | `MISE_YES`, `--yes`, `CI`, and implicit trust for `run` and `exec`. | None. | An agent can set a variable or add a flag and give itself trust (Gemini CVE-2026-12537, mise CVE-2026-35533). The paranoid mode of mise also turns these off. |
 | Content with no trust | Plain tool versions. | None. | Each MCP entry starts a process or sends a request. |
 | What `ncp` shows | The folder only. | One line for each server: the command and arguments, or the URL. | The MCP specification tells a client to show the exact command of a local server before it runs (2025-11-25, Security Best Practices, "Local MCP Server Compromise"). |
-| No TTY | The command fails. The shell hook skips the file with a warning. | `ncp` skips the file with a warning, as the shell hook of mise does. A named project entry gives exit 2. | An agent has no TTY. With the rule of mise, each `ncp` command fails in each project that has `.mcp.json`, also for the global servers. |
+| When it checks | Each command that loads the configuration. | Only a command that names a server of the project file (rule 5). The question and the error otherwise match mise. | An agent is not stopped by a file that the command does not use. The check is one test in the lookup of a name. |
 | Search | Merges all files from `/` down to the current folder. | One file. The search stops at `.git`. | `.mcp.json` is one file at the project root, as in Claude Code. See decision A. |
 
 ### C. `${VAR}` in a project file — decided 2026-10-11
