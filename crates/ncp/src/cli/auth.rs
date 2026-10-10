@@ -78,19 +78,20 @@ pub(super) async fn command(context: &Context<'_>, command: AuthCommand) -> Resu
             ))
             .hint("give a longer limit with --timeout <SECONDS>");
             let notes = crate::client::http::ConnectNotes::default();
+            let loaded = session::load_config(&context.paths.config_file, context.env)?;
             let name = limited(
                 context,
                 limit,
                 timeout,
                 Box::pin(login(
                     context,
-                    &server,
+                    (&loaded, &server),
                     no_browser,
                     (credential_store, &notes),
                 )),
             )
             .await
-            .map_err(|failure| login_failure(context, &server, &notes, failure))?;
+            .map_err(|failure| login_failure(context, (&loaded, &server), &notes, failure))?;
             // After the limit of the login: the tokens are saved, and the
             // cleanup has its own short limit.
             remove_old_tokens(context, &name, credential_store).await
@@ -102,19 +103,16 @@ pub(super) async fn command(context: &Context<'_>, command: AuthCommand) -> Resu
 
 /// The failure of a login as it shows: rmcp puts URLs that it makes from
 /// the server URL in its errors, so each `${NAME}` value of the URL is
-/// hidden. With `SSL_CERT_FILE`, a certificate of an unknown issuer gets
-/// its hint.
+/// hidden. The values come from the configuration that the login used: the
+/// file can change during a long wait for the browser. With
+/// `SSL_CERT_FILE`, a certificate of an unknown issuer gets its hint.
 fn login_failure(
     context: &Context<'_>,
-    word: &str,
+    (loaded, word): (&session::Loaded, &str),
     notes: &crate::client::http::ConnectNotes,
     failure: Failure,
 ) -> Failure {
-    let loaded = session::load_config(&context.paths.config_file, context.env).ok();
-    let failure = match loaded
-        .as_ref()
-        .and_then(|loaded| loaded.config.server(word).ok())
-    {
+    let failure = match loaded.config.server(word).ok() {
         Some(server) => Failure {
             message: session::hide_expanded_url(server, failure.message.clone()),
             ..failure
@@ -240,12 +238,11 @@ async fn place_store(
 
 async fn login(
     context: &Context<'_>,
-    word: &str,
+    (loaded, word): (&session::Loaded, &str),
     no_browser: bool,
     (place, notes): (CredentialPlace, &crate::client::http::ConnectNotes),
 ) -> Result<ServerName, Failure> {
-    let loaded = session::load_config(&context.paths.config_file, context.env)?;
-    let server = select(context, &loaded, word).await?;
+    let server = select(context, loaded, word).await?;
     let name = server.name.as_str();
     let remote = remote(server)?;
     let store = place_store(context, name, place).await?;
