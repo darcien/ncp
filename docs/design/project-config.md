@@ -239,7 +239,7 @@ Agreed by all three reviewers, no open question:
 - The question shows the full parsed entries with escapes. Most tools
   show only names (T8).
 
-Each open decision below has the question, the options with their prior
+Decided: F. Open: A to E. Each open decision below has the question, the options with their prior
 art, the recommendation with its reason, and its cost.
 
 ### A. Search range
@@ -306,19 +306,43 @@ so the agent cannot give itself trust. A flag for one run is one word for
 an agent to add. `--config-file` stays for CI: the user names the file.
 Cost: one new command. Changes plan item 4.
 
-### E. Worktrees
+### E. Approval key and worktrees
 
-Question: does a git worktree get the approval of its main checkout?
+Question: what does the key of an approval hold, and does a git worktree
+get the approval of its main checkout?
 
-| Option | Prior art (PTA) | Reviewer |
-|---|---|---|
-| **No: each path asks one time** | direnv rule | Adversarial, simplicity |
-| Yes, when the bytes are the same | Codex, mise | User |
+Facts:
+- A stdio server runs in the project folder. `node build/index.js`,
+  `./bin/server` and `npx pkg` run or resolve code of the project (local
+  `node_modules`, the project `.npmrc`). Thus for a stdio entry, the same
+  bytes in another folder can run other code. A remote entry (URL,
+  headers) is fully defined by its bytes.
+- The question can show only `.mcp.json`, not the code that a command
+  loads.
+- In the Bash tool of Claude Code, stdin and stderr are not a TTY (tested
+  2026-10-10). There `ncp` cannot ask, and a named project entry stops
+  with exit 2 (rule 5). Other agents are not tested.
 
-Reason: the link to the main checkout is in a file of the project.
-Claude Code CVE-2026-40068 forged this link with a crafted `commondir`.
-Cost: an agent that makes a new worktree for each task gets one question
-for each worktree.
+| Use case | Bytes only | **Path + bytes** | Folder |
+|---|---|---|---|
+| First use of a clone | asks | asks | asks |
+| A pull changes `.mcp.json` | asks | asks | no question (T2) |
+| A hostile repository with the same bytes as an approved project, for example from one template | runs its code, no question (T1) | asks | asks |
+| A new worktree or a new clone at another path | no question | asks one time | asks one time |
+
+Options:
+- **Path + bytes, no inheritance (direnv rule).** Recommended. Only option
+  that closes T1 and T2. The question names the project root, so a new
+  path is a new decision. Cost: one approval for each new folder.
+- Bytes only. Fewer questions. Opens T1 for repositories that share a
+  template. No prior art for code (Nix trusts settings, not code).
+- Worktree inherits the approval of the main checkout (Codex, mise). Needs
+  a read of the `.git` file, which a downloaded folder can forge (Claude
+  Code CVE-2026-40068).
+
+Later, only if the cost hurts in use: a trusted parent folder in the user
+config (VS Code parent trust, Gemini rules that cover subfolders, mise
+`trusted_config_paths`). A project cannot set it.
 
 ### F. JSONC — decided 2026-10-10
 
