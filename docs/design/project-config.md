@@ -156,7 +156,8 @@ Accepted risks:
 
 5. **The question and the trust command.** (Decision D.)
    - A command that starts a server or sends a request (`server show`,
-     `tool`, `resource`, `prompt`, `auth login`), when the project file is
+     `tool`, `resource`, `prompt`, `auth login`), or that writes the
+     project file (`server add`, rule 9), when the project file is
      not trusted and not ignored: with a TTY on stdin and stderr, `ncp` shows
      the entries and asks "Trust? [y/N]" before it continues. A No writes
      the ignored record. With no TTY, the project file has no effect, and
@@ -246,10 +247,14 @@ Accepted risks:
      folder. In the home folder, it writes the global file, because `ncp`
      never reads `~/.mcp.json` (rule 2). Both are the rules of `mise use`.
      The result names the file. `server remove` creates nothing.
-   - **Trust after a write:** if the old bytes were trusted, or the file
-     is new, `ncp` trusts the new bytes. Else it does not, and gives the
-     hint `ncp trust --show`. Reason: else an add trusts team entries that
-     the user did not see.
+   - **Trust before a write:** `ncp` writes only a trusted or a new
+     project file, as `mise use` in paranoid mode checks the trust before
+     it writes. For an untrusted file, `server add` asks the question of
+     rule 5 with a TTY (a Yes trusts, then adds; a No writes the ignored
+     record and gives exit 2), and gives exit 2 with the hint `ncp trust
+     --show` with no TTY. For an ignored file, it gives exit 2 with the
+     hint `--global`. After the write, `ncp` trusts the new bytes: the
+     user saw the old bytes and gave the new entry.
    - **Replaced global entry:** `server add --global NAME` warns when a
      trusted project entry has NAME (closes the gap of decision B).
    - **Values:** same rules in both files (requirement S10). A literal in
@@ -316,9 +321,9 @@ Accepted risks:
 - Writes: `server add` writes the project file, and `--global` the
   global file; `server remove` removes the effective entry; with no
   project file, `server add` creates `.mcp.json` in the current folder,
-  and in the home folder it writes the global file; the new bytes are
-  trusted when the old bytes were trusted or the file is new, and not
-  trusted else; `server add --global` warns when a trusted project entry
+  and in the home folder it writes the global file; an untrusted file
+  asks with a TTY and gives exit 2 with no TTY, and an ignored file gives
+  exit 2, with no write; after a write, the new bytes are trusted; `server add --global` warns when a trusted project entry
   has the name.
 - Questions: `server list`, `secret list`, `auth status` and completion
   never ask; completion writes nothing to stderr.
