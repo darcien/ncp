@@ -106,7 +106,7 @@ paths:
    than half of `ncp::client::PROBE_TIMEOUT`. Thus a server that ignores the
    Discover request, so that `ncp` waits for the timeout, fails the test.
    Only this test has a time limit.
-2. **Version fallback, cached era.** A second call with the same home gives
+2. **Version fallback, cached protocol version.** A second call with the same home gives
    the same version. This is the normal path for a user.
 3. **Lists.** `tool list`, `resource list` and `prompt list` exit 0.
 4. **Capabilities.** The server registers some tools only for a client

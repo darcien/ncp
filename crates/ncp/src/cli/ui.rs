@@ -37,7 +37,7 @@ pub enum Verbosity {
     /// `-q`: no hints and no warnings. Errors stay.
     Quiet,
     Normal,
-    /// `-v`: where each value comes from, the proxy route, the era.
+    /// `-v`: where each value comes from, the proxy route, the protocol version.
     Verbose,
     /// `-vv`: also the JSON-RPC messages and the HTTP requests.
     Trace,

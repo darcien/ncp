@@ -22,13 +22,13 @@ use crate::{
     client::{self, ConnectError, Connection, Launch, RequestError, RequestLimits},
     config::{self, Config, EntryError, LookupError, Server, Target, Transport},
     credential::SecretName,
-    era::{Era, EraCache},
-    era_file,
     expand::{Env, ExpandError},
     paths::Paths,
+    protocol_version::{ProtocolVersion, VersionCache},
+    protocol_version_file,
 };
 
-/// What `ncp` does with its caches (the era cache and the list cache).
+/// What `ncp` does with its caches (the protocol version cache and the list cache).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CacheUse {
     ReadWrite,
@@ -216,12 +216,12 @@ fn entry_failure(name: &str, error: &EntryError, path: &Path) -> Failure {
     }
 }
 
-/// Connects to the server, with the cached era. Saves the era when it
-/// changed.
+/// Connects to the server, with the cached protocol version. Saves the
+/// version when it changed.
 ///
 /// # Errors
 ///
-/// Returns a failure when the connect fails. An era cache that cannot be
+/// Returns a failure when the connect fails. A version cache that cannot be
 /// read or written gives a warning: `ncp` works the same with no cache.
 pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, Failure> {
     let prepared = prepare(context, server).await?;
@@ -255,7 +255,7 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
         (result, ..) => result,
     }
     .map_err(|error| prepared.connect_failure(context, server, &error))?;
-    prepared.save_era(context, server, connection.era());
+    prepared.save_version(context, server, connection.protocol_version());
     Ok(connection)
 }
 
@@ -331,7 +331,7 @@ pub async fn open_with_login(
     let connection = Box::pin(client::connect(&launch))
         .await
         .map_err(|error| prepared.connect_failure(context, server, &error))?;
-    prepared.save_era(context, server, connection.era());
+    prepared.save_version(context, server, connection.protocol_version());
     Ok(connection)
 }
 
@@ -361,8 +361,8 @@ pub async fn challenge(context: &Context<'_>, server: &Server) -> Result<Option<
 
 /// The parts of a connect that do not depend on a login.
 struct Prepared {
-    cache: EraCache,
-    cached: Option<Era>,
+    cache: VersionCache,
+    cached: Option<ProtocolVersion>,
     values: crate::config::Values,
     /// The names of the values that came from a store.
     stored: Vec<SecretName>,
@@ -379,19 +379,19 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
     let name = server.name.as_str();
     let ui = context.ui;
     let cache = if context.cache.writes() {
-        era_file::load(&context.paths.era_cache).unwrap_or_else(|error| {
+        protocol_version_file::load(&context.paths.version_cache).unwrap_or_else(|error| {
             ui.warning(None, &error.to_string());
-            EraCache::default()
+            VersionCache::default()
         })
     } else {
-        EraCache::default()
+        VersionCache::default()
     };
     let cached = context
         .cache
         .reads()
         .then(|| cache.lookup(&server.name, &server.target).cloned())
         .flatten();
-    ui.debug(Some(name), &cached_era_text(cached.as_ref()));
+    ui.debug(Some(name), &cached_version_text(cached.as_ref()));
     let super::secrets::Resolved { values, stored } =
         super::secrets::resolve(context, server).await?;
     let shown = server.clone();
@@ -446,7 +446,7 @@ impl Prepared {
     fn launch<'a>(&'a self, context: &'a Context<'_>, server: &'a Server) -> Launch<'a> {
         Launch {
             server,
-            cached_era: self.cached.as_ref(),
+            cached_version: self.cached.as_ref(),
             base_env: context.env,
             values: &self.values,
             http: self.http.as_ref(),
@@ -461,37 +461,30 @@ impl Prepared {
         }
     }
 
-    /// Saves the era when it changed. A cache that cannot be written gives
-    /// a warning: `ncp` works the same with no cache.
-    fn save_era(self, context: &Context<'_>, server: &Server, era: &Era) {
-        if !context.cache.writes() || self.cached.as_ref() == Some(era) {
+    /// Saves the protocol version when it changed. A cache that cannot be
+    /// written gives a warning: `ncp` works the same with no cache.
+    fn save_version(self, context: &Context<'_>, server: &Server, version: &ProtocolVersion) {
+        if !context.cache.writes() || self.cached.as_ref() == Some(version) {
             return;
         }
         let ui = context.ui;
         ui.debug(
             Some(server.name.as_str()),
-            &format!("saved the era: {}", era_text(era)),
+            &format!("saved the protocol version: {}", version.describe()),
         );
         let cache = self
             .cache
-            .record(server.name.clone(), server.target.clone(), era.clone());
-        if let Err(error) = era_file::save(&context.paths.era_cache, &cache) {
+            .record(server.name.clone(), server.target.clone(), version.clone());
+        if let Err(error) = protocol_version_file::save(&context.paths.version_cache, &cache) {
             ui.warning(None, &error.to_string());
         }
     }
 }
 
-fn era_text(era: &Era) -> String {
-    match era {
-        Era::Modern { version } => format!("modern, protocol version {}", version.as_str()),
-        Era::Legacy { version } => format!("legacy, protocol version {}", version.as_str()),
-    }
-}
-
-fn cached_era_text(cached: Option<&Era>) -> String {
+fn cached_version_text(cached: Option<&ProtocolVersion>) -> String {
     match cached {
-        Some(era) => format!("cached era: {}", era_text(era)),
-        None => "no cached era: probe with server/discover".to_string(),
+        Some(version) => format!("cached protocol version: {}", version.describe()),
+        None => "no cached protocol version: probe with server/discover".to_string(),
     }
 }
 

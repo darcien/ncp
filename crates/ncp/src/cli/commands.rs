@@ -533,7 +533,7 @@ fn prepare_call(
 /// (SEP-2243). A tool that the list does not show stays callable.
 fn mirrors_parameters(server: &Server, connection: &Connection) -> bool {
     matches!(server.transport, crate::config::Transport::Http(_))
-        && matches!(connection.era(), crate::era::Era::Modern { .. })
+        && connection.protocol_version().uses_discover()
 }
 
 /// True when the server says in its handshake that it has the feature.

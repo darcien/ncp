@@ -24,7 +24,7 @@ Levels use [BCP 14][bcp14] key words, as the MCP spec does.
 | ID | Level | Requirement | Ref |
 |---|---|---|---|
 | P1 | MUST | Modern protocol `2026-07-28` (stateless, version in each request). | [ver], [chg] |
-| P2 | MUST | Legacy protocol `2025-11-25` (`initialize` handshake). Detect the era of each server as the spec describes, and keep the result. | [compat] |
+| P2 | MUST | Legacy protocol `2025-11-25` (`initialize` handshake). Detect the protocol version of each server as the spec describes, and keep the result. | [compat] |
 | P3 | SHOULD | Older legacy versions (`2025-06-18`, `2025-03-26`), only when a real server needs them. | [compat] |
 | P4 | MUST | Transports: stdio and Streamable HTTP. | [stdio], [http] |
 | P5 | SHOULD | HTTP+SSE transport (deprecated). Not in the MVP. Add it when a necessary server has only this transport. | [dep] |
@@ -39,16 +39,17 @@ Levels use [BCP 14][bcp14] key words, as the MCP spec does.
 | P14 | SHOULD NOT | Roots, Sampling, Logging (deprecated in `2026-07-28`). | [dep] |
 | P15 | MUST | No request waits forever. Each request has a time limit (default 300 s, configurable). The whole connect (server start and handshake) has a limit of 30 s. A request timeout sends a cancel request; a connect timeout stops the server, because a client MUST NOT cancel `initialize`. Reason: an agent must not hang. | [timeouts] |
 
-Era cache (P2). The spec permits a client to keep the era across restarts of
-the same server configuration. `ncp` keeps the era for each server name with
-the transport target (the stdio command, arguments and directory, or the
-URL). A changed target makes the cached era invalid. `ncp` probes with
-`server/discover` in its own timeout, and connects again with `initialize` on
-a new transport when the server is legacy or does not answer in time. The
-cached era stays until the target changes, also after a timeout. Thus a server
-that does not answer `server/discover` costs the timeout once, not at each
-run. When the cached era fails (the handshake with the cached era fails),
-`ncp` probes again, because the server can have changed.
+Protocol version cache (P2). The spec permits a client to keep the protocol
+version across restarts of the same server configuration. `ncp` keeps the
+version for each server name with the transport target (the stdio command,
+arguments and directory, or the URL). A changed target makes the cached
+version invalid. `ncp` probes with `server/discover` in its own timeout, and
+connects again with `initialize` on a new transport when the server does not
+know `server/discover` or does not answer in time. The cached version stays
+until the target changes, also after a timeout. Thus a server that does not
+answer `server/discover` costs the timeout once, not at each run. When the
+handshake with the cached version fails, `ncp` probes again, because the
+server can have changed.
 
 ### 3.2 Authorization (HTTP servers)
 

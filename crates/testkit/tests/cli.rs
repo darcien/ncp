@@ -748,31 +748,32 @@ fn server_list_reads_no_store() {
 }
 
 #[test]
-fn keeps_the_era_in_a_private_cache_file() {
-    let home = Home::new("era-cache");
+fn keeps_the_protocol_version_in_a_private_cache_file() {
+    let home = Home::new("version-cache");
     home.configure(&json!({"fx": stdio("legacy")}));
     assert_eq!(home.run(&["tool", "list", "fx"]).code(), 0);
-    let path = home.root.join("cache/ncp/eras.json");
+    let path = home.root.join("cache/ncp/protocol-versions.json");
     let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
     let cache: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(
-        cache["servers"]["fx"]["era"],
-        json!({"era": "legacy", "version": "2025-11-25"})
-    );
+    assert_eq!(cache["servers"]["fx"]["version"], json!("2025-11-25"));
     assert_eq!(home.run(&["tool", "list", "fx"]).code(), 0);
 }
 
 #[test]
-fn ignores_an_era_cache_file_that_does_not_load() {
-    let home = Home::new("era-cache-broken");
+fn ignores_a_version_cache_file_that_does_not_load() {
+    let home = Home::new("version-cache-broken");
     home.configure(&json!({"fx": stdio("modern")}));
-    let path = home.root.join("cache/ncp/eras.json");
+    let path = home.root.join("cache/ncp/protocol-versions.json");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, "not json").unwrap();
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
-    assert!(std::fs::read_to_string(&path).unwrap().contains("modern"));
+    assert!(
+        std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("2026-07-28")
+    );
 }
 
 #[test]
@@ -851,7 +852,8 @@ fn expanded_values_never_go_to_output_or_to_the_era_cache() {
         format!("{FIXTURE} modern '${{TOKEN}}'")
     );
     assert_eq!(home.run(&["server", "show", "fx"]).code(), 0);
-    let cache = std::fs::read_to_string(home.root.join("cache/ncp/eras.json")).unwrap();
+    let cache =
+        std::fs::read_to_string(home.root.join("cache/ncp/protocol-versions.json")).unwrap();
     assert!(cache.contains("${TOKEN}"), "{cache}");
     assert!(!cache.contains("supersecret"), "{cache}");
 }
@@ -1221,13 +1223,13 @@ fn verbose_output_names_the_source_of_each_value_and_never_the_value() {
         "{messages:?}"
     );
     assert!(
-        messages.contains(&"no cached era: probe with server/discover".to_string()),
+        messages.contains(&"no cached protocol version: probe with server/discover".to_string()),
         "{messages:?}"
     );
     assert!(
         messages
             .iter()
-            .any(|message| message.starts_with("saved the era: modern")),
+            .any(|message| message == "saved the protocol version: 2026-07-28 (server/discover)"),
         "{messages:?}"
     );
     assert!(!String::from_utf8_lossy(&run.0.stderr).contains("s3cret-value"));

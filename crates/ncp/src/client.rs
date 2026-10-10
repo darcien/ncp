@@ -1,7 +1,8 @@
-//! The client core: connect to a server, find its era, list and call tools.
+//! The client core: connect to a server, find its protocol version, list
+//! and call tools.
 //!
-//! Era detection: `ncp` probes with `server/discover` in its own timeout. On
-//! a legacy error or a timeout, it connects again on a new transport with
+//! Version detection: `ncp` probes with `server/discover` in its own timeout. On
+//! an error of a server with no `server/discover`, or a timeout, it connects again on a new transport with
 //! `initialize`. rmcp `Auto` mode is not used: when a slow server answers
 //! the probe late, the late answer arrives on the same transport and the
 //! handshake fails (see docs/research/early-tests.md).
@@ -42,8 +43,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     config::{Server, Target, Transport, Values},
-    era::{self, Era, ProtocolVersion, Startup},
     expand::Env,
+    protocol_version::{self, ProtocolVersion, Startup},
     server::ServerName,
 };
 
@@ -65,7 +66,7 @@ const CANCEL_LIMIT: Duration = Duration::from_secs(2);
 /// All inputs to connect to one server.
 pub struct Launch<'a> {
     pub server: &'a Server,
-    pub cached_era: Option<&'a Era>,
+    pub cached_version: Option<&'a ProtocolVersion>,
     /// The environment for a stdio server, normally the environment of `ncp`.
     pub base_env: &'a Env,
     /// The `env` or `headers` values of the entry, after expansion.
@@ -383,7 +384,7 @@ impl rmcp::ClientHandler for Handler {
 
 pub struct Connection {
     service: Service,
-    era: Era,
+    version: ProtocolVersion,
     process: Option<stdio::Process>,
     /// True when the connection sends the OAuth token of a login.
     authorized: bool,
@@ -391,7 +392,7 @@ pub struct Connection {
     refused: Arc<AtomicBool>,
 }
 
-/// Connects to the server, and finds its era.
+/// Connects to the server, and finds its protocol version.
 ///
 /// # Errors
 ///
@@ -399,15 +400,15 @@ pub struct Connection {
 /// succeeds, or when the connect passes its limit.
 pub async fn connect(launch: &Launch<'_>) -> Result<Connection, ConnectError> {
     let deadline = Instant::now() + launch.connect_limit;
-    match era::startup(launch.cached_era) {
-        Startup::Probe => probe(launch, ProtocolVersion::first_modern(), deadline).await,
+    match protocol_version::startup(launch.cached_version) {
+        Startup::Probe => probe(launch, ProtocolVersion::first_with_discover(), deadline).await,
         Startup::Discover(version) => probe(launch, version, deadline).await,
         Startup::Initialize(version) => {
             match initialize(launch, version, Phase::Initialize, deadline).await {
-                // The server can be modern now: probe again. Over HTTP the
+                // The server can use `server/discover` now: probe again. Over HTTP the
                 // rejection of `initialize` is not always a JSON-RPC error.
                 Err(ConnectError::Handshake { .. }) => {
-                    probe(launch, ProtocolVersion::first_modern(), deadline).await
+                    probe(launch, ProtocolVersion::first_with_discover(), deadline).await
                 }
                 other => other,
             }
@@ -421,9 +422,9 @@ async fn probe(
     deadline: Instant,
 ) -> Result<Connection, ConnectError> {
     let mut preferred_versions = vec![to_rmcp(&preferred)];
-    let first_modern = to_rmcp(&ProtocolVersion::first_modern());
-    if !preferred_versions.contains(&first_modern) {
-        preferred_versions.push(first_modern);
+    let first_with_discover = to_rmcp(&ProtocolVersion::first_with_discover());
+    if !preferred_versions.contains(&first_with_discover) {
+        preferred_versions.push(first_with_discover);
     }
     let lifecycle = ClientLifecycleMode::Discover { preferred_versions };
     // Boxed: the handshake future is large, and the caller holds two.
@@ -443,15 +444,15 @@ async fn probe(
     } else {
         Some(attempt.await)
     };
-    let latest_legacy = ProtocolVersion::latest_legacy();
+    let latest_with_initialize = ProtocolVersion::latest_with_initialize();
     match answer {
         Some(Err(ConnectError::Handshake { source, .. })) if is_legacy_answer(&source) => {
-            initialize(launch, latest_legacy, Phase::Initialize, deadline).await
+            initialize(launch, latest_with_initialize, Phase::Initialize, deadline).await
         }
         Some(result) => result,
         None => {
             let phase = Phase::InitializeAfterTimeout(launch.probe_timeout);
-            initialize(launch, latest_legacy, phase, deadline).await
+            initialize(launch, latest_with_initialize, phase, deadline).await
         }
     }
 }
@@ -578,10 +579,10 @@ async fn handshake(
         }
         Transport::Sse(_) => return Err(ConnectError::SseNotSupported(launch.server.name.clone())),
     };
-    let era = era_of(&service)?;
+    let version = version_of(&service)?;
     Ok(Connection {
         service,
-        era,
+        version,
         process,
         authorized: launch.authorized.is_some(),
         refused,
@@ -640,17 +641,12 @@ fn client_info(elicitation: bool) -> ClientConfig {
     )
 }
 
-fn era_of(service: &Service) -> Result<Era, ConnectError> {
+fn version_of(service: &Service) -> Result<ProtocolVersion, ConnectError> {
     let text = service
         .peer_info()
         .map(|info| info.protocol_version.as_str().to_string())
         .unwrap_or_default();
-    let version = ProtocolVersion::parse(&text).map_err(|_| ConnectError::BadVersion(text))?;
-    Ok(if version.is_modern() {
-        Era::Modern { version }
-    } else {
-        Era::Legacy { version }
-    })
+    ProtocolVersion::parse(&text).map_err(|_| ConnectError::BadVersion(text))
 }
 
 /// A correlated JSON-RPC error to the probe means a legacy server. So does
@@ -725,8 +721,8 @@ pub struct RequestLimits<'a> {
 
 impl Connection {
     #[must_use]
-    pub fn era(&self) -> &Era {
-        &self.era
+    pub fn protocol_version(&self) -> &ProtocolVersion {
+        &self.version
     }
 
     /// True when the connection sends the OAuth token of a login.

@@ -12,8 +12,8 @@ use std::{
 use ncp::{
     client::{self, ConnectError, Connection, Launch, Phase, RequestError, RequestLimits},
     config::{Expanded, RemoteServer, Server, StdioServer, Transport, Values},
-    era::{Era, ProtocolVersion},
     expand::{Env, Template},
+    protocol_version::ProtocolVersion,
     server::{ServerName, ServerUrl},
 };
 use ncp_testkit::{Mode, serve_http};
@@ -64,7 +64,7 @@ fn http() -> reqwest::Client {
 
 struct Setup {
     server: Server,
-    cached: Option<Era>,
+    cached: Option<ProtocolVersion>,
     base_env: Env,
     values: Values,
     probe_timeout: Duration,
@@ -89,7 +89,7 @@ impl Setup {
         let http = http();
         client::connect(&Launch {
             server: &self.server,
-            cached_era: self.cached.as_ref(),
+            cached_version: self.cached.as_ref(),
             base_env: &self.base_env,
             values: &self.values,
             http: Some(&http),
@@ -110,16 +110,12 @@ fn version(text: &str) -> ProtocolVersion {
     ProtocolVersion::parse(text).unwrap()
 }
 
-fn modern() -> Era {
-    Era::Modern {
-        version: version("2026-07-28"),
-    }
+fn modern() -> ProtocolVersion {
+    version("2026-07-28")
 }
 
-fn legacy() -> Era {
-    Era::Legacy {
-        version: version("2025-11-25"),
-    }
+fn legacy() -> ProtocolVersion {
+    version("2025-11-25")
 }
 
 fn limits(cancel: &CancellationToken) -> RequestLimits<'_> {
@@ -174,7 +170,7 @@ fn process_is_alive(pid: u32) -> bool {
 #[tokio::test]
 async fn finds_modern_era_of_stdio_server_with_discover() {
     let connection = Setup::new(stdio(&["modern"], &[])).connect().await.unwrap();
-    assert_eq!(connection.era(), &modern());
+    assert_eq!(connection.protocol_version(), &modern());
     assert_eq!(
         call_text(&connection, "echo", serde_json::json!({"text": "hi"})).await,
         "hi"
@@ -185,7 +181,7 @@ async fn finds_modern_era_of_stdio_server_with_discover() {
 #[tokio::test]
 async fn falls_back_to_initialize_when_stdio_server_rejects_discover() {
     let connection = Setup::new(stdio(&["legacy"], &[])).connect().await.unwrap();
-    assert_eq!(connection.era(), &legacy());
+    assert_eq!(connection.protocol_version(), &legacy());
     assert_eq!(
         call_text(&connection, "echo", serde_json::json!({"text": "hi"})).await,
         "hi"
@@ -198,7 +194,7 @@ async fn falls_back_to_initialize_when_discover_times_out() {
     let mut setup = Setup::new(stdio(&["slow-3000"], &[]));
     setup.probe_timeout = Duration::from_millis(300);
     let connection = setup.connect().await.unwrap();
-    assert_eq!(connection.era(), &legacy());
+    assert_eq!(connection.protocol_version(), &legacy());
     assert_eq!(
         call_text(&connection, "echo", serde_json::json!({"text": "hi"})).await,
         "hi"
@@ -212,7 +208,7 @@ async fn connects_to_modern_only_stdio_server() {
         .connect()
         .await
         .unwrap();
-    assert_eq!(connection.era(), &modern());
+    assert_eq!(connection.protocol_version(), &modern());
     connection.close().await;
 }
 
@@ -223,7 +219,7 @@ async fn finds_modern_era_of_http_server() {
         .connect()
         .await
         .unwrap();
-    assert_eq!(connection.era(), &modern());
+    assert_eq!(connection.protocol_version(), &modern());
     let tools = connection
         .list_tools(limits(&CancellationToken::new()))
         .await
@@ -239,7 +235,7 @@ async fn falls_back_to_initialize_when_http_server_rejects_discover() {
         .connect()
         .await
         .unwrap();
-    assert_eq!(connection.era(), &legacy());
+    assert_eq!(connection.protocol_version(), &legacy());
     assert_eq!(
         call_text(&connection, "echo", serde_json::json!({"text": "hi"})).await,
         "hi"
@@ -255,7 +251,7 @@ async fn falls_back_to_initialize_when_http_discover_times_out() {
     let mut setup = Setup::new(http_server(&fixture.url, &[]));
     setup.probe_timeout = Duration::from_millis(300);
     let connection = setup.connect().await.unwrap();
-    assert_eq!(connection.era(), &legacy());
+    assert_eq!(connection.protocol_version(), &legacy());
     assert_eq!(
         call_text(&connection, "echo", serde_json::json!({"text": "hi"})).await,
         "hi"
@@ -269,7 +265,7 @@ async fn skips_probe_for_cached_legacy_era() {
     let mut setup = Setup::new(http_server(&fixture.url, &[]));
     setup.cached = Some(legacy());
     let connection = setup.connect().await.unwrap();
-    assert_eq!(connection.era(), &legacy());
+    assert_eq!(connection.protocol_version(), &legacy());
     assert_eq!(discover_calls(&fixture), 0);
     connection.close().await;
 }
@@ -282,7 +278,7 @@ async fn server_that_ignores_discover_costs_the_probe_timeout_only_once() {
     let mut setup = Setup::new(http_server(&fixture.url, &[]));
     setup.probe_timeout = Duration::from_millis(300);
     let first = setup.connect().await.unwrap();
-    assert_eq!(first.era(), &legacy());
+    assert_eq!(first.protocol_version(), &legacy());
     first.close().await;
     setup.cached = Some(legacy());
     setup.probe_timeout = Duration::from_secs(20);
@@ -293,7 +289,7 @@ async fn server_that_ignores_discover_costs_the_probe_timeout_only_once() {
         "{:?}",
         start.elapsed()
     );
-    assert_eq!(second.era(), &legacy());
+    assert_eq!(second.protocol_version(), &legacy());
     assert_eq!(discover_calls(&fixture), 1);
     second.close().await;
 }
@@ -304,7 +300,7 @@ async fn probes_when_cached_legacy_server_now_rejects_initialize() {
     let mut setup = Setup::new(http_server(&fixture.url, &[]));
     setup.cached = Some(legacy());
     let connection = setup.connect().await.unwrap();
-    assert_eq!(connection.era(), &modern());
+    assert_eq!(connection.protocol_version(), &modern());
     connection.close().await;
 }
 

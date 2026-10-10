@@ -1,14 +1,16 @@
-//! The protocol era of a server, and the cache of eras.
+//! The protocol version of a server, and its cache.
 //!
-//! The spec lets a client keep the era across restarts of the same server
-//! configuration (MCP 2026-07-28, basic/versioning, "Backward compatibility
-//! with initialization-based versions"). The cache keys each era by the
-//! server name and its transport target, so a changed target probes again.
+//! The spec lets a client keep the protocol version across restarts of the
+//! same server configuration (MCP 2026-07-28, basic/versioning, "Backward
+//! compatibility with initialization-based versions"). The cache keys each
+//! version by the server name and its transport target, so a changed target
+//! probes again.
 //!
-//! The cache keeps a legacy result also when it came from a probe timeout.
-//! Thus a server that does not answer `server/discover` costs the timeout
-//! once, and not at each run. When the handshake with the cached era fails,
-//! the client probes again, because the server can have changed.
+//! The cache keeps an `initialize` result also when it came from a probe
+//! timeout. Thus a server that does not answer `server/discover` costs the
+//! timeout once, and not at each run. When the handshake with the cached
+//! version fails, the client probes again, because the server can have
+//! changed.
 
 use std::{collections::BTreeMap, fmt};
 
@@ -17,9 +19,9 @@ use serde::{Deserialize, Serialize};
 use crate::{config::Target, server::ServerName};
 
 /// The first version with `server/discover` and no `initialize` handshake.
-const FIRST_MODERN: &str = "2026-07-28";
+const FIRST_WITH_DISCOVER: &str = "2026-07-28";
 /// The newest version with the `initialize` handshake.
-const LATEST_LEGACY: &str = "2025-11-25";
+const LATEST_WITH_INITIALIZE: &str = "2025-11-25";
 
 /// An MCP protocol version, in the `YYYY-MM-DD` form of the spec.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -53,20 +55,31 @@ impl ProtocolVersion {
     }
 
     #[must_use]
-    pub fn first_modern() -> Self {
-        Self(FIRST_MODERN.to_string())
+    pub fn first_with_discover() -> Self {
+        Self(FIRST_WITH_DISCOVER.to_string())
     }
 
     #[must_use]
-    pub fn latest_legacy() -> Self {
-        Self(LATEST_LEGACY.to_string())
+    pub fn latest_with_initialize() -> Self {
+        Self(LATEST_WITH_INITIALIZE.to_string())
     }
 
     /// True for a version that uses `server/discover` and no `initialize`.
     /// Dates in this form sort in time order as text.
     #[must_use]
-    pub fn is_modern(&self) -> bool {
-        self.0.as_str() >= FIRST_MODERN
+    pub fn uses_discover(&self) -> bool {
+        self.0.as_str() >= FIRST_WITH_DISCOVER
+    }
+
+    /// The version and the method of its handshake, for messages.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        let method = if self.uses_discover() {
+            "server/discover"
+        } else {
+            "initialize"
+        };
+        format!("{} ({method})", self.0)
     }
 
     #[must_use]
@@ -94,14 +107,6 @@ impl fmt::Display for ProtocolVersion {
     }
 }
 
-/// The era that a connection found. "Unknown" is the absence of an era.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "era", rename_all = "snake_case")]
-pub enum Era {
-    Modern { version: ProtocolVersion },
-    Legacy { version: ProtocolVersion },
-}
-
 /// How to start a connection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Startup {
@@ -115,41 +120,41 @@ pub enum Startup {
     Initialize(ProtocolVersion),
 }
 
-/// Chooses how to start from the cached era.
+/// Chooses how to start from the cached version.
 #[must_use]
-pub fn startup(cached: Option<&Era>) -> Startup {
+pub fn startup(cached: Option<&ProtocolVersion>) -> Startup {
     match cached {
         None => Startup::Probe,
-        Some(Era::Modern { version }) => Startup::Discover(version.clone()),
-        Some(Era::Legacy { version }) => Startup::Initialize(version.clone()),
+        Some(version) if version.uses_discover() => Startup::Discover(version.clone()),
+        Some(version) => Startup::Initialize(version.clone()),
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct CachedEra {
+struct CachedVersion {
     target: Target,
-    era: Era,
+    version: ProtocolVersion,
 }
 
-/// The era of each server. The caller loads and saves it.
+/// The protocol version of each server. The caller loads and saves it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EraCache {
-    servers: BTreeMap<ServerName, CachedEra>,
+pub struct VersionCache {
+    servers: BTreeMap<ServerName, CachedVersion>,
 }
 
-impl EraCache {
-    /// The cached era, if the server still has the same target.
+impl VersionCache {
+    /// The cached version, if the server still has the same target.
     #[must_use]
-    pub fn lookup(&self, name: &ServerName, target: &Target) -> Option<&Era> {
+    pub fn lookup(&self, name: &ServerName, target: &Target) -> Option<&ProtocolVersion> {
         self.servers
             .get(name)
             .filter(|cached| &cached.target == target)
-            .map(|cached| &cached.era)
+            .map(|cached| &cached.version)
     }
 
     #[must_use]
-    pub fn record(mut self, name: ServerName, target: Target, era: Era) -> Self {
-        self.servers.insert(name, CachedEra { target, era });
+    pub fn record(mut self, name: ServerName, target: Target, version: ProtocolVersion) -> Self {
+        self.servers.insert(name, CachedVersion { target, version });
         self
     }
 }
@@ -179,51 +184,55 @@ mod tests {
     }
 
     #[test]
-    fn versions_from_2026_07_28_are_modern() {
-        assert!(version("2026-07-28").is_modern());
-        assert!(version("2027-01-01").is_modern());
-        assert!(!version("2025-11-25").is_modern());
-        assert!(!version("2025-03-26").is_modern());
-        assert!(ProtocolVersion::first_modern().is_modern());
-        assert!(!ProtocolVersion::latest_legacy().is_modern());
+    fn versions_from_2026_07_28_use_discover() {
+        assert!(version("2026-07-28").uses_discover());
+        assert!(version("2027-01-01").uses_discover());
+        assert!(!version("2025-11-25").uses_discover());
+        assert!(!version("2025-03-26").uses_discover());
+        assert!(ProtocolVersion::first_with_discover().uses_discover());
+        assert!(!ProtocolVersion::latest_with_initialize().uses_discover());
     }
 
     #[test]
-    fn probes_when_era_is_unknown() {
+    fn describes_the_version_with_its_handshake() {
+        assert_eq!(
+            version("2026-07-28").describe(),
+            "2026-07-28 (server/discover)"
+        );
+        assert_eq!(version("2025-11-25").describe(), "2025-11-25 (initialize)");
+    }
+
+    #[test]
+    fn probes_when_no_version_is_cached() {
         assert_eq!(startup(None), Startup::Probe);
     }
 
     #[test]
-    fn discovers_with_cached_modern_version() {
-        let era = Era::Modern {
-            version: version("2026-07-28"),
-        };
+    fn discovers_with_a_cached_discover_version() {
         assert_eq!(
-            startup(Some(&era)),
+            startup(Some(&version("2026-07-28"))),
             Startup::Discover(version("2026-07-28"))
         );
     }
 
     #[test]
-    fn initializes_with_cached_legacy_version() {
-        let era = Era::Legacy {
-            version: version("2025-06-18"),
-        };
+    fn initializes_with_a_cached_initialize_version() {
         assert_eq!(
-            startup(Some(&era)),
+            startup(Some(&version("2025-06-18"))),
             Startup::Initialize(version("2025-06-18"))
         );
     }
 
     #[test]
-    fn cache_returns_era_only_for_the_same_target() {
-        let era = Era::Modern {
-            version: version("2026-07-28"),
-        };
-        let cache = EraCache::default().record(name("s"), remote("https://a/mcp"), era.clone());
+    fn cache_returns_the_version_only_for_the_same_target() {
+        let cache = VersionCache::default().record(
+            name("s"),
+            remote("https://a/mcp"),
+            version("2026-07-28"),
+        );
         assert_eq!(
             cache.lookup(&name("s"), &remote("https://a/mcp")),
-            Some(&era)
+            Some(&version("2026-07-28"))
         );
         assert_eq!(cache.lookup(&name("s"), &remote("https://b/mcp")), None);
         assert_eq!(cache.lookup(&name("t"), &remote("https://a/mcp")), None);
@@ -231,7 +240,7 @@ mod tests {
 
     #[test]
     fn cache_round_trips_through_json() {
-        let cache = EraCache::default()
+        let cache = VersionCache::default()
             .record(
                 name("s"),
                 Target::Stdio {
@@ -239,25 +248,17 @@ mod tests {
                     args: vec![],
                     cwd: Some(".".into()),
                 },
-                Era::Legacy {
-                    version: version("2025-11-25"),
-                },
+                version("2025-11-25"),
             )
-            .record(
-                name("r"),
-                remote("https://a/mcp"),
-                Era::Modern {
-                    version: version("2026-07-28"),
-                },
-            );
+            .record(name("r"), remote("https://a/mcp"), version("2026-07-28"));
         let text = serde_json::to_string(&cache).unwrap();
-        assert_eq!(serde_json::from_str::<EraCache>(&text).unwrap(), cache);
+        assert_eq!(serde_json::from_str::<VersionCache>(&text).unwrap(), cache);
     }
 
     #[test]
     fn cache_with_bad_version_does_not_load() {
         let text = r#"{"servers": {"s": {"target": {"transport": "remote", "url": "u"},
-            "era": {"era": "modern", "version": "latest"}}}}"#;
-        assert!(serde_json::from_str::<EraCache>(text).is_err());
+            "version": "latest"}}}"#;
+        assert!(serde_json::from_str::<VersionCache>(text).is_err());
     }
 }

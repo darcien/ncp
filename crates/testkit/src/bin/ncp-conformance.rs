@@ -15,8 +15,8 @@
 //! and an empty stdin, so that the suite tests that path too.
 //!
 //! The suite says that a client derives the lifecycle from the protocol
-//! version it gets. `ncp` finds the era itself, so the adapter writes the
-//! era of the version into the era cache before the first command.
+//! version it gets. `ncp` finds the protocol version itself, so the adapter
+//! writes the version into the version cache before the first command.
 
 use std::{
     path::{Path, PathBuf},
@@ -25,8 +25,8 @@ use std::{
 
 use ncp::{
     config::Target,
-    era::{Era, EraCache, ProtocolVersion},
-    era_file,
+    protocol_version::{ProtocolVersion, VersionCache},
+    protocol_version_file,
     server::ServerName,
 };
 use serde_json::{Map, Value, json};
@@ -205,23 +205,19 @@ fn configure(home: &Path, url: &str, version: &str, context: &Value) -> Result<(
     let config = json!({"mcpServers": {SERVER: entry}});
     std::fs::write(config_dir.join("mcp.json"), config.to_string())
         .map_err(|error| error.to_string())?;
-    // With NCP_CONFORMANCE_PROBE set, ncp finds the era itself, as it does
+    // With NCP_CONFORMANCE_PROBE set, ncp finds the version itself, as it does
     // for a user.
     if std::env::var_os("NCP_CONFORMANCE_PROBE").is_some() {
         return Ok(());
     }
     let version = ProtocolVersion::parse(version).map_err(|error| error.to_string())?;
-    let era = if version.is_modern() {
-        Era::Modern { version }
-    } else {
-        Era::Legacy { version }
-    };
     let name = ServerName::parse(SERVER).map_err(|error| error.to_string())?;
     let target = Target::Remote {
         url: url.to_string(),
     };
-    let cache = EraCache::default().record(name, target, era);
-    era_file::save(&home.join("cache/ncp/eras.json"), &cache).map_err(|error| error.to_string())
+    let cache = VersionCache::default().record(name, target, version);
+    protocol_version_file::save(&home.join("cache/ncp/protocol-versions.json"), &cache)
+        .map_err(|error| error.to_string())
 }
 
 fn run() -> Result<(), String> {

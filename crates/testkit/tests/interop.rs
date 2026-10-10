@@ -141,7 +141,7 @@ fn text_of(result: &Value) -> &str {
 }
 
 /// The first contact falls back to the legacy version without a wait for
-/// the probe timeout, and the second contact uses the cached era.
+/// the probe timeout, and the second contact uses the cached protocol version.
 fn falls_back_to_the_legacy_version_and_caches_it(server: &Server) {
     let home = home_with("version", server);
     let first = home.run(&["server", "show", "every", "--timings"]);

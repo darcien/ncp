@@ -9,9 +9,9 @@ use crate::expand::Env;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paths {
     pub config_file: PathBuf,
-    /// The folder of the caches: the era cache and the list cache.
+    /// The folder of the caches: the protocol version cache and the list cache.
     pub cache_dir: PathBuf,
-    pub era_cache: PathBuf,
+    pub version_cache: PathBuf,
     pub credential_file: PathBuf,
 }
 
@@ -41,7 +41,7 @@ impl Paths {
         let cache_dir = base("XDG_CACHE_HOME", ".cache")?.join("ncp");
         Ok(Self {
             config_file: base("XDG_CONFIG_HOME", ".config")?.join("ncp/mcp.json"),
-            era_cache: cache_dir.join("eras.json"),
+            version_cache: cache_dir.join("protocol-versions.json"),
             cache_dir,
             credential_file: base("XDG_STATE_HOME", ".local/state")?.join("ncp/credentials.json"),
         })
@@ -63,7 +63,10 @@ mod tests {
     fn uses_home_when_xdg_variables_are_not_set() {
         let paths = Paths::from_env(&env(&[("HOME", "/h")])).unwrap();
         assert_eq!(paths.config_file, Path::new("/h/.config/ncp/mcp.json"));
-        assert_eq!(paths.era_cache, Path::new("/h/.cache/ncp/eras.json"));
+        assert_eq!(
+            paths.version_cache,
+            Path::new("/h/.cache/ncp/protocol-versions.json")
+        );
         assert_eq!(
             paths.credential_file,
             Path::new("/h/.local/state/ncp/credentials.json")
@@ -80,7 +83,10 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(paths.config_file, Path::new("/c/ncp/mcp.json"));
-        assert_eq!(paths.era_cache, Path::new("/h/.cache/ncp/eras.json"));
+        assert_eq!(
+            paths.version_cache,
+            Path::new("/h/.cache/ncp/protocol-versions.json")
+        );
         assert_eq!(paths.credential_file, Path::new("/s/ncp/credentials.json"));
     }
 
