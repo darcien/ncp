@@ -539,7 +539,7 @@ async fn set(
         || {
             json!({
                 "name": name.as_str(),
-                "place": place_name(place),
+                "credentialStore": place_name(place),
                 "destination": destination_json(destination),
                 "servers": server_names(&target.uses),
             })
@@ -913,7 +913,7 @@ async fn list(context: &Context<'_>) -> Result<(), Failure> {
             json!({"secrets": rows.iter().map(|row| json!({
                 "name": row.name.as_str(),
                 "destination": destination_json(&row.destination),
-                "places": row.places,
+                "credentialStores": row.places,
                 "used": !row.servers.is_empty(),
                 "servers": row.servers,
             })).collect::<Vec<_>>()})
@@ -1170,7 +1170,7 @@ async fn delete(context: &Context<'_>, name: &str, removal: Removal) -> Result<(
                         "file": config_file.as_ref().map(|path| path.display().to_string()),
                         "deleted": removed.iter().map(|(destination, places)| json!({
                             "destination": destination_json(destination),
-                            "places": places.iter().map(|place| place_name(*place)).collect::<Vec<_>>(),
+                            "credentialStores": places.iter().map(|place| place_name(*place)).collect::<Vec<_>>(),
                         })).collect::<Vec<_>>(),
                     })
                 },

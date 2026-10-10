@@ -313,7 +313,7 @@ fn value_from_the_credential_file_expands_in_env_and_the_environment_wins() {
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert_eq!(
         run.stdout(),
-        json!({"name": "FIXTURE_TOKEN", "place": "file", "destination": null,
+        json!({"name": "FIXTURE_TOKEN", "credentialStore": "file", "destination": null,
             "servers": ["fx"]})
     );
     let path = home.root.join("state/ncp/credentials.json");
@@ -397,9 +397,9 @@ fn native_store_comes_before_the_file_and_list_shows_both_places() {
     assert_eq!(
         list.stdout(),
         json!({"secrets": [
-            {"name": "FIXTURE_TOKEN", "destination": null, "places": ["native", "file"],
+            {"name": "FIXTURE_TOKEN", "destination": null, "credentialStores": ["native", "file"],
                 "used": true, "servers": ["fx"]},
-            {"name": "UNUSED", "destination": null, "places": ["file"], "used": false,
+            {"name": "UNUSED", "destination": null, "credentialStores": ["file"], "used": false,
                 "servers": []}
         ]})
     );
@@ -413,7 +413,7 @@ fn native_store_comes_before_the_file_and_list_shows_both_places() {
     assert_eq!(
         run.stdout(),
         json!({"name": "FIXTURE_TOKEN", "file": null,
-            "deleted": [{"destination": null, "places": ["native", "file"]}]})
+            "deleted": [{"destination": null, "credentialStores": ["native", "file"]}]})
     );
     let run = home.run(&["secret", "delete", "FIXTURE_TOKEN"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
@@ -516,7 +516,7 @@ async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert_eq!(
         run.stdout(),
-        json!({"name": "K", "place": "file", "destination": web, "servers": ["web"]})
+        json!({"name": "K", "credentialStore": "file", "destination": web, "servers": ["web"]})
     );
     assert_eq!(home.run(&["tool", "list", "web"]).code(), 0);
     let run = home.run(&["tool", "list", "other"]);
@@ -562,7 +562,7 @@ async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
     assert_eq!(
         run.stdout(),
         json!({"name": "K", "file": home.config_path().display().to_string(),
-            "deleted": [{"destination": other, "places": ["file"]}]})
+            "deleted": [{"destination": other, "credentialStores": ["file"]}]})
     );
 
     // After a URL change, the old item is unused.
@@ -679,7 +679,7 @@ fn secret_delete_with_a_locked_native_store_needs_a_flag() {
     assert_eq!(warnings(&run).len(), 1, "{}", run.describe());
     assert_eq!(
         run.stdout()["deleted"],
-        json!([{"destination": null, "places": ["file"]}])
+        json!([{"destination": null, "credentialStores": ["file"]}])
     );
 }
 
@@ -1026,7 +1026,10 @@ fn secret_commands_work_with_no_native_store_and_no_noise() {
     assert_eq!(warnings(&run), Vec::<String>::new());
     let list = home.run(&["secret", "list"]);
     assert_eq!(warnings(&list), Vec::<String>::new());
-    assert_eq!(list.stdout()["secrets"][0]["places"], json!(["file"]));
+    assert_eq!(
+        list.stdout()["secrets"][0]["credentialStores"],
+        json!(["file"])
+    );
     let run = home.run(&["secret", "delete", "TYPO"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert_eq!(run.error()["message"], "TYPO is not stored");
@@ -1366,7 +1369,7 @@ async fn login_with_browser_registers_a_client_and_keeps_tokens_and_client() {
     let out = run.stdout();
     assert_eq!(out["server"], "web");
     assert_eq!(out["issuer"], auth.issuer());
-    assert_eq!(out["place"], "file");
+    assert_eq!(out["credentialStore"], "file");
     let record = auth.record();
     assert_eq!(
         (record.register_calls, record.code_grants),
@@ -1648,7 +1651,10 @@ async fn status_shows_the_login_with_no_token_and_logout_removes_the_tokens() {
     );
     let run = home.run(&["auth", "logout", "web"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
-    assert_eq!(run.stdout(), json!({"server": "web", "places": ["file"]}));
+    assert_eq!(
+        run.stdout(),
+        json!({"server": "web", "credentialStores": ["file"]})
+    );
     let row = &home.run(&["auth", "status", "web"]).stdout()["servers"][0];
     assert_eq!(row["loggedIn"], false);
     let file = std::fs::read_to_string(home.root.join("state/ncp/credentials.json")).unwrap();
@@ -1991,7 +1997,7 @@ async fn login_to_the_native_store_and_refresh_write_back_there() {
     let home = oauth_home("native-login", &fixture.url).with_fake_keychain();
     let run = home.run(&["auth", "login", "web"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
-    assert_eq!(run.stdout()["place"], "native");
+    assert_eq!(run.stdout()["credentialStore"], "native");
     let items = || std::fs::read_to_string(home.root.join("keychain/items.json")).unwrap();
     let before = items();
     assert!(before.contains("oauth/web/tokens") && before.contains("oauth/web/client"));

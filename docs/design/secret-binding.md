@@ -263,7 +263,7 @@ This decision replaces one part of the credential review of 2026-10-09:
    The result names the file that `ncp` read, and lists each removed
    destination and place. `server remove` changes no secret.
 8. **`secret list`** reads only the accounts (B38). It shows one row for
-   each name and store key: `{"name", "destination", "places", "used",
+   each name and store key: `{"name", "destination", "credentialStores", "used",
    "servers"}`. `destination` is `null` for stdio. `used` means that an
    entry names `${NAME}` with that store key.
 9. **Messages.** Each message shows a URL as the file writes it, never the

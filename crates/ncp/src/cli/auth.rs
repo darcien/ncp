@@ -335,7 +335,7 @@ async fn login(
         },
         || {
             json!({"server": name, "issuer": issuer, "scopes": granted,
-                "place": secrets::place_name(place)})
+                "credentialStore": secrets::place_name(place)})
         },
     )?;
     Ok(server.name.clone())
@@ -1273,7 +1273,7 @@ async fn logout(context: &Context<'_>, word: &str) -> Result<(), Failure> {
                 )
             }
         },
-        || json!({"server": name, "places": places}),
+        || json!({"server": name, "credentialStores": places}),
     )
 }
 
