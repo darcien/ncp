@@ -418,7 +418,7 @@ fn set_target<'a>(
     loaded: &'a session::Loaded,
     name: &SecretName,
     only: Option<&str>,
-    both_fix: Option<String>,
+    several_hint: Option<String>,
 ) -> Result<Target<'a>, Failure> {
     let servers: Vec<&Server> = match only {
         Some(word) => vec![session::select(loaded, word, context.ui)?],
@@ -443,7 +443,7 @@ fn set_target<'a>(
                     "server {word} names ${{{name}}} for more than one destination: {}; use one name for each field",
                     list.join("; ")
                 ));
-                return match both_fix {
+                return match several_hint {
                     Some(fix) => failure.hint(fix),
                     None => failure,
                 };
@@ -929,6 +929,17 @@ enum Removal {
     Listed(Listed),
 }
 
+/// The choice of `chosen`, with the destinations that the configuration
+/// uses for `--unused`.
+enum Pick {
+    One,
+    All,
+    Unused {
+        used: Vec<Destination>,
+        config_file: std::path::PathBuf,
+    },
+}
+
 enum Listed {
     /// The items that no entry of the loaded file uses.
     Unused,
@@ -939,12 +950,13 @@ enum Listed {
 
 /// What `secret delete` removes: the destinations, the configuration file
 /// that `ncp` read to choose them, and the native store for the removal.
-/// `native` is `None` when the store could not list its items: it gave its
-/// warning, and `ncp` does not wait for it again.
+/// `unlisted` has the places that could not list their items: they gave
+/// their warning, and `ncp` does not ask them again.
 struct Choice {
     destinations: Vec<Destination>,
     config_file: Option<std::path::PathBuf>,
-    native: Option<Opened>,
+    native: Opened,
+    unlisted: Vec<CredentialPlace>,
 }
 
 /// The destinations to remove. With no flag, a place that cannot answer
@@ -962,22 +974,37 @@ async fn chosen(
             // The configuration first: a usage error must not wait for the
             // native store.
             let loaded = session::load_config(&context.paths.config_file, context.env)?;
-            let both = format!("ncp secret delete {name} --all");
-            let target = set_target(context, &loaded, name, Some(&word), Some(both))?;
+            let several_hint = format!("ncp secret delete {name} --all");
+            let target = set_target(context, &loaded, name, Some(&word), Some(several_hint))?;
             return Ok(Choice {
                 destinations: vec![target.destination],
                 config_file: Some(loaded.path),
-                native: Some(native(context).await),
+                native: native(context).await,
+                unlisted: Vec::new(),
             });
         }
         Removal::Listed(listed) => listed,
     };
-    let opened = native(context).await;
-    let Stored { items, failed } = stored_items(context, &opened).await?;
-    let native = (!failed
-        .iter()
-        .any(|(place, _)| *place == CredentialPlace::Native))
-    .then_some(opened);
+    // The configuration first: its usage error must not wait for the store.
+    let pick = match listed {
+        Listed::One => Pick::One,
+        Listed::All => Pick::All,
+        Listed::Unused => {
+            let loaded = strict_config(context)?;
+            let used =
+                binding::by_destination(binding::uses(loaded.config.servers(), name.as_str()))
+                    .into_iter()
+                    .map(|target| target.destination)
+                    .collect();
+            Pick::Unused {
+                used,
+                config_file: loaded.path,
+            }
+        }
+    };
+    let native = native(context).await;
+    let Stored { items, failed } = stored_items(context, &native).await?;
+    let unlisted: Vec<CredentialPlace> = failed.iter().map(|(place, _)| *place).collect();
     let stored: Vec<Destination> = items
         .into_keys()
         .filter(|(item, _)| item == name)
@@ -987,9 +1014,10 @@ async fn chosen(
         destinations,
         config_file,
         native,
+        unlisted,
     };
-    match (listed, failed.first()) {
-        (Listed::One, Some((place, error))) => {
+    match (pick, failed.first()) {
+        (Pick::One, Some((place, error))) => {
             let failure = store_failure(error);
             Err(Failure {
                 message: format!(
@@ -1001,10 +1029,10 @@ async fn chosen(
             }
             .hint(format!("ncp secret delete {name} --server <SERVER>")))
         }
-        (Listed::All | Listed::Unused, Some((_, error))) if stored.is_empty() => {
+        (Pick::All | Pick::Unused { .. }, Some((_, error))) if stored.is_empty() => {
             Err(store_failure(error))
         }
-        (Listed::One, None) => match stored.as_slice() {
+        (Pick::One, None) => match stored.as_slice() {
             [] => Err(not_stored()),
             [_] => Ok(choice(stored, None)),
             _ => {
@@ -1016,30 +1044,28 @@ async fn chosen(
                 .hint(format!("ncp secret delete {name} --server <SERVER>")))
             }
         },
-        (Listed::All, _) if stored.is_empty() => Err(not_stored()),
-        (Listed::All, _) => {
+        (Pick::All, _) if stored.is_empty() => Err(not_stored()),
+        (Pick::All, _) => {
             warn_unlisted(context, &failed);
             Ok(choice(stored, None))
         }
-        (Listed::Unused, _) => {
-            let loaded = strict_config(context)?;
-            let used: Vec<Destination> =
-                binding::by_destination(binding::uses(loaded.config.servers(), name.as_str()))
-                    .into_iter()
-                    .map(|target| target.destination)
-                    .collect();
+        (Pick::Unused { used, config_file }, first) => {
             let unused: Vec<Destination> = stored
                 .into_iter()
                 .filter(|destination| !used.contains(destination))
                 .collect();
-            if unused.is_empty() {
-                return Err(
+            match (unused.is_empty(), first) {
+                // A place that cannot list can hold an unused item.
+                (true, Some((_, error))) => Err(store_failure(error)),
+                (true, None) => Err(
                     Failure::usage(format!("no stored item of {name} is unused"))
                         .hint("ncp secret list"),
-                );
+                ),
+                (false, _) => {
+                    warn_unlisted(context, &failed);
+                    Ok(choice(unused, Some(config_file)))
+                }
             }
-            warn_unlisted(context, &failed);
-            Ok(choice(unused, Some(loaded.path)))
         }
     }
 }
@@ -1063,13 +1089,15 @@ async fn delete(context: &Context<'_>, name: &str, removal: Removal) -> Result<(
         destinations,
         config_file,
         native,
+        unlisted,
     } = chosen(context, &name, removal).await?;
-    // A place that is down gives one warning, and the next destinations
-    // skip it.
+    // A place that could not list, or that is down, gives one warning, and
+    // the delete does not ask it again.
     let mut stores = [
-        (CredentialPlace::Native, native),
+        (CredentialPlace::Native, Some(native)),
         (CredentialPlace::File, Some(Ok(file(context)))),
-    ];
+    ]
+    .map(|(place, store)| (place, store.filter(|_| !unlisted.contains(&place))));
     let mut removed: Vec<(Destination, Vec<CredentialPlace>)> = Vec::new();
     let mut failed = None;
     for destination in destinations {

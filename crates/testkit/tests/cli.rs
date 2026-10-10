@@ -670,6 +670,9 @@ fn secret_delete_with_a_locked_native_store_needs_a_flag() {
         run.describe()
     );
     assert_eq!(run.error()["hint"], "ncp secret delete A --server <SERVER>");
+    // Each item in the file is in use, and the native store cannot list.
+    let run = home.run(&["secret", "delete", "A", "--unused"]);
+    assert_eq!(run.code(), 4, "{}", run.describe());
     // --all removes what it can reach, with one warning for the native store.
     let run = home.run(&["secret", "delete", "A", "--all"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
