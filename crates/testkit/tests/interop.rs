@@ -10,7 +10,12 @@
 
 mod common;
 
-use std::path::{Path, PathBuf};
+use std::{
+    net::{Ipv4Addr, TcpListener, TcpStream},
+    path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
+    time::{Duration, Instant},
+};
 
 use common::{Home, Run};
 use serde_json::{Value, json};
@@ -42,21 +47,77 @@ fn server_entry() -> PathBuf {
     package.join(bin)
 }
 
-/// The entry of the server in the configuration.
+/// The entry of the server in the configuration, and the process that
+/// serves HTTP when there is one.
 struct Server {
+    /// The transport, so that each test of each transport has its own home.
+    transport: &'static str,
     entry: Value,
+    process: Option<Child>,
+}
+
+impl Drop for Server {
+    /// Stops the HTTP server also when the test fails.
+    fn drop(&mut self) {
+        if let Some(process) = self.process.as_mut() {
+            let _ = process.kill();
+            let _ = process.wait();
+        }
+    }
 }
 
 fn stdio_server() -> Server {
     let entry = server_entry().display().to_string();
     Server {
+        transport: "stdio",
         entry: json!({"command": node(), "args": [entry, "stdio"]}),
+        process: None,
+    }
+}
+
+/// Starts the server over Streamable HTTP on a free port. The server
+/// has no host option, so it listens on all interfaces. `ncp` connects
+/// over loopback, the only host where `ncp` accepts plain HTTP.
+fn http_server() -> Server {
+    let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let process = Command::new(node())
+        .arg(server_entry())
+        .arg("streamableHttp")
+        .env_clear()
+        .env("PORT", port.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut server = Server {
+        transport: "http",
+        entry: json!({"type": "http", "url": format!("http://127.0.0.1:{port}/mcp")}),
+        process: Some(process),
+    };
+    wait_for_port(&mut server, port);
+    server
+}
+
+fn wait_for_port(server: &mut Server, port: u16) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let process = server.process.as_mut().unwrap();
+    while TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_err() {
+        if let Some(status) = process.try_wait().unwrap() {
+            panic!("the HTTP server stopped with {status}");
+        }
+        assert!(Instant::now() < deadline, "the HTTP server did not start");
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
 /// A home with the server under the name `every`.
 fn home_with(test: &str, server: &Server) -> Home {
-    let home = Home::new(&format!("interop-{test}"));
+    let home = Home::new(&format!("interop-{}-{test}", server.transport));
     home.configure(&json!({"every": server.entry}));
     home
 }
@@ -260,4 +321,40 @@ fn stdio_reads_text_and_blob_resources_and_gets_a_prompt() {
 #[ignore = "needs Node and the pinned server: mise run interop"]
 fn stdio_shows_progress_of_a_long_operation() {
     shows_progress_of_a_long_operation(&stdio_server());
+}
+
+#[test]
+#[ignore = "needs Node and the pinned server: mise run interop"]
+fn http_falls_back_to_the_legacy_version_and_caches_it() {
+    falls_back_to_the_legacy_version_and_caches_it(&http_server());
+}
+
+#[test]
+#[ignore = "needs Node and the pinned server: mise run interop"]
+fn http_lists_tools_resources_and_prompts() {
+    lists_tools_resources_and_prompts(&http_server());
+}
+
+#[test]
+#[ignore = "needs Node and the pinned server: mise run interop"]
+fn http_declares_no_client_capability_without_a_tty() {
+    declares_no_client_capability_without_a_tty(&http_server());
+}
+
+#[test]
+#[ignore = "needs Node and the pinned server: mise run interop"]
+fn http_calls_tools_with_typed_arguments() {
+    calls_tools_with_typed_arguments(&http_server());
+}
+
+#[test]
+#[ignore = "needs Node and the pinned server: mise run interop"]
+fn http_gives_structured_image_and_resource_link_results() {
+    gives_structured_image_and_resource_link_results(&http_server());
+}
+
+#[test]
+#[ignore = "needs Node and the pinned server: mise run interop"]
+fn http_reads_text_and_blob_resources_and_gets_a_prompt() {
+    reads_text_and_blob_resources_and_gets_a_prompt(&http_server());
 }
