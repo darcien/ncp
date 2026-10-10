@@ -1,4 +1,4 @@
-//! Value types for a server: its name and its URL.
+//! Value types for a server: its name, its URL and the origin of a URL.
 
 use std::{fmt, net::IpAddr};
 
@@ -155,6 +155,88 @@ pub fn is_secure_url(url: &Url) -> bool {
     }
 }
 
+/// The origin of a URL: its scheme, host and port (RFC 6454), in the ASCII
+/// serialization of the WHATWG URL Standard. A stored value goes only to the
+/// origin in its key, so each URL of one origin must give the same text: a
+/// lower-case host, `xn--` labels, IPv6 in brackets and no default port.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Origin(String);
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum OriginError {
+    #[error("the scheme, host and port of {0:?} must be literal text, with no ${{NAME}}")]
+    NotLiteral(String),
+    #[error("{0:?} is not an https or http URL")]
+    NotHttp(String),
+}
+
+impl Origin {
+    /// The origin of an `https` or `http` URL. Other schemes have no
+    /// destination that `ncp` sends a stored value to.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for another scheme.
+    pub fn of(url: &Url) -> Result<Self, OriginError> {
+        match (url.scheme(), url.origin()) {
+            ("https" | "http", origin @ url::Origin::Tuple(..)) => {
+                Ok(Self(origin.ascii_serialization()))
+            }
+            _ => Err(OriginError::NotHttp(url.to_string())),
+        }
+    }
+
+    /// The origin of a URL as the file writes it, before `${NAME}`
+    /// expansion. The text up to the first `/`, `?` or `#` after `://` must
+    /// have no `${`, because a value from the environment could change the
+    /// host. The origin must also be the origin of the expanded URL, so the
+    /// key and the request can never disagree.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the scheme, host or port is not literal text.
+    pub fn of_written(written: &str, expanded: &Url) -> Result<Self, OriginError> {
+        let not_literal = || OriginError::NotLiteral(written.to_string());
+        let start = written.find("://").ok_or_else(not_literal)? + "://".len();
+        let end = written[start..]
+            .find(['/', '?', '#'])
+            .map_or(written.len(), |offset| start + offset);
+        let head = &written[..end];
+        if head.contains("${") {
+            return Err(not_literal());
+        }
+        let origin = Url::parse(head)
+            .map_err(|_| not_literal())
+            .and_then(|url| Self::of(&url))?;
+        if Self::of(expanded)? == origin {
+            Ok(origin)
+        } else {
+            Err(not_literal())
+        }
+    }
+
+    /// The origin in the account of a stored item. Only the normal form is
+    /// an origin, so that one origin cannot have two items.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        Url::parse(text)
+            .ok()
+            .and_then(|url| Self::of(&url).ok())
+            .filter(|origin| origin.0 == text)
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for Origin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,5 +342,88 @@ mod tests {
         let name: ServerName = serde_json::from_str("\"abc\"").unwrap();
         assert_eq!(serde_json::to_string(&name).unwrap(), "\"abc\"");
         assert!(serde_json::from_str::<ServerName>("\"a.b\"").is_err());
+    }
+
+    fn origin(text: &str) -> Result<Origin, OriginError> {
+        Origin::of_written(text, &Url::parse(text).unwrap())
+    }
+
+    #[test]
+    fn origin_has_one_normal_form_for_each_scheme_host_and_port() {
+        for (text, expected) in [
+            ("https://MCP.Example.COM/mcp", "https://mcp.example.com"),
+            ("https://h:443/mcp", "https://h"),
+            ("https://h:8443/mcp", "https://h:8443"),
+            ("http://localhost:80/", "http://localhost"),
+            ("http://127.0.0.1:9000/x", "http://127.0.0.1:9000"),
+            ("https://[0:0::1]/mcp", "https://[::1]"),
+            (
+                "https://bücher.example/mcp",
+                "https://xn--bcher-kva.example",
+            ),
+            ("https://h./mcp", "https://h."),
+            ("https://h?q=1", "https://h"),
+            ("https://h#f", "https://h"),
+        ] {
+            assert_eq!(origin(text).unwrap().as_str(), expected, "{text}");
+            assert_eq!(Origin::parse(expected).unwrap().as_str(), expected);
+        }
+    }
+
+    #[test]
+    fn origin_needs_literal_scheme_host_and_port() {
+        let expanded = Url::parse("https://h:8443/mcp").unwrap();
+        for written in [
+            "https://h${SFX}/mcp",
+            "https://h:${PORT}/mcp",
+            "${SCHEME}://h/mcp",
+            "${URL}",
+            "https://u${X}@h/mcp",
+        ] {
+            assert!(
+                matches!(
+                    Origin::of_written(written, &expanded),
+                    Err(OriginError::NotLiteral(_))
+                ),
+                "{written}"
+            );
+        }
+        let path = Origin::of_written("https://h:8443/${PATH}", &expanded).unwrap();
+        assert_eq!(path.as_str(), "https://h:8443");
+    }
+
+    #[test]
+    fn literal_origin_is_the_origin_of_the_expanded_url() {
+        for (written, value) in [
+            ("https://h/${P}", "@evil.example/x"),
+            ("https://h/${P}", "/../../x"),
+            ("https://h?${P}", "a#b"),
+            ("https://h#${P}", "x"),
+            ("https://h/a${P}", "\\\\evil.example"),
+        ] {
+            let env = crate::expand::Env::from([("P".to_string(), value.to_string())]);
+            let expanded = Url::parse(&crate::expand::expand(written, &env).unwrap()).unwrap();
+            let literal = Origin::of_written(written, &expanded).unwrap();
+            assert_eq!(literal, Origin::of(&expanded).unwrap(), "{written} {value}");
+        }
+        // A text that the URL parser reads with another host is refused.
+        let other = Url::parse("https://other/").unwrap();
+        assert!(Origin::of_written("https://h/", &other).is_err());
+    }
+
+    #[test]
+    fn origin_of_an_account_must_be_in_normal_form() {
+        for text in [
+            "HTTPS://H",
+            "https://H",
+            "https://h:443",
+            "https://h/",
+            "https://h/mcp",
+            "file:///x",
+            "https",
+            "",
+        ] {
+            assert_eq!(Origin::parse(text), None, "{text}");
+        }
     }
 }
