@@ -14,6 +14,7 @@ use tokio::io::AsyncReadExt;
 
 use super::{
     args::{CredentialPlace, SecretCommand},
+    ask,
     outcome::{Exit, Failure},
     render,
     session::{self, Context},
@@ -370,34 +371,61 @@ async fn warn_about_copies(
     context.ui.hint(None, &format!("ncp secret delete {name}"));
 }
 
-/// Reads the value from stdin. On a TTY the input is not shown. One new
+/// Why `secret set` got no value.
+enum Unread {
+    Interrupted,
+    TimedOut,
+    Failed(std::io::Error),
+}
+
+/// Reads the value from stdin. When a person can answer (stdin and stderr
+/// are a TTY), the input is not shown. A TTY on stdin with no TTY on
+/// stderr is an error: the question would not show, and the terminal
+/// would echo the value. Each read has the limit of `--timeout`. One new
 /// line at the end is not part of the value, because `echo` and a pasted
 /// line add it.
 async fn read_value(context: &Context<'_>, name: &str) -> Result<Secret, Failure> {
-    let failure = |error: std::io::Error| {
-        Failure::usage(format!(
-            "cannot read the value of {name} from stdin: {error}"
+    let text = if ask::interactive() {
+        read_hidden_line(context, name).await
+    } else if std::io::stdin().is_terminal() {
+        return Err(Failure::usage(format!(
+            "cannot ask for the value of {name}: stderr is not a terminal"
         ))
-    };
-    let text = if std::io::stdin().is_terminal() {
-        read_hidden_line(context, name)
-            .await
-            .map_err(|error| error.map_or_else(session::interrupted, failure))?
+        .hint(format!(
+            "give the value on stdin: ncp secret set {name} < FILE"
+        )));
     } else {
-        let mut text = String::new();
-        let mut stdin = tokio::io::stdin();
-        tokio::select! {
-            read = stdin.read_to_string(&mut text) => read.map_err(failure)?,
-            () = context.cancel.cancelled() => return Err(session::interrupted()),
-        };
-        text
+        read_piped(context).await
     };
+    let text = text.map_err(|unread| match unread {
+        Unread::Interrupted => session::interrupted(),
+        Unread::TimedOut => Failure::protocol(format!(
+            "no value of {name} came in {} s",
+            context.request_limit.as_secs()
+        ))
+        .hint("give a longer limit with --timeout <SECONDS>"),
+        Unread::Failed(error) => Failure::usage(format!(
+            "cannot read the value of {name} from stdin: {error}"
+        )),
+    })?;
     let line = text.strip_suffix('\n').unwrap_or(&text);
     let line = line.strip_suffix('\r').unwrap_or(line);
     if line.is_empty() {
         return Err(Failure::usage(format!("the value of {name} is empty")));
     }
     Ok(Secret::new(line.to_string()))
+}
+
+/// All of stdin, for a value that a pipe or a file gives.
+async fn read_piped(context: &Context<'_>) -> Result<String, Unread> {
+    let mut text = String::new();
+    let mut stdin = tokio::io::stdin();
+    tokio::select! {
+        read = stdin.read_to_string(&mut text) => read.map_err(Unread::Failed)?,
+        () = tokio::time::sleep(context.request_limit) => return Err(Unread::TimedOut),
+        () = context.cancel.cancelled() => return Err(Unread::Interrupted),
+    };
+    Ok(text)
 }
 
 /// The program that changes the settings of the terminal. Both macOS and
@@ -421,37 +449,35 @@ fn stty(args: &[&str]) -> std::io::Result<String> {
 }
 
 /// One line from the terminal, with the echo off. The terminal settings
-/// come back after the line, after an error, and after Ctrl-C, so the
-/// shell of the user works again. `None` means Ctrl-C.
+/// come back after the line, after an error, after the time limit and
+/// after Ctrl-C, so the shell of the user works again.
 ///
 /// The terminal is in non-canonical mode: in canonical mode macOS keeps
 /// only 1024 bytes of a line, and a longer token would never end. Thus
 /// `ncp` does the backspace itself.
-async fn read_hidden_line(
-    context: &Context<'_>,
-    name: &str,
-) -> Result<String, Option<std::io::Error>> {
-    let saved = stty(&["-g"]).map_err(Some)?;
+async fn read_hidden_line(context: &Context<'_>, name: &str) -> Result<String, Unread> {
+    let saved = stty(&["-g"]).map_err(Unread::Failed)?;
     eprint!("Value of {name}: ");
     // Fail closed: with no echo control, the value would show.
-    stty(&["-echo", "-icanon", "min", "1", "time", "0"]).map_err(Some)?;
+    stty(&["-echo", "-icanon", "min", "1", "time", "0"]).map_err(Unread::Failed)?;
     let (sender, receiver) = tokio::sync::oneshot::channel();
     // A thread of its own, not of the runtime, so that the runtime does not
-    // wait for it at the exit after Ctrl-C.
+    // wait for it at the exit after Ctrl-C or the time limit.
     std::thread::spawn(move || {
         let _ = sender.send(read_terminal_line(&mut std::io::stdin().lock()));
     });
     let read = tokio::select! {
         read = receiver => read
-            .map_err(|_| Some(std::io::Error::other("the reader stopped")))
-            .and_then(|line| line.map_err(Some)),
-        () = context.cancel.cancelled() => Err(None),
+            .map_err(|_| Unread::Failed(std::io::Error::other("the reader stopped")))
+            .and_then(|line| line.map_err(Unread::Failed)),
+        () = tokio::time::sleep(context.request_limit) => Err(Unread::TimedOut),
+        () = context.cancel.cancelled() => Err(Unread::Interrupted),
     };
     let restored = stty(&[saved.as_str()]);
     // The new line that the echo did not show.
     eprintln!();
     let line = read?;
-    restored.map_err(Some)?;
+    restored.map_err(Unread::Failed)?;
     Ok(line)
 }
 

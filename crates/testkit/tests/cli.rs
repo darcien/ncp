@@ -419,6 +419,33 @@ fn secret_set_rejects_a_bad_name_and_an_empty_value() {
     assert_eq!(run.code(), 2, "{}", run.describe());
 }
 
+#[test]
+fn secret_set_stops_when_a_pipe_gives_no_value_in_the_time_limit() {
+    let home = Home::new("secret-wait");
+    let mut child = Command::new(NCP)
+        .args([
+            "--timeout",
+            "1",
+            "secret",
+            "set",
+            "A",
+            "--credential-store",
+            "file",
+        ])
+        .env_clear()
+        .envs(home.env.iter().cloned())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // The pipe stays open and gives nothing, as a writer that hangs.
+    let _writer = child.stdin.take();
+    let run = Run(child.wait_with_output().unwrap());
+    assert_eq!(run.code(), 3, "{}", run.describe());
+    assert_eq!(run.error()["message"], "no value of A came in 1 s");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn stored_bearer_token_goes_in_a_static_header() {
     let fixture = serve_http_with(Mode::Modern, Some("t0ken")).await.unwrap();
