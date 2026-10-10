@@ -9,9 +9,12 @@
 use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
+    process::{Command, Stdio},
 };
 
+mod common;
+
+use common::{Home, NCP, Run};
 use ncp_testkit::{
     Mode,
     auth_server::{AuthSettings, Registration},
@@ -19,134 +22,7 @@ use ncp_testkit::{
 };
 use serde_json::{Value, json};
 
-const NCP: &str = env!("CARGO_BIN_EXE_ncp-cli");
 const FIXTURE: &str = env!("CARGO_BIN_EXE_ncp-fixture");
-const FAKE_SECURITY: &str = env!("CARGO_BIN_EXE_fake-security");
-
-/// A temporary home for one test.
-struct Home {
-    root: PathBuf,
-    env: Vec<(String, String)>,
-}
-
-impl Home {
-    fn new(test: &str) -> Self {
-        let root = std::env::temp_dir().join(format!("ncp-cli-{}-{test}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
-        let env = vec![
-            ("HOME".into(), root.display().to_string()),
-            (
-                "XDG_CONFIG_HOME".into(),
-                root.join("config").display().to_string(),
-            ),
-            (
-                "XDG_CACHE_HOME".into(),
-                root.join("cache").display().to_string(),
-            ),
-            (
-                "XDG_STATE_HOME".into(),
-                root.join("state").display().to_string(),
-            ),
-        ];
-        Self { root, env }
-    }
-
-    fn config_path(&self) -> PathBuf {
-        self.root.join("config/ncp/mcp.json")
-    }
-
-    fn configure(&self, servers: &Value) -> &Self {
-        let path = self.config_path();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, json!({ "mcpServers": servers }).to_string()).unwrap();
-        self
-    }
-
-    /// A fake `security` program as the native store, with its files in
-    /// `keychain/`.
-    fn with_fake_keychain(self) -> Self {
-        let dir = self.root.join("keychain");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::os::unix::fs::symlink(FAKE_SECURITY, dir.join("security")).unwrap();
-        let program = dir.join("security").display().to_string();
-        self.set("NCP_TEST_SECURITY_PROGRAM", &program)
-    }
-
-    fn set(mut self, name: &str, value: &str) -> Self {
-        self.env.push((name.into(), value.into()));
-        self
-    }
-
-    fn run(&self, args: &[&str]) -> Run {
-        self.run_with_stdin(args, "")
-    }
-
-    fn run_with_stdin(&self, args: &[&str], stdin: &str) -> Run {
-        use std::io::Write as _;
-        let mut child = Command::new(NCP)
-            .args(args)
-            .env_clear()
-            .envs(self.env.iter().cloned())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        // A command can exit before it reads stdin, for example after a
-        // usage error. The write then fails with a broken pipe, which is
-        // not a test failure.
-        let _ = child.stdin.take().unwrap().write_all(stdin.as_bytes());
-        Run(child.wait_with_output().unwrap())
-    }
-}
-
-impl Drop for Home {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
-    }
-}
-
-struct Run(Output);
-
-impl Run {
-    fn code(&self) -> i32 {
-        self.0.status.code().unwrap()
-    }
-
-    fn stdout(&self) -> Value {
-        serde_json::from_slice(&self.0.stdout)
-            .unwrap_or_else(|_| panic!("stdout is not JSON: {}", self.describe()))
-    }
-
-    fn stdout_is_empty(&self) -> bool {
-        self.0.stdout.is_empty()
-    }
-
-    /// The JSON Lines on stderr.
-    fn stderr(&self) -> Vec<Value> {
-        String::from_utf8_lossy(&self.0.stderr)
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap_or_else(|_| panic!("not JSON: {line}")))
-            .collect()
-    }
-
-    fn error(&self) -> Value {
-        self.stderr()
-            .into_iter()
-            .find_map(|line| line.get("error").cloned())
-            .unwrap_or_else(|| panic!("no error: {}", self.describe()))
-    }
-
-    fn describe(&self) -> String {
-        format!(
-            "exit {:?}\nstdout: {}\nstderr: {}",
-            self.0.status.code(),
-            String::from_utf8_lossy(&self.0.stdout),
-            String::from_utf8_lossy(&self.0.stderr)
-        )
-    }
-}
 
 fn stdio(mode: &str) -> Value {
     json!({"command": FIXTURE, "args": [mode]})
