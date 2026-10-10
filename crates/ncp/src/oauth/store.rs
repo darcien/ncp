@@ -176,6 +176,35 @@ pub fn file_failure(text: &str) -> Option<&str> {
     text.strip_prefix(FILE_FAILED)
 }
 
+/// The mark of tokens of another server in the text of an rmcp error. The
+/// caller gives the stop of design B70 for it, not "the server needs a
+/// login".
+const BINDING_FAILED: &str = "binding: ";
+
+fn binding_error(mismatch: &items::BindingMismatch) -> AuthError {
+    let kind = match mismatch {
+        items::BindingMismatch::Missing => "missing".to_string(),
+        items::BindingMismatch::Resource => "resource".to_string(),
+        items::BindingMismatch::Issuer { current } => format!("issuer {current}"),
+    };
+    AuthError::CredentialStoreError(format!("{BINDING_FAILED}{kind}"))
+}
+
+/// The binding mismatch in the text of an rmcp error, or `None` for
+/// another failure of the store.
+#[must_use]
+pub fn binding_mismatch(text: &str) -> Option<items::BindingMismatch> {
+    match text.strip_prefix(BINDING_FAILED)? {
+        "missing" => Some(items::BindingMismatch::Missing),
+        "resource" => Some(items::BindingMismatch::Resource),
+        kind => kind
+            .strip_prefix("issuer ")
+            .map(|current| items::BindingMismatch::Issuer {
+                current: current.to_string(),
+            }),
+    }
+}
+
 /// The lock of the tokens of one server: a refresh, a login and a logout
 /// hold it, so that one of them cannot undo another. It blocks; an async
 /// caller runs it on a blocking thread.
@@ -206,10 +235,9 @@ impl RmcpStore for TokenStore {
             .map_err(|error| AuthError::CredentialStoreError(error.to_string()))?;
         // A read after the refresh lock can find tokens that another
         // process saved for another server: they must not be used here.
-        if let (Some(expected), Some(item)) = (&self.binding, &item)
-            && item.binding.as_ref() != Some(expected)
-        {
-            return Err(AuthError::AuthorizationRequired);
+        if let (Some(expected), Some(item)) = (&self.binding, &item) {
+            items::check_binding(item.binding.as_ref(), expected)
+                .map_err(|mismatch| binding_error(&mismatch))?;
         }
         let (tokens, required_scopes) = match item {
             Some(item) => (Some(item.tokens), item.required_scopes),
@@ -408,12 +436,34 @@ mod tests {
             .unwrap();
         let adapter =
             TokenStore::new(server(), backing.clone()).with_binding(binding("https://a/mcp"));
-        assert!(matches!(
-            adapter.load().await,
-            Err(AuthError::AuthorizationRequired)
-        ));
+        let Err(AuthError::CredentialStoreError(text)) = adapter.load().await else {
+            panic!("tokens of another binding must not load");
+        };
+        assert_eq!(
+            binding_mismatch(&text),
+            Some(items::BindingMismatch::Resource)
+        );
+        assert_eq!(file_failure(&text), None);
         let same = TokenStore::new(server(), backing).with_binding(binding("https://b/mcp"));
         assert!(same.load().await.unwrap().is_some());
+    }
+
+    #[test]
+    fn each_binding_mismatch_reads_back_from_its_error_text() {
+        let mismatches = [
+            items::BindingMismatch::Missing,
+            items::BindingMismatch::Resource,
+            items::BindingMismatch::Issuer {
+                current: "https://as".into(),
+            },
+        ];
+        for mismatch in mismatches {
+            let AuthError::CredentialStoreError(text) = binding_error(&mismatch) else {
+                unreachable!()
+            };
+            assert_eq!(binding_mismatch(&text), Some(mismatch));
+        }
+        assert_eq!(binding_mismatch("keyring is locked"), None);
     }
 
     #[tokio::test]

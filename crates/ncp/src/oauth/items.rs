@@ -32,17 +32,16 @@ pub struct TokenBinding {
     pub issuer: String,
 }
 
-/// Why `ncp` does not send a stored token.
+/// Why `ncp` does not send a stored token. It holds no stored value: a
+/// stored URL or issuer can hold an old `${NAME}` value that `ncp` cannot
+/// hide.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BindingMismatch {
     /// The tokens have no binding, for example from an older `ncp`.
     Missing,
-    Resource {
-        stored: String,
-        current: String,
-    },
+    Resource,
+    /// The tokens are from another issuer than `current`.
     Issuer {
-        stored: String,
         current: String,
     },
 }
@@ -59,14 +58,10 @@ pub fn check_binding(
 ) -> Result<(), BindingMismatch> {
     let stored = stored.ok_or(BindingMismatch::Missing)?;
     if stored.resource != current.resource {
-        return Err(BindingMismatch::Resource {
-            stored: stored.resource.clone(),
-            current: current.resource.clone(),
-        });
+        return Err(BindingMismatch::Resource);
     }
     if stored.issuer != current.issuer {
         return Err(BindingMismatch::Issuer {
-            stored: stored.issuer.clone(),
             current: current.issuer.clone(),
         });
     }
@@ -269,15 +264,11 @@ mod tests {
         assert_eq!(check_binding(None, &current), Err(BindingMismatch::Missing));
         assert_eq!(
             check_binding(Some(&binding("https://b/mcp", "https://as")), &current),
-            Err(BindingMismatch::Resource {
-                stored: "https://b/mcp".into(),
-                current: "https://a/mcp".into()
-            })
+            Err(BindingMismatch::Resource)
         );
         assert_eq!(
             check_binding(Some(&binding("https://a/mcp", "https://other")), &current),
             Err(BindingMismatch::Issuer {
-                stored: "https://other".into(),
                 current: "https://as".into()
             })
         );

@@ -671,10 +671,14 @@ pub fn interrupted() -> Failure {
 }
 
 /// The store of the OAuth tokens failed, for example at the save of a
-/// refresh. A file that fails is a local error. A native store that fails
+/// refresh, or a read after the refresh lock found tokens of another
+/// server. A file that fails is a local error. A native store that fails
 /// (for example a locked keyring, design B51) is an authorization error:
 /// the file can keep the tokens.
 fn token_store_failure(server: &Server, text: &str) -> Failure {
+    if let Some(mismatch) = crate::oauth::store::binding_mismatch(text) {
+        return super::auth::binding_failure(server, &mismatch);
+    }
     if let Some(text) = crate::oauth::store::file_failure(text) {
         return Failure::protocol(format!("cannot keep the OAuth tokens: {text}"))
             .server(server.name.as_str());

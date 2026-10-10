@@ -554,16 +554,16 @@ pub(super) async fn stored_login(
 ///
 /// The message names only the current value: a stored URL or issuer can
 /// hold an old `${NAME}` value that `ncp` cannot hide.
-fn binding_failure(server: &Server, mismatch: &items::BindingMismatch) -> Failure {
+pub(super) fn binding_failure(server: &Server, mismatch: &items::BindingMismatch) -> Failure {
     let name = server.name.as_str();
     let reason = match mismatch {
         items::BindingMismatch::Missing => {
             "the tokens do not name the server that they are for".to_string()
         }
-        items::BindingMismatch::Resource { .. } => {
+        items::BindingMismatch::Resource => {
             "the tokens are for another URL than the entry names".to_string()
         }
-        items::BindingMismatch::Issuer { current, .. } => format!(
+        items::BindingMismatch::Issuer { current } => format!(
             "the tokens are from another authorization server than {}",
             session::hide_expanded_url(server, current.clone())
         ),
@@ -1392,13 +1392,7 @@ mod tests {
         )
         .unwrap();
         let server = config.server("web").unwrap();
-        let resource = binding_failure(
-            server,
-            &items::BindingMismatch::Resource {
-                stored: "https://h/old-k3y/mcp".into(),
-                current: "https://h/n3w-k3y/mcp".into(),
-            },
-        );
+        let resource = binding_failure(server, &items::BindingMismatch::Resource);
         assert!(
             resource.message.contains("another URL"),
             "{}",
@@ -1407,7 +1401,6 @@ mod tests {
         let issuer = binding_failure(
             server,
             &items::BindingMismatch::Issuer {
-                stored: "https://as/old-k3y".into(),
                 current: "https://as/n3w-k3y".into(),
             },
         );
