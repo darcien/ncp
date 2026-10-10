@@ -340,6 +340,9 @@ interop tests before the distribution.
 
 ## Milestone 15: interop tests
 
+Status: done on 2026-10-10. All 13 interop tests passed (report
+`docs/research/interop.md`).
+
 Test `ncp` against the official server of a different SDK, with no
 network. Design: `docs/design/interop.md` (accepted on 2026-10-10). Interop
 is optional: it is not in the git hook, and later milestones do not need
