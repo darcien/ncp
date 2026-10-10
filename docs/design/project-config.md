@@ -3,7 +3,7 @@
 Status: proposal, revision 4 (2026-10-11). Not accepted. Build:
 [plan.md](../plan.md) milestone 18 (gate).
 
-Revision 4 records the user decisions A to E. It uses the terms
+Revision 4 records the user decisions A to E and G. It uses the terms
 and the commands of `mise trust`, and keeps a refusal for the project
 root, as mise does
 ([mise-trust-merge.md](../research/mise-trust-merge.md)).
@@ -154,8 +154,9 @@ Accepted risks:
    hold literal secrets.
 
 5. **The question and the trust command.** (Decision D.)
-   - A command that uses the configuration, when the project file is not
-     trusted and not ignored: with a TTY on stdin and stderr, `ncp` shows
+   - A command that starts a server or sends a request (`server show`,
+     `tool`, `resource`, `prompt`, `auth login`), when the project file is
+     not trusted and not ignored: with a TTY on stdin and stderr, `ncp` shows
      the entries and asks "Trust? [y/N]" before it continues. A No writes
      the ignored record. With no TTY, the project file has no effect, and
      `ncp` gives a warning that names the file and the command `ncp
@@ -163,6 +164,10 @@ Accepted risks:
      before it starts a process or sends a request.
    - An ignored file has no effect, and `ncp` does not ask. `-v` names the
      file.
+   - The other commands (`server list`, `secret list`, `auth status`,
+     `ncp trust --show`, shell completion) never ask. They show the state
+     of the file. Completion writes nothing to stderr. mise and Claude Code
+     also ask only when they act.
    - The commands, with the names of `mise trust`, for the project file of
      the current folder:
      - `ncp trust` trusts the file at once, shows its entries, and removes
@@ -226,10 +231,40 @@ Accepted risks:
    shows the entries of a file that is not trusted, with their state, and
    does nothing else for them.
 
+9. **User file and project file.** (Decision G.) Two scopes only: user
+   and project. No "local" scope.
+   - **Read:** the merged view (rule 3).
+   - **Write:** `server add` and `server remove` write the project file.
+     `--global` writes the user file (`mise use -g`). `--config-file`
+     names the file, with no search.
+   - **No project file:** `server add` creates `.mcp.json` (`mise use`):
+     at the git root in a repository, else in the current folder. In the
+     home folder: exit 2, hint `--global` (rule 2). The result names the
+     file. `server remove` creates nothing.
+   - **Trust after a write:** if the old bytes were trusted, or the file
+     is new, `ncp` trusts the new bytes. Else it does not, and gives the
+     hint `ncp trust --show`. Reason: else an add trusts team entries that
+     the user did not see.
+   - **Name in the other file:** `server remove NAME` stops with exit 2,
+     and names the file that has NAME.
+   - **Replaced user entry:** `server add --global NAME` warns when a
+     trusted project entry has NAME (closes the gap of decision B).
+   - **Values:** same rules in both files (requirement S10). A literal in
+     a project file goes into git, as with `claude mcp add -s project`.
+   - **Unused secrets:** `secret list` and `secret delete --unused` use the
+     merged view of the current folder, and say that another project can
+     still use a name.
+   - **Messages:** each message about an entry names its file.
+
 ## 4. Output
 
-- `server list`: each entry gets `"source"`: `"user"`, `"project"` or
-  `"project-untrusted"`. Text output marks the project entries.
+- `server list`: each entry gets `"source"`: `"user"` or `"project"`. A
+  project entry also gets `"trust"`: `"trusted"`, `"untrusted"` or
+  `"ignored"`, with the words of `ncp trust`. The text starts with one
+  line, for example "Project file: /work/app/.mcp.json (untrusted)", and
+  marks the project entries.
+- `server add` and `server remove` name the file that they wrote, and
+  `"file"` in JSON (rule 9).
 - `-v` names the project file that `ncp` read, or the folder where the
   search stopped.
 - `ncp trust` and its options write `{"file", "state", "servers"}`. The
@@ -247,6 +282,10 @@ Accepted risks:
   small rules.
 - [plan.md](../plan.md) milestone 18: items 2, 3 and 4 change as
   decisions A, D and E say.
+- [plan.md](../plan.md) milestone 19 and the proposal for `server add`:
+  the target file, `--global`, the creation of `.mcp.json` and the trust
+  after a write (rule 9). The proposal drops `Cookie` from its rule for
+  credential headers (requirement S10).
 
 ## 6. Tests
 
@@ -271,6 +310,16 @@ Accepted risks:
 - Expansion: before the trust, no `${NAME}` of a project entry reads
   the environment or the store; after it, a `${NAME}` in `headers`
   reaches the fixture server from the environment and from the store.
+- Writes: `server add` writes the project file; `--global` writes the
+  user file; with no project file, `server add` creates `.mcp.json` at
+  the git root, or in the current folder outside a repository; in the
+  home folder it stops with exit 2; the new bytes are trusted when the
+  old bytes were trusted or the file is new, and not trusted else;
+  `server remove` of a name in the other file gives exit 2 with that
+  file; `server add --global` warns when a trusted project entry has the
+  name.
+- Questions: `server list`, `secret list`, `auth status` and completion
+  never ask; completion writes nothing to stderr.
 - Gate: shell completion, did-you-mean, `auth status`, `secret set` and
   `auth login` do not use an entry of a file that is not trusted.
 - Shown entries: escapes of B15 for an argument with ESC and U+202E; no
@@ -293,7 +342,7 @@ Agreed by all three reviewers, no open question:
   tools show only names. Decision D limits them to one line for each
   server, with no values.
 
-Decided: A to F. No decision is open. Each open decision below has the
+Decided: A to G. No decision is open. Each open decision below has the
 question, the options with their prior art, the recommendation with its
 reason, and its cost.
 
@@ -520,7 +569,28 @@ Later, only if the cost hurts in use:
 JSONC stays in milestone 18, as plan item 1 says. The user: the timing
 does not matter, because the work is the same.
 
+### G. User file and project file — decided 2026-10-11
+
+The user chose the model of mise: the merged view for reads; writes to
+the project file by default, and to the user file with `--global`; and
+an explicit command can create the project file (rule 9).
+
+| Point | mise | uv | Claude Code | `ncp` |
+|---|---|---|---|---|
+| Default write target | Local `mise.toml` (`mise use`) | `pyproject.toml` of the project (`uv add`) | `local` scope | Project file |
+| Write to the user scope | `mise use -g` | — | `-s user` | `--global` |
+| No project file | Creates one in the current folder | Error; only `uv init` creates | Creates `.mcp.json` with `-s project` | Creates `.mcp.json` at the git root, or in the current folder |
+| Scopes | System, global, each folder | Project only | Local, project, user | User, project |
+
+Reason: the project file is the file that the team shares, and the
+command must not depend on a hidden third file. The user rejected a
+"local" scope for now, to keep two scopes.
+
 ### Not in this milestone
+
+A "local" scope, as in Claude Code: a private entry for one project path.
+A user can override one project entry with it. Today the user can only
+ignore the whole project file.
 
 OAuth tokens are keyed by the server name. A project entry `foo` in two
 projects shares one token item, so a login in one project replaces the
