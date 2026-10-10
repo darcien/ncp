@@ -235,7 +235,10 @@ Accepted risks:
 9. **Global file and project file.** (Decision G.) Two scopes only:
    global and project. No "local" scope.
    - **Read:** the merged view (rule 3).
-   - **Write:** `server add` and `server remove` write the project file.
+   - **Write:** `server add` writes the project file. `server remove NAME`
+     removes the entry that `server list` shows for NAME, as `mise unuse`
+     edits the first loaded file that has the tool. If NAME is in both
+     files, the global entry then takes effect, and the result says so.
      `--global` writes the global file (`mise use -g`). `--config-file`
      names the file, with no search. `--global` with `--config-file` is a
      usage error: they name two files.
@@ -247,8 +250,6 @@ Accepted risks:
      is new, `ncp` trusts the new bytes. Else it does not, and gives the
      hint `ncp trust --show`. Reason: else an add trusts team entries that
      the user did not see.
-   - **Name in the other file:** `server remove NAME` stops with exit 2,
-     and names the file that has NAME.
    - **Replaced global entry:** `server add --global NAME` warns when a
      trusted project entry has NAME (closes the gap of decision B).
    - **Values:** same rules in both files (requirement S10). A literal in
@@ -312,13 +313,13 @@ Accepted risks:
 - Expansion: before the trust, no `${NAME}` of a project entry reads
   the environment or the store; after it, a `${NAME}` in `headers`
   reaches the fixture server from the environment and from the store.
-- Writes: `server add` writes the project file; `--global` writes the
+- Writes: `server add` writes the project file; `server remove` removes
+  the effective entry, and `--global` the global one; `--global` writes the
   global file; with no project file, `server add` creates `.mcp.json` at
   the git root, or in the current folder outside a repository; in the
   home folder it stops with exit 2; the new bytes are trusted when the
   old bytes were trusted or the file is new, and not trusted else;
-  `server remove` of a name in the other file gives exit 2 with that
-  file; `server add --global` warns when a trusted project entry has the
+`server add --global` warns when a trusted project entry has the
   name.
 - Questions: `server list`, `secret list`, `auth status` and completion
   never ask; completion writes nothing to stderr.
