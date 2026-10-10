@@ -310,12 +310,8 @@ Accepted risks:
 - [cli.md](cli.md): §1 gets `ncp trust`; §4 gets `scope` and `file` in
   `server list`; a new section for the project file; new B-rows for the
   small rules.
-- [plan.md](../plan.md) milestone 18: items 2, 3 and 4 change as
-  decisions A, D and E say.
-- [plan.md](../plan.md) milestone 19 and the proposal for `server add`:
-  the target file, `--global`, the creation of `.mcp.json` and the trust
-  after a write (rule 9). The proposal drops `Cookie` from its rule for
-  credential headers (requirement S10).
+- [plan.md](../plan.md) milestones 18 and 19, and the proposal for
+  `server add`: linked to this design on 2026-10-11.
 
 ## 6. Tests
 

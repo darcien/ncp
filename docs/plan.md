@@ -436,58 +436,35 @@ release. An old `secret/NAME` item is then a value for stdio servers.
 
 ## Milestone 18: project configuration (gate)
 
-Status: proposal `docs/design/project-config.md` revision 3, after
-cited prior art (`docs/research/project-trust-prior-art.md`) and three
-reviews. Decision F is decided (JSONC stays in item 1). It waits for
-decisions A to E of its section 7. Decisions A, D and E change items 2
-to 4 below.
+Status: design `docs/design/project-config.md` revision 4. The user decided
+all of its open points (section 7, decisions A to H) on 2026-10-10 and
+2026-10-11. **Stop and ask** the user to accept the design before the
+build. The design is the source of truth; this list only orders the work.
 
-The user decided on 2026-10-10 that `ncp` reads a project `.mcp.json`
-(S5). The rules below come from the backlog. Write them as a design in
-`docs/design/`, review it (adversarial and grug), then stop and ask the
-user to accept it.
-
-1. The loader reads JSONC: comments and trailing commas, not JSON5 (single
-   quotes, unquoted keys, hex numbers). Evidence: VS Code `mcp.json` and
-   Zed `settings.json` read both; no checked tool reads JSON5
-   (`docs/research/add-command.md` §4). Duplicate keys: the last value
-   wins, as today.
-2. Search: from the current folder upward, for one `.mcp.json`. Stop at
-   the folder that has `.git`, and stop when the owner of the folder
-   changes (git CVE-2022-24765). Read only one file. Find `.git` by a read
-   of the folders, never by a run of git (Zed CVE-2026-44465).
-3. Approval: stored outside the project, in the user state folder (0600,
-   atomic write). The key is the real path of the project root, with no
-   inheritance from a parent. The user approves each entry by the hash of
-   its content, and `ncp` asks again after a change (Cursor
-   CVE-2025-54136).
-4. A file that is not approved starts no command and sends no secret. With
-   no terminal, `ncp` refuses. A flag for one run can override this, and
-   `ncp` does not save it (Gemini CLI).
-5. `ncp` never reads `.env`. The content of a project file cannot change
-   the user configuration, the approvals or the place of the secrets
-   (Codex CVE-2025-61260).
-6. In a project file, `${NAME}` in `headers` and `oauth` does not expand
-   from the environment. `ncp` shows a warning. The store still applies,
-   because milestone 17 binds each stored value to an origin. Reason:
-   pnpm does not expand `${...}` in a project `.npmrc`
-   (`docs/research/pnpm-credentials.md` §1).
+1. Read JSONC in the global file and the project file (design rule 1).
+2. Search and owner check (rule 2), merge (rule 3), trust records (rule 4).
+3. The trust gate in the lookup of a server name, the question, and
+   `ncp trust` with `--show`, `--untrust` and `--ignore` (rule 5).
+4. Expansion (rule 6), what a project file can set (rule 7), and one gate
+   before any action (rule 8).
+5. Output (section 4) and tests (section 6).
+6. Before the code: the changes to the requirements and to `cli.md` in
+   design section 5.
 
 ## Milestone 19: `server add` and `server remove` (gate)
 
-Proposal: `.scratch/backlog/server-add.md` (version 4, two review rounds).
+Proposal: `.scratch/backlog/server-add.md` (version 5, two review rounds).
+Its target files, `--global` and the trust check before a write come from
+`docs/design/project-config.md` rule 9 (milestone 18).
 The user wants one flow: the entry, the secret and the login hint in one
 step.
 
-1. Move the proposal to `docs/design/server-add.md`. Change it for
-   milestone 17:
-   - The two-command form adds the entry first, then runs `secret set`.
-   - `--secret` writes the item of the origin of the new entry. The result
-     gets `destination`.
-   - A stored value is shared only by entries with the same origin. Change
-     rule 13, `usedBy` and section 4.3 to match.
-   - `--env NAME` shows the other stdio entries that use NAME.
-   Review it again, then **stop and ask** the user to accept it.
+1. Move the proposal to `docs/design/server-add.md`. Version 5 already
+   follows milestone 17 (the entry before `secret set`, an item for each
+   origin, the row shape of `secret list` in the result, rule 13) and
+   project-config rule 9. Still open: `--env NAME` shows the other stdio
+   entries that use NAME. Review it again, then **stop and ask** the user
+   to accept it.
 2. The settled decisions of the proposal (section 8): no question without
    `--secret NAME`; literal values accepted with no warning; the exact
    template for a credential header; no contact with the server at add;
