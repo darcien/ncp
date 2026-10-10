@@ -66,10 +66,15 @@ Accepted risks:
 
 ## 3. Rules
 
-1. **JSON.** The loader of milestone 18 reads strict JSON, as today. The
-   JSONC read (comments and trailing commas) comes with milestone 19,
-   which adds `jsonc-parser` for the edit of the file. Thus milestone 18
-   adds no dependency. (Decision F.)
+1. **JSONC.** The loader reads comments (`//` and `/* */`) and trailing
+   commas in the user file and in the project file. It refuses JSON5 forms
+   (single quotes, unquoted keys, hex numbers). With duplicate keys, the
+   last value wins, as today. The parser is `jsonc-parser` with only
+   `allow_comments` and `allow_trailing_commas`; milestone 19 uses the
+   same crate for the edit. Check `deny.toml` before the build. Reason:
+   VS Code and Zed read this form, and no checked tool reads JSON5
+   ([add-command.md](../research/add-command.md) §4). (Decision F:
+   decided.)
 
 2. **Search.** `ncp` searches only when the user gave no `--config-file`.
    The search starts at the real path of the current folder and goes up.
@@ -192,8 +197,8 @@ Accepted risks:
 - [cli.md](cli.md): §1 gets `ncp project approve`; §4 gets `source` in
   `server list`; a new section for the project file; new B-rows for the
   small rules.
-- [plan.md](../plan.md) milestone 18: item 1 (JSONC) moves to milestone
-  19; items 2, 3 and 4 change as decisions A, D and E say.
+- [plan.md](../plan.md) milestone 18: items 2, 3 and 4 change as
+  decisions A, D and E say.
 
 ## 6. Tests
 
@@ -315,18 +320,10 @@ Claude Code CVE-2026-40068 forged this link with a crafted `commondir`.
 Cost: an agent that makes a new worktree for each task gets one question
 for each worktree.
 
-### F. JSONC
+### F. JSONC — decided 2026-10-10
 
-Question: does milestone 18 read comments and trailing commas?
-
-| Option | Reviewer |
-|---|---|
-| **No: move JSONC to milestone 19, which adds `jsonc-parser` for the edit** | Simplicity |
-| Yes, as plan item 1 says | — |
-
-Reason: milestone 18 then adds no dependency. Cost: a project file with
-comments fails to parse until milestone 19, and gives a warning. Changes
-plan item 1.
+JSONC stays in milestone 18, as plan item 1 says. The user: the timing
+does not matter, because the work is the same.
 
 ### Not in this milestone
 

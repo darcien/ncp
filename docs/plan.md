@@ -438,8 +438,9 @@ release. An old `secret/NAME` item is then a value for stdio servers.
 
 Status: proposal `docs/design/project-config.md` revision 3, after
 cited prior art (`docs/research/project-trust-prior-art.md`) and three
-reviews. It waits for the decisions A to F of its section 7. Decisions A,
-D, E and F change items 1 to 4 below.
+reviews. Decision F is decided (JSONC stays in item 1). It waits for
+decisions A to E of its section 7. Decisions A, D and E change items 2
+to 4 below.
 
 The user decided on 2026-10-10 that `ncp` reads a project `.mcp.json`
 (S5). The rules below come from the backlog. Write them as a design in
