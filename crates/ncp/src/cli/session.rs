@@ -671,7 +671,6 @@ fn causes(error: &(dyn std::error::Error + 'static)) -> String {
         .join(": ")
 }
 
-/// The command that logs in to the server.
 /// The hints of a `401` or `403` after a request with a stored header
 /// value. A new value comes first: after the user changes the key at one
 /// origin, the key at another origin can be old (B51).
@@ -688,6 +687,7 @@ fn with_secret_hints(failure: Failure, server: &Server, stored: &[SecretName]) -
     Failure { hints, ..failure }
 }
 
+/// The command that logs in to the server.
 fn login_hint(server: &Server) -> String {
     format!(
         "ncp auth login {}",

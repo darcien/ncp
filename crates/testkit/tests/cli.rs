@@ -600,6 +600,73 @@ async fn rejected_stored_header_value_gives_the_secret_hint_before_the_login_hin
 }
 
 #[test]
+fn secret_set_with_no_entry_tells_the_user_to_add_it_first() {
+    let home = Home::new("set-no-entry");
+    let run = home.run_with_stdin(&["secret", "set", "A", "--credential-store", "file"], "v");
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(
+        run.error()["message"],
+        "no entry names ${A} in env, headers or oauth.clientSecret; add the entry first"
+    );
+}
+
+#[test]
+fn one_entry_with_two_destinations_for_a_name_needs_two_names() {
+    let home = Home::new("two-fields");
+    home.configure(&json!({"acme": {"type": "http", "url": "https://mcp.acme.example/mcp",
+        "headers": {"X": "${S}"},
+        "oauth": {"clientId": "c", "clientSecret": "${S}", "issuer": "https://login.acme.example"}}}));
+    let run = home.run_with_stdin(
+        &[
+            "secret",
+            "set",
+            "S",
+            "--server",
+            "acme",
+            "--credential-store",
+            "file",
+        ],
+        "v",
+    );
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(run.error().get("hint").is_none(), "{}", run.describe());
+}
+
+#[test]
+fn secret_delete_unused_needs_a_valid_file_and_an_unused_item() {
+    let home = Home::new("delete-unused");
+    home.store_in_file("secret/A", "v");
+    home.configure(&json!({"s": {"command": "s", "env": {"A": "${A}"}}, "bad": {"type": "x"}}));
+    let run = home.run(&["secret", "delete", "A", "--unused"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(
+        run.error()["message"]
+            .as_str()
+            .unwrap()
+            .contains("cannot know which items it uses"),
+        "{}",
+        run.describe()
+    );
+    home.configure(&json!({"s": {"command": "s", "env": {"A": "${A}"}}}));
+    let run = home.run(&["secret", "delete", "A", "--unused"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(run.error()["message"], "no stored item of A is unused");
+}
+
+#[test]
+fn secret_delete_with_a_locked_native_store_removes_nothing() {
+    let home = Home::new("delete-locked").with_fake_keychain();
+    home.configure(&json!({"s": {"command": "s", "env": {"A": "${A}"}}}));
+    home.store_in_file("secret/A", "v");
+    std::fs::write(home.root.join("keychain/fail"), "36").unwrap();
+    let run = home.run(&["secret", "delete", "A"]);
+    assert_eq!(run.code(), 4, "{}", run.describe());
+    std::fs::remove_file(home.root.join("keychain/fail")).unwrap();
+    let list = home.run(&["secret", "list"]);
+    assert_eq!(list.stdout()["secrets"][0]["places"], json!(["file"]));
+}
+
+#[test]
 fn stored_value_needs_a_literal_origin_and_an_environment_value_does_not() {
     let home = Home::new("literal-origin").set("PORT", "1");
     home.configure(

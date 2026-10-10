@@ -68,7 +68,7 @@ pub struct Failure {
     /// answer. A person at a TTY can open them; an agent gets them in the
     /// JSON error.
     pub pages: Box<[crate::elicit::Page]>,
-    /// The destination of a stored value that no place has (S9). Boxed,
+    /// The destination of a stored value that no place has. Boxed,
     /// as `hints` and `pages` are.
     pub destination: Option<Box<crate::credential::Destination>>,
 }

@@ -2,7 +2,7 @@
 //!
 //! `ncp` gets the value of a name from the first place that has it: the
 //! environment, the native store, then the opt-in credential file. A store
-//! gives only the item of the destination of the field (S9), so a value
+//! gives only the item of the destination of the field, so a value
 //! never follows its name to another origin. `ncp` opens the native store
 //! only for a name that the environment does not set, so a server with no
 //! `${NAME}` never opens it. Each store call runs on a
@@ -280,7 +280,7 @@ async fn find(
     Err(miss(server, name, destination, native.as_ref().err()))
 }
 
-/// The stop when no place has the item of the destination (S9). The
+/// The stop when no place has the item of the destination. The
 /// message names only the current destination: `ncp` reads no other item.
 fn miss(
     server: &Server,
@@ -362,9 +362,9 @@ pub(super) async fn command(context: &Context<'_>, command: SecretCommand) -> Re
         } => {
             let removal = match (server, unused, all) {
                 (Some(server), _, _) => Removal::Server(server),
-                (None, true, _) => Removal::Unused,
-                (None, false, true) => Removal::All,
-                (None, false, false) => Removal::One,
+                (None, true, _) => Removal::Listed(Listed::Unused),
+                (None, false, true) => Removal::Listed(Listed::All),
+                (None, false, false) => Removal::Listed(Listed::One),
             };
             delete(context, &name, removal).await
         }
@@ -435,6 +435,14 @@ fn set_target<'a>(
                 .iter()
                 .map(|target| format!("{} ({})", target.destination, users_text(&target.uses)))
                 .collect();
+            // One entry with two destinations: `--server` cannot choose, so
+            // only a second name helps.
+            if let Some(word) = only {
+                return Failure::usage(format!(
+                    "server {word} names ${{{name}}} for more than one destination: {}; use one name for each field",
+                    list.join("; ")
+                ));
+            }
             Failure::usage(format!(
                 "{name} has more than one destination: {}; choose one entry",
                 list.join("; ")
@@ -746,35 +754,45 @@ fn read_terminal_line(input: &mut impl std::io::Read) -> std::io::Result<String>
     String::from_utf8(line).map_err(|_| std::io::Error::other("the value is not UTF-8 text"))
 }
 
-/// The secret keys of a store, as (name, destination). A store that
-/// cannot answer gives a warning and no keys. A host with no native store
-/// gives no warning, because the user then keeps all values in the file.
+/// The secret keys of a store, as (name, destination), and the error of a
+/// store that cannot answer. Such a store gives a warning and no keys. A
+/// host with no native store gives no warning and no error, because the
+/// user then keeps all values in the file.
 async fn secrets_in(
     context: &Context<'_>,
     store: &Opened,
     place: CredentialPlace,
-) -> Vec<(SecretName, Destination)> {
+) -> (Vec<(SecretName, Destination)>, Option<StoreError>) {
     let keys = match store {
         Ok(store) => call(context, store, |store| store.keys()).await,
-        Err(StoreError::Unavailable(_)) => return Vec::new(),
+        Err(StoreError::Unavailable(_)) => return (Vec::new(), None),
         Err(error) => Err(clone_error(error)),
     };
     match keys {
-        Ok(keys) => keys
-            .into_iter()
-            .filter_map(|key| match key {
-                CredentialKey::Secret { destination, name } => Some((name, destination)),
-                _ => None,
-            })
-            .collect(),
+        Ok(keys) => (
+            keys.into_iter()
+                .filter_map(|key| match key {
+                    CredentialKey::Secret { destination, name } => Some((name, destination)),
+                    _ => None,
+                })
+                .collect(),
+            None,
+        ),
         Err(error) => {
             context.ui.warning(
                 None,
                 &format!("ncp cannot list {}: {error}", place_text(place)),
             );
-            Vec::new()
+            (Vec::new(), Some(error))
         }
     }
+}
+
+/// The stored items with their places. `failed` is the error of a place
+/// that could not answer: the list can then miss items.
+struct Stored {
+    items: BTreeMap<(SecretName, Destination), Vec<&'static str>>,
+    failed: Option<StoreError>,
 }
 
 /// The places of each stored item, from the keys of the two places.
@@ -796,15 +814,17 @@ fn items_by_place(
     items
 }
 
-async fn stored_items(
-    context: &Context<'_>,
-) -> Result<BTreeMap<(SecretName, Destination), Vec<&'static str>>, Failure> {
-    let native_keys = secrets_in(context, &native(context).await, CredentialPlace::Native).await;
+async fn stored_items(context: &Context<'_>, native: &Opened) -> Result<Stored, Failure> {
+    let (native_keys, native_failed) = secrets_in(context, native, CredentialPlace::Native).await;
     if context.cancel.is_cancelled() {
         return Err(session::interrupted());
     }
-    let file_keys = secrets_in(context, &Ok(file(context)), CredentialPlace::File).await;
-    Ok(items_by_place(native_keys, file_keys))
+    let (file_keys, file_failed) =
+        secrets_in(context, &Ok(file(context)), CredentialPlace::File).await;
+    Ok(Stored {
+        items: items_by_place(native_keys, file_keys),
+        failed: native_failed.or(file_failed),
+    })
 }
 
 /// One row of `secret list`: an item and the servers that use its key.
@@ -853,7 +873,8 @@ async fn list(context: &Context<'_>) -> Result<(), Failure> {
         .iter()
         .flat_map(|loaded| loaded.config.servers())
         .collect();
-    let rows = secret_rows(stored_items(context).await?, &servers);
+    let stored = stored_items(context, &native(context).await).await?;
+    let rows = secret_rows(stored.items, &servers);
     context.ui.result(
         || {
             render::table(
@@ -890,6 +911,11 @@ async fn list(context: &Context<'_>) -> Result<(), Failure> {
 enum Removal {
     /// The item of the destination of this entry.
     Server(String),
+    /// A choice from the list of the stored items.
+    Listed(Listed),
+}
+
+enum Listed {
     /// The items that no entry of the loaded file uses.
     Unused,
     All,
@@ -898,50 +924,56 @@ enum Removal {
 }
 
 /// The destinations to remove, and the configuration file that `ncp` read
-/// to choose them.
+/// to choose them. With no flag, a place that cannot answer stops the
+/// delete: an item there could be a second destination.
 async fn chosen(
     context: &Context<'_>,
     name: &SecretName,
     removal: Removal,
+    native: &Opened,
 ) -> Result<(Vec<Destination>, Option<std::path::PathBuf>), Failure> {
     let not_stored = || Failure::usage(format!("{name} is not stored")).hint("ncp secret list");
-    match removal {
+    let listed = match removal {
         Removal::Server(word) => {
             let loaded = session::load_config(&context.paths.config_file, context.env)?;
             let target = set_target(context, &loaded, name, Some(&word))?;
-            Ok((vec![target.destination], Some(loaded.path)))
+            return Ok((vec![target.destination], Some(loaded.path)));
         }
-        Removal::All => {
-            let stored = stored_destinations(context, name).await?;
-            if stored.is_empty() {
-                return Err(not_stored());
+        Removal::Listed(listed) => listed,
+    };
+    let Stored { items, failed } = stored_items(context, native).await?;
+    let stored: Vec<Destination> = items
+        .into_keys()
+        .filter(|(item, _)| item == name)
+        .map(|(_, destination)| destination)
+        .collect();
+    match (listed, failed) {
+        (Listed::One, Some(error)) => Err(store_failure(&error)),
+        (Listed::All | Listed::Unused, Some(error)) if stored.is_empty() => {
+            Err(store_failure(&error))
+        }
+        (Listed::All, _) if stored.is_empty() => Err(not_stored()),
+        (Listed::All, _) => Ok((stored, None)),
+        (Listed::One, None) => match stored.as_slice() {
+            [] => Err(not_stored()),
+            [_] => Ok((stored, None)),
+            _ => {
+                let list: Vec<String> = stored.iter().map(ToString::to_string).collect();
+                Err(Failure::usage(format!(
+                    "{name} is stored for more than one destination: {}; ncp removed nothing",
+                    list.join(", ")
+                ))
+                .hint(format!("ncp secret delete {name} --server <SERVER>")))
             }
-            Ok((stored, None))
-        }
-        Removal::One => {
-            let stored = stored_destinations(context, name).await?;
-            match stored.as_slice() {
-                [] => Err(not_stored()),
-                [_] => Ok((stored, None)),
-                _ => {
-                    let list: Vec<String> = stored.iter().map(ToString::to_string).collect();
-                    Err(Failure::usage(format!(
-                        "{name} is stored for more than one destination: {}; ncp removed nothing",
-                        list.join(", ")
-                    ))
-                    .hint(format!("ncp secret delete {name} --server <SERVER>")))
-                }
-            }
-        }
-        Removal::Unused => {
+        },
+        (Listed::Unused, _) => {
             let loaded = strict_config(context)?;
             let used: Vec<Destination> =
                 binding::by_destination(binding::uses(loaded.config.servers(), name.as_str()))
                     .into_iter()
                     .map(|target| target.destination)
                     .collect();
-            let unused: Vec<Destination> = stored_destinations(context, name)
-                .await?
+            let unused: Vec<Destination> = stored
                 .into_iter()
                 .filter(|destination| !used.contains(destination))
                 .collect();
@@ -954,18 +986,6 @@ async fn chosen(
             Ok((unused, Some(loaded.path)))
         }
     }
-}
-
-async fn stored_destinations(
-    context: &Context<'_>,
-    name: &SecretName,
-) -> Result<Vec<Destination>, Failure> {
-    Ok(stored_items(context)
-        .await?
-        .into_keys()
-        .filter(|(item, _)| item == name)
-        .map(|(_, destination)| destination)
-        .collect())
 }
 
 /// The configuration for `--unused`: an invalid entry can name the secret,
@@ -983,9 +1003,10 @@ fn strict_config(context: &Context<'_>) -> Result<session::Loaded, Failure> {
 
 async fn delete(context: &Context<'_>, name: &str, removal: Removal) -> Result<(), Failure> {
     let name = secret_name(name)?;
-    let (destinations, config_file) = chosen(context, &name, removal).await?;
+    let native = native(context).await;
+    let (destinations, config_file) = chosen(context, &name, removal, &native).await?;
     let stores = [
-        (CredentialPlace::Native, native(context).await),
+        (CredentialPlace::Native, native),
         (CredentialPlace::File, Ok(file(context))),
     ];
     let mut removed: Vec<(Destination, Vec<CredentialPlace>)> = Vec::new();

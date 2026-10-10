@@ -1,7 +1,7 @@
 //! The credential model: the secrets, and the key of each item in a store.
 //!
 //! A secret is a named value for one destination. The configuration names
-//! it with `${NAME}`, and the destination comes from the entry (S9): a
+//! it with `${NAME}`, and the destination comes from the entry: a
 //! stored value goes only to the destination in its key. OAuth tokens and
 //! client credentials are separate items for each server. No secret goes to
 //! the configuration file.
