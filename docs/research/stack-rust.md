@@ -1,6 +1,6 @@
 # Research: Rust stack for a new MCP CLI
 
-Status: 2026-10-06. Baseline: [target-requirements.md](../target-requirements.md).
+Status: 2026-10-06. Baseline: [requirements.md](../requirements.md).
 Prior work: [rust-clients.md](rust-clients.md). This report does not repeat it.
 Stack under review: [`rmcp`][rmcp] 3.5.1 (client side), `tokio`, `reqwest` +
 `rustls`, `keyring-core` stores, a CLI parser, a JSON Schema validator, std

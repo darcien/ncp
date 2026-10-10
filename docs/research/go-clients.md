@@ -1,6 +1,6 @@
 # Research: Go MCP CLI clients
 
-Status: 2026-10-06. Baseline: [target-requirements.md](../target-requirements.md).
+Status: 2026-10-06. Baseline: [requirements.md](../requirements.md).
 Spec: MCP `2026-07-28` (modern), `2025-11-25` (legacy).
 
 Method: I read GitHub search results (14 `gh search repos` queries, sorted by

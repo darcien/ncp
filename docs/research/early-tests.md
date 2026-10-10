@@ -1,6 +1,6 @@
 # Research: early tests of risks
 
-Status: 2026-10-07. Baseline: [target-requirements.md](../target-requirements.md).
+Status: 2026-10-07. Baseline: [requirements.md](../requirements.md).
 Plan: [plan.md](../plan.md), milestone 1. Code reading: [rmcp-open-points.md](rmcp-open-points.md),
 [stack-rust.md](stack-rust.md).
 

@@ -1,6 +1,6 @@
 # Vendor MCP command-line clients
 
-Status: research, 2026-10-06. Baseline: [target-requirements.md](../target-requirements.md).
+Status: research, 2026-10-06. Baseline: [requirements.md](../requirements.md).
 
 Method: read-only. GitHub REST API (repo metadata, releases, contributors,
 file contents), WebSearch, and WebFetch of READMEs and docs. No code was

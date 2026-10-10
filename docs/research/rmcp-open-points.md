@@ -1,6 +1,6 @@
 # Research: rmcp open points
 
-Status: 2026-10-06. Baseline: [target-requirements.md](../target-requirements.md).
+Status: 2026-10-06. Baseline: [requirements.md](../requirements.md).
 Source report: [stack-rust.md](stack-rust.md). Comparison: [stack-go.md](stack-go.md).
 Subject: [`rmcp`][rmcp] 3.5.1 (tag `rmcp-v3.5.1`, equal to `main` on 2026-10-06).
 

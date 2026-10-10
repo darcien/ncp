@@ -1,6 +1,6 @@
 # Research: Rust MCP CLI clients and SDKs
 
-Status: 2026-10-06. Baseline: [target-requirements.md](../target-requirements.md).
+Status: 2026-10-06. Baseline: [requirements.md](../requirements.md).
 
 Method: `gh search repos` (14 queries), `gh api` (repo metadata, releases,
 commits, contributors, file contents), WebSearch (4 queries), WebFetch (reqwest

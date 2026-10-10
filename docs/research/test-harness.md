@@ -1,6 +1,6 @@
 # Test harness: official MCP test parts for `ncp`
 
-Status: research, 2026-10-07. Baseline: `target-requirements.md` (2026-10-06).
+Status: research, 2026-10-07. Baseline: `requirements.md` (2026-10-06).
 
 Method: read-only `gh api` reads of `modelcontextprotocol/conformance` (main
 `c37eec888e`, 2026-10-01), `modelcontextprotocol/rust-sdk` (tag

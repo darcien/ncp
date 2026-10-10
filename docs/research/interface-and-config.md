@@ -1,6 +1,6 @@
 # Study: interface and configuration of MCP CLI clients
 
-Status: research, 2026-10-06. Input for [target-requirements.md](../target-requirements.md)
+Status: research, 2026-10-06. Input for [requirements.md](../requirements.md)
 section 3.5 (I1 to I8) and open item 1 (I8).
 
 Method: read-only study of READMEs and docs through `gh api` (contents API,

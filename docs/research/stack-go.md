@@ -1,6 +1,6 @@
 # Research: Go stack for a new MCP CLI client
 
-Status: 2026-10-06. Baseline: [target-requirements.md](../target-requirements.md).
+Status: 2026-10-06. Baseline: [requirements.md](../requirements.md).
 Prior work: [go-clients.md](go-clients.md). This report does not repeat it.
 Stack: [`modelcontextprotocol/go-sdk`][gosdk] v1.8.0 (client side), a
 credential store, a CLI parser, JSON Schema validation, and TTY detection.
