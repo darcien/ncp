@@ -6,6 +6,8 @@ cargo-deny = "0.20.2"
 typos = "1.50.3"
 hk = "2.5.0"
 shellcheck = "0.11.0"
+# pnpm installs the interop server (harness/interop). No Corepack.
+pnpm = "12.10.1"
 
 # `hk install` then runs the hooks through `mise x`, so that the hooks use
 # the pinned tools.
@@ -92,6 +94,13 @@ run = "npm ci --ignore-scripts"
 [tasks.conformance]
 description = "Run the official MCP conformance suite against ncp for each protocol version"
 run = "harness/conformance/run.sh"
+
+# The interop tests: an online install from the lock file, then an offline
+# run against the official everything server. See docs/design/interop.md.
+[tasks."interop:install"]
+description = "Install the pinned MCP everything server from its lock file"
+dir = "harness/interop"
+run = "pnpm install --frozen-lockfile"
 
 # Run it before the other Linux tasks: a volume that is in use cannot be
 # removed.

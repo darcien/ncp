@@ -1,0 +1,9 @@
+{
+  "name": "ncp-interop",
+  "private": true,
+  "description": "The official MCP everything server at one exact version, for the interop tests of ncp",
+  "license": "MIT OR Apache-2.0",
+  "dependencies": {
+    "@modelcontextprotocol/server-everything": "2026.8.31"
+  }
+}

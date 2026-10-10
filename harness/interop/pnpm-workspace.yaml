@@ -1,0 +1,4 @@
+# Only the settings that differ from the pnpm defaults. See
+# docs/design/interop.md section 4.
+minimumReleaseAgeStrict: true
+trustPolicy: no-downgrade
