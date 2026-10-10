@@ -787,12 +787,11 @@ mod tests {
         };
         let set = env(&[("SSL_CERT_FILE", "/roots.pem")]);
         let failure = || Failure::protocol("x");
-        assert!(with_tls_hint(&set, &noted, failure()).hint.is_some());
-        assert!(with_tls_hint(&env(&[]), &noted, failure()).hint.is_none());
-        assert!(
-            with_tls_hint(&set, &client::http::Notes::default(), failure())
-                .hint
-                .is_none()
+        assert_eq!(with_tls_hint(&set, &noted, failure()).hints.len(), 1);
+        assert_eq!(with_tls_hint(&env(&[]), &noted, failure()).hints, [""; 0]);
+        assert_eq!(
+            with_tls_hint(&set, &client::http::Notes::default(), failure()).hints,
+            [""; 0]
         );
     }
 
@@ -818,7 +817,10 @@ mod tests {
         );
         assert_eq!(failure.exit, Exit::Usage);
         assert!(failure.message.contains("/c/mcp.json"), "{failure:?}");
-        assert_eq!(failure.hint.as_deref(), Some("export TOKEN=<value>"));
+        assert_eq!(
+            failure.hints.first().map(String::as_str),
+            Some("export TOKEN=<value>")
+        );
     }
 
     #[test]
@@ -836,6 +838,9 @@ mod tests {
         )
         .unwrap_err();
         assert!(failure.message.contains("does not exist"), "{failure:?}");
-        assert_eq!(failure.hint.as_deref(), Some("ncp server list"));
+        assert_eq!(
+            failure.hints.first().map(String::as_str),
+            Some("ncp server list")
+        );
     }
 }

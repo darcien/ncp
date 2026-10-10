@@ -298,7 +298,11 @@ impl Asker {
             }
         }
         if opened {
-            failure.hint("when the page is done, run the command again")
+            // This hint replaces "open the page": the page is open.
+            Failure {
+                hints: vec!["when the page is done, run the command again".into()],
+                ..failure
+            }
         } else {
             failure
         }

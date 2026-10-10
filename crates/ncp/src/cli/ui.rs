@@ -397,8 +397,9 @@ pub fn note(kind: &str, format: Format, server: Option<&str>, message: &str) -> 
     }
 }
 
-/// The error. Text: `error: message` and `hint: hint`. JSON: the error
-/// object of the design, on one line.
+/// The error. Text: `error: message` and a `hint: hint` line for each
+/// hint. JSON: the error object of the design, on one line, with the first
+/// hint. Each other hint follows as a hint note (B3).
 #[must_use]
 pub fn error_text(format: Format, failure: &Failure) -> String {
     match format {
@@ -408,12 +409,12 @@ pub fn error_text(format: Format, failure: &Failure) -> String {
                 .as_deref()
                 .map(|server| format!("server {server}: "))
                 .unwrap_or_default();
-            let hint = failure
-                .hint
-                .as_deref()
-                .map(|hint| format!("hint: {}\n", indented(hint)))
-                .unwrap_or_default();
-            format!("error: {server}{}\n{hint}", indented(&failure.message))
+            let hints: String = failure
+                .hints
+                .iter()
+                .map(|hint| note("hint", format, None, hint))
+                .collect();
+            format!("error: {server}{}\n{hints}", indented(&failure.message))
         }
         Format::Json => {
             let mut body = json!({
@@ -424,7 +425,7 @@ pub fn error_text(format: Format, failure: &Failure) -> String {
             if let Some(server) = &failure.server {
                 body["server"] = json!(server);
             }
-            if let Some(hint) = &failure.hint {
+            if let Some(hint) = failure.hints.first() {
                 body["hint"] = json!(hint);
             }
             if !failure.pages.is_empty() {
@@ -435,7 +436,13 @@ pub fn error_text(format: Format, failure: &Failure) -> String {
                     .collect();
                 body["pages"] = json!(pages);
             }
-            json_line(&json!({ "error": body }))
+            let more: String = failure
+                .hints
+                .iter()
+                .skip(1)
+                .map(|hint| note("hint", format, failure.server.as_deref(), hint))
+                .collect();
+            json_line(&json!({ "error": body })) + &more
         }
     }
 }
@@ -460,6 +467,26 @@ mod tests {
             value,
             json!({"error": {"code": "auth", "exit": 4, "server": "github",
                 "message": "the server needs a login", "hint": "ncp auth login github"}})
+        );
+    }
+
+    #[test]
+    fn a_second_hint_follows_the_error_as_its_own_line() {
+        let failure = failure().hint("ncp secret list");
+        assert_eq!(
+            error_text(Format::Text, &failure),
+            "error: server github: the server needs a login\n\
+             hint: ncp auth login github\nhint: ncp secret list\n"
+        );
+        let text = error_text(Format::Json, &failure);
+        let lines: Vec<Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines[0]["error"]["hint"], "ncp auth login github");
+        assert_eq!(
+            lines[1],
+            json!({"hint": {"message": "ncp secret list", "server": "github"}})
         );
     }
 

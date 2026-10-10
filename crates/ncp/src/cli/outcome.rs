@@ -51,14 +51,15 @@ impl From<Exit> for ExitCode {
     }
 }
 
-/// A result that is not a success. The message says what failed. The hint
-/// gives the fix, when `ncp` knows it.
+/// A result that is not a success. The message says what failed. The hints
+/// give the fix, when `ncp` knows it: each hint is one command, so the first
+/// hint is the first fix to try.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failure {
     pub exit: Exit,
     pub server: Option<String>,
     pub message: String,
-    pub hint: Option<String>,
+    pub hints: Vec<String>,
     /// Set for a `401` on a connection with no token, with the challenge
     /// of the answer: a stored login can answer it.
     pub login_challenge: Option<String>,
@@ -75,7 +76,7 @@ impl Failure {
             exit,
             server: None,
             message: message.into(),
-            hint: None,
+            hints: Vec::new(),
             login_challenge: None,
             pages: Box::default(),
         }
@@ -91,9 +92,10 @@ impl Failure {
         Self::new(Exit::Protocol, message)
     }
 
+    /// Adds a hint after the hints that the failure has.
     #[must_use]
     pub fn hint(mut self, hint: impl Into<String>) -> Self {
-        self.hint = Some(hint.into());
+        self.hints.push(hint.into());
         self
     }
 
