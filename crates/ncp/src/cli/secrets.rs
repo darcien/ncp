@@ -10,7 +10,6 @@
 use std::{collections::BTreeSet, io::IsTerminal, sync::Arc, time::Duration};
 
 use serde_json::json;
-use tokio::io::AsyncReadExt;
 
 use super::{
     args::{CredentialPlace, SecretCommand},
@@ -416,16 +415,23 @@ async fn read_value(context: &Context<'_>, name: &str) -> Result<Secret, Failure
     Ok(Secret::new(line.to_string()))
 }
 
-/// All of stdin, for a value that a pipe or a file gives.
+/// All of stdin, for a value that a pipe or a file gives. The read runs on
+/// a thread of its own, not of the runtime: a read of the runtime cannot
+/// stop, and the exit after the time limit would wait for it.
 async fn read_piped(context: &Context<'_>) -> Result<String, Unread> {
-    let mut text = String::new();
-    let mut stdin = tokio::io::stdin();
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        let mut text = String::new();
+        let read = std::io::Read::read_to_string(&mut std::io::stdin().lock(), &mut text);
+        let _ = sender.send(read.map(|_| text));
+    });
     tokio::select! {
-        read = stdin.read_to_string(&mut text) => read.map_err(Unread::Failed)?,
-        () = tokio::time::sleep(context.request_limit) => return Err(Unread::TimedOut),
-        () = context.cancel.cancelled() => return Err(Unread::Interrupted),
-    };
-    Ok(text)
+        read = receiver => read
+            .map_err(|_| Unread::Failed(std::io::Error::other("the reader stopped")))
+            .and_then(|text| text.map_err(Unread::Failed)),
+        () = tokio::time::sleep(context.request_limit) => Err(Unread::TimedOut),
+        () = context.cancel.cancelled() => Err(Unread::Interrupted),
+    }
 }
 
 /// The program that changes the settings of the terminal. Both macOS and
@@ -476,9 +482,10 @@ async fn read_hidden_line(context: &Context<'_>, name: &str) -> Result<String, U
     let restored = stty(&[saved.as_str()]);
     // The new line that the echo did not show.
     eprintln!();
-    let line = read?;
+    // A terminal with no echo is the larger problem, so its error comes
+    // first, also after a failed read.
     restored.map_err(Unread::Failed)?;
-    Ok(line)
+    read
 }
 
 /// Reads bytes until a new line, a carriage return or Ctrl-D. A backspace

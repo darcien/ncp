@@ -441,8 +441,11 @@ fn secret_set_stops_when_a_pipe_gives_no_value_in_the_time_limit() {
         .unwrap();
     // The pipe stays open and gives nothing, as a writer that hangs.
     let _writer = child.stdin.take();
+    let started = std::time::Instant::now();
     let run = Run(child.wait_with_output().unwrap());
     assert_eq!(run.code(), 3, "{}", run.describe());
+    // The exit does not wait for the read that is still open.
+    assert!(started.elapsed() < std::time::Duration::from_millis(2500));
     assert_eq!(run.error()["message"], "no value of A came in 1 s");
 }
 
