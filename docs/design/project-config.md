@@ -3,7 +3,8 @@
 Status: proposal, revision 4 (2026-10-11). Not accepted. Build:
 [plan.md](../plan.md) milestone 18 (gate).
 
-Revision 4 records the user decisions A to E and G. It uses the terms
+Revision 4 records the user decisions A to E and G, and the review of
+the commands (H). It uses the terms
 and the commands of `mise trust`, and keeps a refusal for the project
 root, as mise does
 ([mise-trust-merge.md](../research/mise-trust-merge.md)).
@@ -134,24 +135,24 @@ Accepted risks:
    already shown, and mise gives no such mark. A stored value cannot follow the name to another host, because
    milestone 17 binds it to an origin. (Decision B.)
 
-4. **Trust records.** The key follows the rule of direnv (PTA part 3
-   Q2): the SHA-256 of the path where `ncp` found the file (the real path
-   of the project root and `.mcp.json`, with no resolution of a symlink at
-   `.mcp.json`), a new line, and the bytes that `ncp` read. Each changed
-   byte, and each other path, needs a new trust (T2). A worktree at
-   another path asks one time (Decision E). The records are empty files,
-   with the names of the folders of mise
-   ([mise-trust-merge.md](../research/mise-trust-merge.md) §4):
-   - `$XDG_STATE_HOME/ncp/trusted/<hex>`: the user trusts the file. The
-     key is the path and the bytes.
-   - `$XDG_STATE_HOME/ncp/ignored/<hex>`: the user said No. The key is the
-     path only. `ncp` does not ask again, also after a change of the file,
-     until the user runs `ncp trust`. mise keeps a refusal for the folder
-     in the same way. direnv, VS Code and Claude Code also keep a refusal
-     (PTA part 2 §3, part 3 Q2). No answer (no TTY) writes no record.
-
-   The records hold no content of a project file, because that content can
-   hold literal secrets.
+4. **Trust records.** As the paranoid mode of mise, always
+   ([mise-trust-merge.md](../research/mise-trust-merge.md) §4). No
+   setting turns it off.
+   - `$XDG_STATE_HOME/ncp/trusted-configs/<sha256 of path>`: one record
+     for each path. It holds the SHA-256 of the bytes that `ncp` read. A
+     new trust replaces it. Each changed byte asks again (T2), also a
+     switch to a branch with other bytes.
+   - `$XDG_STATE_HOME/ncp/ignored-configs/<sha256 of path>`: the user said
+     No. `ncp` checks it first, and does not ask again, also after a
+     change of the file, until `ncp trust`. No answer (no TTY, Ctrl-C, a
+     timeout) writes no record.
+   - The path is where `ncp` found the file (the real path of the project
+     root and `.mcp.json`, with no resolution of a symlink at
+     `.mcp.json`). Another path asks again (decision E).
+   - `ncp trust --untrust` removes the trusted record. Thus old bytes, for
+     example from a checkout of an old commit, ask again.
+   - The records hold no content of a project file, because it can hold
+     literal secrets.
 
 5. **The question and the trust command.** (Decision D.)
    - A command that starts a server or sends a request (`server show`,
@@ -177,7 +178,7 @@ Accepted risks:
      - `ncp trust --show` shows the entries and the state, and changes
        nothing. An agent uses it to show the entries to the user before
        it runs `ncp trust`.
-     - `ncp trust --untrust` removes the trusted record.
+     - `ncp trust --untrust` removes the trusted record (rule 4).
      - `ncp trust --ignore` writes the ignored record.
    - The shown entries: the path of the file, then one line for each
      server, with the escapes of B15 (T8):
