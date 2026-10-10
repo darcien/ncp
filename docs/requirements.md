@@ -90,6 +90,7 @@ ask the same credential store.
 | S6 | MUST | If a daemon exists, it listens only on a Unix socket that only the user can open. No network listener. | — |
 | S7 | MUST | On macOS, use the login Keychain through `/usr/bin/security`. Reason: `ncp` has no paid Developer ID; an ad-hoc signed binary changes identity at each update, and the native Keychain API then asks again for each item, which an agent cannot answer. `ncp` gives each command to `security -i` on standard input, because a value in the process arguments breaks S3. One input line holds at most 4095 bytes, and some token sets are longer (for example from Entra ID). Thus a value that does not fit one line is kept in several items. A save that fails before its end keeps the old value. Put the credential store behind one internal interface, so that a change of storage model or signing method changes only that module. | — |
 | S8 | MUST | A credential store call that gives no answer in 60 s stops with an error. A locked store waits for its unlock prompt with no limit, and on a machine with no display nobody can answer the prompt. | — |
+| S9 | MUST | `ncp` uses the destination of a stored static secret as part of its key. A header value goes only to the origin (scheme, host and port) of its entry, with no redirects (N6). A client secret goes only to the token endpoint of the configured issuer, and its key has the origin of this issuer. A value for a stdio server has no destination. When no item exists for the destination, `ncp` stops before the send, and sends nothing. Reason: two entries can name the same `${NAME}` by accident, or the user can change the URL of an entry. The value must not follow the name to another host. Values from the environment have no binding. | — |
 
 ### 3.4 Network
 
@@ -158,7 +159,10 @@ no loss.
   environment, else from the credential store, else from the opt-in
   credential file. A value from the store or the file expands only in `env`
   values, `headers` values and `oauth.clientSecret`, because a value in
-  `args` shows in the process list.
+  `args` shows in the process list. A stored value goes only to its
+  destination (S9). When an entry uses a stored value, its `url` and its
+  `oauth.issuer` have no `${NAME}` in the scheme, host or port, because an
+  environment value must not change the destination.
   A variable with no value is an error for that server. A `$` that does not
   start `${` stays as text.
 - `oauth` is a known key of an `http` entry. The MVP reads `oauth.clientId`

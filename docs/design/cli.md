@@ -57,9 +57,9 @@ ncp [OPTIONS] tool call <SERVER> <TOOL> [ARGUMENT...]
 ncp [OPTIONS] auth login <SERVER> [--no-browser] [--credential-store <native|file>]
 ncp [OPTIONS] auth logout <SERVER>
 ncp [OPTIONS] auth status [<SERVER>]
-ncp [OPTIONS] secret set <NAME> [--credential-store <native|file>]
+ncp [OPTIONS] secret set <NAME> [--server <SERVER>] [--credential-store <native|file>]
 ncp [OPTIONS] secret list
-ncp [OPTIONS] secret delete <NAME>
+ncp [OPTIONS] secret delete <NAME> [--server <SERVER> | --unused | --all]
 ncp generate-shell-completion <bash|zsh|fish>
 ```
 
@@ -73,9 +73,9 @@ ncp generate-shell-completion <bash|zsh|fish>
 | `auth login` | Yes | Runs the OAuth flow and keeps the tokens (section 5). |
 | `auth logout` | No | Removes the OAuth tokens of the server from all places (section 2.4). The client credentials stay, so the next login needs no new registration. |
 | `auth status` | No | For each server: OAuth tokens present, expiry, scopes, issuer. No token value. |
-| `secret set` | No | Reads one value from stdin and keeps it under the name (section 2.4). On a TTY the input is not shown. The value never goes in an argument (S3). |
-| `secret list` | No | The names of the stored secrets and the place of each one (native store, file, or both). Names that no `${NAME}` in the configuration uses are marked. Never a value. |
-| `secret delete` | No | Removes the secret from all places and says from which. |
+| `secret set` | No | Reads one value from stdin and keeps it under the name and its destination (section 2.4, B72). On a TTY the question shows the destination, and the input is not shown. The value never goes in an argument (S3). |
+| `secret list` | No | One row for each name and destination, with the place (native store, file, or both) and the servers that use it. Rows that no `${NAME}` in the configuration uses are marked. Never a value. |
+| `secret delete` | No | Removes the item of one destination, the unused items, or all items of the name, from all places (B72). It says which destinations and places. |
 | `generate-shell-completion` | No | The completion script for the shell. Server names come from the configuration. Tool names come only from a cache, or are not completed. Completion never starts a server. |
 
 `ncp --help` shows the normal order of work: `server list`, `server show`,
@@ -142,6 +142,8 @@ and the error says "missing tool name".
 | `--refresh` | Read no cache, but write it: probe the era and get the tool list again (B62), as uv names the flag. |
 | `--timeout <seconds>` | The time limit for one request, in whole seconds. Default 300 s (decision C7). A timeout sends a cancel request and exits with code 3. Progress notifications do not reset the clock. |
 | `--credential-store <native\|file>` | Only on `secret set` and `auth login`: the place for the new value. Default `native` (decision C2). |
+| `--server <SERVER>` | Only on `secret set` and `secret delete`: use only the destination of this entry (B72). |
+| `--unused`, `--all` | Only on `secret delete`: remove the items of the name that no entry uses, or all items of the name (B72). |
 | `--no-browser` | Only on `auth login`: print the URL and read the redirect URL from stdin (A10). |
 | `--no-validate` | Only on `tool call`: do not check the arguments against the input schema. |
 
@@ -149,7 +151,8 @@ and the error says "missing tool name".
 
 A secret is a named value, the same as an environment variable (decision
 C1). The configuration names the secrets that a server needs with `${NAME}`,
-as other tools do:
+as other tools do. The store keeps a value for one destination (S9,
+[secret-binding.md](secret-binding.md)):
 
 ```json
 "github": { "command": "github-mcp", "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" } },
@@ -157,30 +160,63 @@ as other tools do:
             "headers": { "Authorization": "Bearer ${LINEAR_KEY}" } }
 ```
 
+| Value | Destination | Account |
+|---|---|---|
+| `headers` value of an `http` entry | The origin of the entry URL: scheme, host and port | `secret/https://mcp.linear.app/LINEAR_KEY` |
+| `oauth.clientSecret` | The origin of `oauth.issuer` | `secret/https://login.acme.dev/ACME_SECRET` |
+| `env` value of a `stdio` entry | None | `secret/GITHUB_TOKEN` |
+
+Add the entry first, then store the value:
+
+```
+ncp secret set LINEAR_KEY
+```
+
+The question shows the destination: "Value of LINEAR_KEY for
+https://mcp.linear.app (server linear):". When two entries with different
+destinations name `${NAME}`, `ncp secret set` gives a usage error that lists
+them, with the hint `--server`.
+
 `ncp` gets the value of `${NAME}` (or `${env:NAME}`) from the first place
 that has it:
 
-1. The environment of `ncp`.
-2. The native store: the macOS Keychain or the Linux Secret Service.
-3. The credential file, if it exists (opt-in, mode 0600).
+1. The environment of `ncp`. A value from the environment has no binding.
+2. The native store, the macOS Keychain or the Linux Secret Service: only
+   the item of the destination.
+3. The credential file, if it exists (opt-in, mode 0600): only the item of
+   the destination.
 
-When no place has it, `ncp` stops with `GITHUB_TOKEN is not set and not
-stored` and the hint `ncp secret set GITHUB_TOKEN`. When the native store is
-not available, the error says why (for example "the login keyring is
-locked") and gives the full command `ncp secret set GITHUB_TOKEN
---credential-store file`.
+No item of another destination is a fallback. When no place has the item,
+`ncp` stops before the send (exit 2):
+
+```
+error: LINEAR_KEY is not set, and not stored for https://mcp.linear.app.
+ncp sent nothing to server linear. If this URL is correct, store the
+value for it.
+hint: ncp secret set LINEAR_KEY --server linear
+hint: ncp secret list
+```
+
+When the native store is not available, the error says why (for example
+"the login keyring is locked") and gives the full command `ncp secret set
+LINEAR_KEY --server linear --credential-store file`.
 
 - A value from the native store or the file expands only in `env` values,
   `headers` values and `oauth.clientSecret`. In `args` it would show in the
-  process list (S3). In
-  `command`, `args`, `cwd` or `url`, a stored value is a usage error (exit 2)
-  with the hint to set the variable in the environment.
+  process list (S3). In `command`, `args`, `cwd` or `url`, a stored value is
+  a usage error (exit 2) with the hint to set the variable in the
+  environment (B32).
+- An entry that uses a stored value has no `${NAME}` in the scheme, host or
+  port of its `url` and its `oauth.issuer` (I8). Else the stored value
+  gives a usage error, and the message tells the user to write them as
+  literal text.
 - `ncp` reads the native store only for names that the configuration uses
   and the environment does not set. A server with no `${NAME}` never opens
   the store.
-- A write goes to one place. When the other place still has a copy, `ncp`
-  shows a warning and the hint `ncp secret delete NAME`, which removes all
-  copies. `secret list` shows the place of each secret.
+- A write goes to one place. When the other place still has a copy for the
+  same destination, `ncp` shows a warning that names the destination, and
+  the hint `ncp secret delete NAME --server SERVER`. `secret list` shows
+  the place of each item.
 - OAuth tokens and client credentials are separate items for each server.
   A refresh writes the tokens back to the place that they came from.
 
@@ -224,7 +260,7 @@ Rules:
 | `tool show` | `{"server": "<name>", "tool": MCP Tool}` |
 | `tool call` | MCP `CallToolResult`, or MCP `InputRequiredResult` (code 5) |
 | `auth status` | `{"servers": [{"name", "loggedIn", "issuer", "scopes", "expiresAt"}]}` |
-| `secret list` | `{"secrets": [{"name", "places": ["native", "file"], "used": true}]}` |
+| `secret list` | `{"secrets": [{"name", "destination", "places": ["native", "file"], "used": true, "servers": ["linear"]}]}`. `destination` is `null` for a stdio value. |
 | `resource list` | `{"server": "<name>", "resources": [MCP Resource], "resourceTemplates": [MCP ResourceTemplate]}` |
 | `resource read` | MCP `ReadResourceResult`; with `--output-format text` in a pipe, the contents as they are (B58) |
 | `prompt list` | `{"server": "<name>", "prompts": [MCP Prompt]}` |
@@ -319,7 +355,7 @@ target and the digest of the entry stop its use for another server
 
 | ID | Decision | Reason |
 |---|---|---|
-| C1 | A secret is a named value. The configuration names it with `${NAME}`; `ncp` reads the environment, then the native store, then the opt-in file. No secret index file. One store item for each name. | `${VAR}` is the common syntax in the `mcpServers` files of other tools, so the file stays portable. No index file means no file that can disagree with the store. A server with no `${NAME}` never opens the store. |
+| C1 | A secret is a named value. The configuration names it with `${NAME}`; `ncp` reads the environment, then the native store, then the opt-in file. No secret index file. One store item for each name and destination (S9). Changed on 2026-10-10 by [secret-binding.md](secret-binding.md): before, one item for each name. | `${VAR}` is the common syntax in the `mcpServers` files of other tools, so the file stays portable. No index file means no file that can disagree with the store. A server with no `${NAME}` never opens the store. |
 | C1a | The environment comes before the store. | Common practice. A CI job or `op run` can give a value with no change to the store. `-v` shows the source of each name. |
 | C1b | On macOS, `ncp` uses the login Keychain through `/usr/bin/security`. | `ncp` has no paid Developer ID. An ad-hoc signed binary changes identity at each update, and the native API then asks again for each item. An agent cannot answer the dialog. The cost: a process of the same user can read the items through `security`, as with gh and with the Linux Secret Service. |
 | C2 | `--credential-store <native\|file>` on the commands that write. Default `native`. No environment variable. | Secure by default. The opt-in is at the moment of need, and the error names it. The same behavior in each shell, because reads check all places. |
@@ -366,7 +402,7 @@ user reviews them.
 | B24 | `tool list` shows an annotation mark only for a hint that the server sets to true. | A mark for each default value would mark almost all tools. |
 | B25 | The JSON of `tool list` and `tool show` is the `Tool` object as rmcp reads it. A field that rmcp does not know is not in the output. | rmcp gives typed objects only. Known limit; see the backlog. |
 | B26 | When `-` reads the arguments from a TTY, a hint says to end the input with Ctrl-D. | Good ergonomics: nothing seems to hang. |
-| B27 | `secret set` writes `{"name", "place"}`, and `secret delete` writes `{"name", "places"}`. Text: one sentence, for example "Stored GITHUB_TOKEN in the native store." | Section 4 gives no shape for these commands; the names follow `secret list`. |
+| B27 | `secret set` writes `{"name", "place", "destination", "servers"}`, and `secret delete` writes `{"name", "file", "removed": [{"destination", "places"}]}`. `destination` is `null` for a stdio value. Text: one sentence, for example "Stored LINEAR_KEY in the native store for https://mcp.linear.app (server linear)." | Section 4 gives no shape for these commands; the names follow `secret list`. |
 | B28 | `secret delete` of a name that no place has is a usage error (exit 2) with the hint `ncp secret list`. | The user can have a typing error in the name; a silent success hides it. |
 | B29 | `secret set` does not keep one new line at the end of the input (LF or CRLF). An empty value is a usage error. | `echo` and a pasted line add a new line, which is never part of a token. |
 | B30 | When a store cannot answer, `secret list` shows a warning and lists the other place. `secret delete` removes the copies that it can reach, and fails only when it removed none. | Good ergonomics: one broken place does not hide the other. |
@@ -374,7 +410,7 @@ user reviews them.
 | B32 | A `${NAME}` in `command`, `args`, `cwd` or `url` comes only from the environment. `ncp` does not read a store for it. The error is "variable NAME is not set" with the hint `export NAME=<value>`. | Section 2.4: a stored value must not go into the process list or a URL. Not reading the store also shows no prompt. |
 | B33 | A credential file that `ncp` cannot read or write gives exit 3. A native store that is not available, is locked, or gives no answer gives exit 4. | Section 3. |
 | B34 | Items of the earlier layout (`<server>/env/<NAME>`) are ignored. | No release has used them (requirements: stored credentials can reset before the first release). |
-| B35 | After `secret set`, `ncp` checks the other place for a copy, with a limit of 5 s, and warns when the environment sets the name. Each warning names the place that wins. When a copy is found, the hint is `ncp secret delete NAME` (section 2.4): it removes all copies, and the user then stores the value in one place. When the check fails, the warning says so and gives no hint. | The check only gives a warning, so it must not wait for a locked store. |
+| B35 | After `secret set`, `ncp` checks the other place for a copy, with a limit of 5 s, and warns when the environment sets the name. Each warning names the place that wins. The check uses the same key, so it looks only at the same destination. When a copy is found, the warning names the destination, and the hint is `ncp secret delete NAME --server SERVER` (section 2.4): it removes the copies of this destination, and the user then stores the value in one place. When the check fails, the warning says so and gives no hint. | The check only gives a warning, so it must not wait for a locked store. |
 | B36 | A host with no native store (for example Linux with no Secret Service) gives no warning in `secret list` and `secret delete`: the native store counts as empty. | A user who keeps all values in the file must not see the same warning at each run. |
 | B37 | `secret list` with a configuration file that does not load gives a warning, and no secret shows as used. | The names come from the stores, not from the file. |
 | B38 | On Linux, the list of names reads no value and unlocks nothing. A locked item gives the warning "unlock the keyring to list them". `secret delete` removes the item in one call, which can show the unlock prompt, as `secret set` does. | keyring-core unlocks each item that a search finds, which shows a prompt. The design says that the list reads no value. |
@@ -389,7 +425,7 @@ user reviews them.
 | B47 | The client item goes to the place of the tokens (`--credential-store`). A login reads the client item only from that place, and uses it only when its issuer is the current issuer. With no usable item, `ncp` registers the client itself (DCR) and keeps the item before the login continues. With `oauth.clientId`, `ncp` keeps no client item (B68). | Requirement A5. rmcp keeps a registered client secret only in memory (rmcp issue #784). A registration that a later step loses is not done again. |
 | B48 | `ncp` refuses an authorization server endpoint that does not use HTTPS, except on a loopback host. A missing `issuer` in the metadata falls back to the origin of the authorization endpoint. | The spec: all authorization server endpoints MUST use HTTPS (MCP 2025-11-25, basic/authorization, "Communication Security"). rmcp does not check it. Local tests need loopback. |
 | B49 | `auth status` reads the native store and then the file for each http server. `auth logout` removes the tokens from both places and keeps the client item; a native store that gives no answer gives a warning, and the file copy still goes away. | Design 2.4 and the `auth logout` row of section 2. |
-| B51 | `ncp` reads the stored tokens of an http server only after the server answers `401`, and then connects again with the token. With no tokens, or tokens of another issuer, the error is exit 4 with the hint `ncp auth login SERVER`. A refresh writes the new tokens to the place that they came from. When the native store cannot keep the tokens at login, the error is exit 4 with the hint `--credential-store file`. | Design C1: a server with no login never opens the native store. The cost is one more request for each run of an OAuth server. A long token set goes into several items (B66). |
+| B51 | `ncp` reads the stored tokens of an http server only after the server answers `401`, and then connects again with the token. With no tokens, or tokens of another issuer, the error is exit 4 with the hint `ncp auth login SERVER`. A refresh writes the new tokens to the place that they came from. When the native store cannot keep the tokens at login, the error is exit 4 with the hint `--credential-store file`. When the request sent a stored header value and the server answers `401`, the first hint is `ncp secret set NAME --server SERVER`, and the second hint is `ncp auth login SERVER`: after a change of the key at one origin, the key at another origin can be old (S9). | Design C1: a server with no login never opens the native store. The cost is one more request for each run of an OAuth server. A long token set goes into several items (B66). |
 | B52 | After `403 insufficient_scope`, a call gives exit 4 that names the scopes, with the hint `ncp auth login SERVER`. `ncp` keeps the scopes in the tokens item (field `ncp_required_scopes`, which rmcp ignores) until the next login. `auth login` asks for the scopes that rmcp selects, the scopes that the user has, and the kept scopes. There is no automatic retry. | Requirement A9: the old and the new scopes. A new authorization needs the browser, and a call never waits for input that it did not ask for. Each step-up is one login by the user, so it cannot loop. |
 | B53 | After a login, `ncp` removes the tokens item of the other place, with a limit of 5 s; a failure gives a warning. The search for tokens reads the native store and then the file, as for `${NAME}`: a native store that cannot answer does not stop the search, and its error (exit 4, with the reason) is the result only when the file has no tokens. The OAuth steps of a login have the limit of `--timeout`, with exit 3 at the limit; the steps after a `401` (discovery, refresh) have the connect limit of 30 s, after the store read with its own limit. Ctrl-C gives 130. The listener answers each connection in its own task with a limit of 5 s; a redirect with another state gets `400`, and the wait goes on. Discovery that finds no metadata is an error. | Design 2.4: calls read the native store first, so an old copy there would hide new tokens in the file, and a locked keyring must not hide tokens in the file or look like a missing login. Section 3: a timeout is exit 3. C7: nothing waits forever. Any local program or web page can send a request to the listener. The fallback endpoints of rmcp are for 2025-03-26 only. |
 | B54 | When the answer to `server/discover` is a result that is not a discover result (for example an empty result), `ncp` treats the server as legacy and sends `initialize`, as for a JSON-RPC error. | Good ergonomics: the official conformance server answers an unknown method so, and the server works with `initialize`. A modern server gives a discover result. |
@@ -404,13 +440,14 @@ user reviews them.
 | B63 | When stdin and stderr are a TTY, `ncp` says in its capabilities that it can answer elicitation in form and URL mode, and it asks on stderr: the message of the server, then each field with its type, its default and a check of the answer, then "send, change a field, decline or cancel", so that the user can correct an answer before it goes out. The text of the server shows with the escapes of B15, each block line after the first indented, and each label, title and URL on one line, so that it cannot look like a question or a note of `ncp`. In URL mode `ncp` opens only an `https` URL (or `http` to a loopback host) and only after a yes; it shows the host and the URL, with a warning when the host has a Punycode label (`xn--`), because such a name can look like another name. Another URL is declined with a warning: a `file:` or a custom scheme starts a program, not a page. A multi-round request (`input_required`, 2026-07-28) gets the answers and runs again, with the request state as it came; at most 8 rounds, then the last `input_required` result goes to stdout with exit 5. A request for sampling or roots also gives that result with exit 5, before any question. A request of a legacy server (`elicitation/create`) gets the same questions. Each answer has the limit of `--timeout`; no answer in time gives exit 5, the end of stdin cancels the question, and Ctrl-C gives 130. With no TTY, `ncp` declares no elicitation, `input_required` gives exit 5 as before, and a legacy server that asks anyway gets the error `-32602` (Invalid params), as MCP 2025-11-25 requires for a mode that the client did not declare; the command then exits with 5. The fields come in name order, because the JSON library of rmcp keeps no key order. Each answer gets the checks of the schema: length, range, `minItems` and `maxItems`, and a light check of the `email`, `uri`, `date` and `date-time` formats; a required multi-select needs one value. A `oneOf` list with an item that has no `const` is refused, with a decline. | Requirement P9. The spec: a client shows which server asks, lets the user decline or cancel, and opens a URL only with consent. An agent with no TTY must not hang on a question, and an agent in a pseudo-terminal gets the time limit. |
 | B64 | `tool show` gives each annotation hint as yes or no, and marks a value that the server did not set as "(default)", with the default of the spec: not read-only, destructive, not idempotent, open-world. For a read-only tool it leaves out the destructive and idempotent hints. `tool list` keeps the marks of B24. | An absent hint must not look safe: the spec defaults are the careful values. The spec gives the destructive and idempotent hints a meaning only for a tool that is not read-only. |
 | B65 | A server error `-32042` (`URLElicitationRequiredError`, MCP 2025-11-25) gives exit 5. The text error lists each page with its URL and message; the JSON error has them in `pages` (`url`, `message`). Only a page that is safe to open (B63: `https`, or `http` to a loopback host) is in the list, with its URL in normal form; for another page the error gives only the reason that `ncp` refuses it. An error with no page is a protocol error (exit 3). On a TTY, `tool call`, `resource read` and `prompt get` first ask to open each page, only after a yes; a list command only gives the error. `ncp` does not run the request again: after a page opens, the hint says to run the command again when the page is done. | Requirement P9. The server needs the user in a browser before it can answer, which is input that `ncp` cannot give, so exit 5 fits. An automatic retry would need `notifications/elicitation/complete`, and the person knows when the page is done. An agent gets the URLs as data to show to its user. |
-| B66 | The macOS store keeps a value in parts when its `security -i` command line does not fit 4095 bytes. It cuts the encoded value into slices, and each slice is an item under `ACCOUNT/GEN/`. The item `ACCOUNT` (the head) names GEN and the number of parts. GEN is new for each save. The head and the parts are written with no second encoding, so a head cannot look like a stored value. A save writes each part in its own run and checks each exit code, then writes the head. After the head, it removes each other account under `ACCOUNT/` whose GEN is older than the limit of a save, also when the new value fits one line. A younger GEN can belong to a save of another process that has not written its head yet, so it stays until a later save. GEN starts with the time of the save. The whole save has one deadline, and it stops before the head when too little time is left. A failure before the head keeps the old value. A read that does not find a part reads the head again one time. Then the error is exit 4 and names the account. A delete removes the head and each account under `ACCOUNT/`. The token response stays as rmcp gives it, with `id_token`. | Requirement S7. One `add-generic-password -U` changes one item atomically, so the head is the commit point, and GEN keeps the parts of two saves apart. Readers do not hold the refresh lock, so the second read covers a save by another process. The deadline keeps the rule of the program limit: no item is written after `ncp` reports a failure. The cleanup after each save leaves no old token data behind, except for a short time the parts of a save that can still run. No spec asks a client to remove `id_token`. |
+| B66 | The macOS store keeps a value in parts when its `security -i` command line does not fit 4095 bytes. It cuts the encoded value into slices, and each slice is an item under `ACCOUNT/GEN/`. No item account is another item account followed by `/`, also with an origin in the account (S9, secret-binding.md rule 4), so the cleanup of the parts of one item never removes another item. The item `ACCOUNT` (the head) names GEN and the number of parts. GEN is new for each save. The head and the parts are written with no second encoding, so a head cannot look like a stored value. A save writes each part in its own run and checks each exit code, then writes the head. After the head, it removes each other account under `ACCOUNT/` whose GEN is older than the limit of a save, also when the new value fits one line. A younger GEN can belong to a save of another process that has not written its head yet, so it stays until a later save. GEN starts with the time of the save. The whole save has one deadline, and it stops before the head when too little time is left. A failure before the head keeps the old value. A read that does not find a part reads the head again one time. Then the error is exit 4 and names the account. A delete removes the head and each account under `ACCOUNT/`. The token response stays as rmcp gives it, with `id_token`. | Requirement S7. One `add-generic-password -U` changes one item atomically, so the head is the commit point, and GEN keeps the parts of two saves apart. Readers do not hold the refresh lock, so the second read covers a save by another process. The deadline keeps the rule of the program limit: no item is written after `ncp` reports a failure. The cleanup after each save leaves no old token data behind, except for a short time the parts of a save that can still run. No spec asks a client to remove `id_token`. |
 | B67 | The client of a login, in the order of the spec: `oauth.clientId` (B68), then the client item of the same issuer, then a new registration (DCR). When the metadata has no `registration_endpoint`, rmcp refuses to register, and `ncp` gives exit 4 with the hint to register a client and set `oauth.clientId`, `oauth.clientSecret` and `oauth.issuer`. The hint gives the `service_documentation` URL of the metadata when it passes the safe page rule of B63. CIMD comes with the first release (A7). rmcp selects the token authentication: HTTP Basic, or the request body when the metadata lists `client_secret_post` and not `client_secret_basic`. | MCP 2026-07-28 client registration: the order of the mechanisms. RFC 8414 §2: `service_documentation` tells how to register a client when there is no DCR, and with no list of methods the default is `client_secret_basic`. RFC 6749 §2.3.1: the body is NOT RECOMMENDED. |
-| B68 | `oauth.clientSecret` is a literal value or a template with `${NAME}`, as a `headers` value. It needs `oauth.clientId` and `oauth.issuer`, else the entry is invalid (exit 2). `oauth.issuer` is the issuer of the authorization server where the user registered the client. It is optional with `oauth.clientId` alone. When `issuer` is absent, `ncp` reads `authorizationServer` (a string or an array of strings). When both are present and do not agree, the entry is invalid. `ncp` compares the issuer of the metadata with the configured value as an exact string: after discovery and before the browser opens, and before each token request that carries the secret. A mismatch stops with exit 4. The message says that `ncp` stopped on purpose, names both issuers and, with a secret, says that the secret was not sent. The hints have two branches. For an expected move: when the new server has DCR, remove the three keys and run `ncp auth login SERVER`; else register a client there, with the `service_documentation` URL when it passes B63. For an unexpected change: keep the configuration and tell the owner of the server. For a missing issuer, `auth login` adds the issuer that the server names. `ncp` gets the secret at `auth login`, and at a refresh when the tokens have the client ID of `oauth.clientId`. No output shows the secret, also not an error of the expansion. `ncp` records no issuer at the first login. | MCP 2026-07-28 client registration, Authorization Server Binding: pre-registered credentials MUST be bound to their issuer, and a mismatch SHOULD show an error. The clients that take a secret bind it to an issuer that the user names, and no surveyed client records one at the first use ([mcp-client-oauth.md](../research/mcp-client-oauth.md)). `issuer` is the name of RFC 8414 §2; `authorizationServer` is the key of Claude Desktop. RFC 6749 §6: a confidential client authenticates at a refresh too. The official conformance scenario `auth/pre-registration` is the test target (C4). |
+| B68 | `oauth.clientSecret` is a literal value or a template with `${NAME}`, as a `headers` value. It needs `oauth.clientId` and `oauth.issuer`, else the entry is invalid (exit 2). `oauth.issuer` is the issuer of the authorization server where the user registered the client. It is optional with `oauth.clientId` alone. When `issuer` is absent, `ncp` reads `authorizationServer` (a string or an array of strings). When both are present and do not agree, the entry is invalid. `ncp` compares the issuer of the metadata with the configured value as an exact string: after discovery and before the browser opens, and before each token request that carries the secret. A mismatch stops with exit 4. The message says that `ncp` stopped on purpose, names both issuers and, with a secret, says that the secret was not sent. The hints have two branches. For an expected move: when the new server has DCR, remove the three keys and run `ncp auth login SERVER`; else register a client there, with the `service_documentation` URL when it passes B63. For an unexpected change: keep the configuration and tell the owner of the server. For a missing issuer, `auth login` adds the issuer that the server names. The store key of a stored client secret has the origin of `oauth.issuer` (S9), so a header at another origin cannot read it. `ncp` gets the secret at `auth login`, and at a refresh when the tokens have the client ID of `oauth.clientId`. No output shows the secret, also not an error of the expansion. `ncp` records no issuer at the first login. | MCP 2026-07-28 client registration, Authorization Server Binding: pre-registered credentials MUST be bound to their issuer, and a mismatch SHOULD show an error. The clients that take a secret bind it to an issuer that the user names, and no surveyed client records one at the first use ([mcp-client-oauth.md](../research/mcp-client-oauth.md)). `issuer` is the name of RFC 8414 §2; `authorizationServer` is the key of Claude Desktop. RFC 6749 §6: a confidential client authenticates at a refresh too. The official conformance scenario `auth/pre-registration` is the test target (C4). |
 | B50 | When `SSL_CERT_FILE` is set, `ncp` trusts only the PEM roots in the file, on macOS and on Linux. A file that `ncp` cannot read, or that has no certificate, gives exit 3 with the path and the variable name, and so does an empty value. Only an http server reads the file, so a stdio server works with a bad value. When a TLS connection fails with an unknown issuer and the variable is set, the hint says that the file replaces the system roots and must hold each root that the user needs. | N4. uv 0.12 does the same on each OS: the variables "override the default certificate source entirely", and uv rejected a merge with the default roots (`docs/research/custom-ca-certificates.md`). On Linux the system store reads the variable in place of the system roots, so an addition there needs a change of the environment of `ncp` or its own search for the system roots. uv ignores an empty value; `ncp` cannot, because the Linux system store then loads no root. A file with only the root of a company is the common error, and uv gives no hint for it. |
 | B69 | The HTTP client of the MCP connection follows no redirect. A `3xx` answer gives exit 3 with the status and the new location, and the hint to put the new URL in the entry when the user trusts it. | Requirement N6. The headers of an entry can hold credentials, and reqwest removes only the standard credential headers at a redirect to another host. rmcp also follows no redirect by default, because custom headers must not go to the target of a redirect. |
 | B70 | Each stored token set has a binding: the canonical URL of the MCP server and the issuer, as an extra field next to the required scopes. A pure check compares the binding with the entry and the metadata before `ncp` sends a stored token and before a refresh. A different URL or issuer, or no binding, gives exit 4: "ncp did not send the stored token", says that the stop is on purpose, and gives the hint `ncp auth login SERVER`. The message names only the current value, never a stored URL or issuer: a stored value can hold an old `${NAME}` value that `ncp` cannot hide (S3). The server name is only the storage key. | Requirement A13. A changed entry or a hostile server must not get a token of another server. A token from before this change has no binding, and one new login is safer than a guess. |
 | B71 | Small rules of the `oauth` object. `oauth.issuer` or `oauth.clientSecret` with no `oauth.clientId` makes the entry invalid. `authorizationServer` is a string or an array with one string. A `clientSecret` that has `${` but is not a valid `${NAME}` makes the entry invalid, and the error does not show the value. For a `clientSecret` with no issuer, `auth login` finds the metadata of the server, sends nothing to it, and gives exit 2 with the hint to add the issuer that the server names. Other commands give exit 2 with no hint. `ncp` gets the secret each time it uses the stored tokens of the configured client, and not only at a refresh. | An issuer with no client binds nothing, and the user can think that it does. A client is registered at one authorization server, so one issuer is enough; more issuers need a test target. An error with a part of a literal secret is a leak (S3). rmcp decides about a refresh after `ncp` gives it the client, so `ncp` cannot know in advance if a refresh comes. The cost is one store read for each use of the tokens, after a `401` answer. |
+| B72 | `secret set NAME [--server SERVER]` finds the entries that name `${NAME}` in `env`, `headers` or `oauth.clientSecret` (with `--server`, only that entry). The targets are the different store keys of these entries. With no entry, `ncp` gives a usage error, and the message tells the user to add the entry first. A `${NAME}` only in `command`, `args`, `cwd` or `url` gives the hint of B32. With two or more targets, `ncp` gives a usage error that lists each server and its destination, with the hint `--server`. A pipe gives the value with no question. `ncp` never copies a stored value to a new destination. `secret delete NAME` with `--server` removes the item of that destination. With `--unused`, it removes the items that no entry of the loaded file uses. It gives a usage error when the file does not load or an entry is invalid. With `--all`, it removes all items. With no flag, it removes the one item of the name. When there are two or more items, it gives a usage error that lists the destinations. | [secret-binding.md](secret-binding.md) rules 6 and 7. One target for each write stops a name collision (P1). A copy makes the leak of a typo in a URL one key press. The user cannot get a value back through `ncp`, so a delete of more than one destination needs a flag. A script that changes a key gives `--server`, so a second entry with the same name does not break it. |
 
 [spec-tool-names]: https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool-names
 [spec-timeouts]: https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle#timeouts
