@@ -32,7 +32,6 @@ cat >"$bus_config" <<'XML'
   </policy>
 </busconfig>
 XML
-session="dbus-run-session --config-file=$bus_config --"
 
 run_case() {
 	name="$1"
@@ -51,8 +50,8 @@ start_keyring='echo -n test-password | gnome-keyring-daemon --unlock --component
 run_case no_session_bus_gives_an_unavailable_store \
 	env -u DBUS_SESSION_BUS_ADDRESS
 run_case bus_with_no_secret_service_gives_an_unavailable_store \
-	$session
+	dbus-run-session --config-file="$bus_config" --
 run_case unlocked_keyring_keeps_and_lists_secrets \
-	$session sh -c "$start_keyring && exec \"\$@\"" sh
+	dbus-run-session --config-file="$bus_config" -- sh -c "$start_keyring && exec \"\$@\"" sh
 run_case locked_keyring_gives_an_error_within_the_time_limit \
-	$session sh -c "$start_keyring && exec \"\$@\"" sh
+	dbus-run-session --config-file="$bus_config" -- sh -c "$start_keyring && exec \"\$@\"" sh
