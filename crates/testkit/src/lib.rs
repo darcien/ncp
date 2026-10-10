@@ -270,6 +270,11 @@ fn tools() -> Vec<Tool> {
             text_arg("text"),
         ),
         Tool::new("env", "Return an environment variable", text_arg("name")),
+        Tool::new(
+            "env-names",
+            "Return the names of the environment variables, one on each line",
+            schema(json!({"type": "object"})),
+        ),
         Tool::new("header", "Return an HTTP request header", text_arg("name")),
         Tool::new(
             "wait",
@@ -528,6 +533,14 @@ impl ServerHandler for Fixture {
             )),
             "env" => Ok(text_result(
                 std::env::var(argument(&arguments, "name")).unwrap_or_else(|_| "<unset>".into()),
+            )),
+            "env-names" => Ok(text_result(
+                std::env::vars_os()
+                    .map(|(name, _)| name.to_string_lossy().into_owned())
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>()
+                    .join("\n"),
             )),
             "header" => {
                 let value = context

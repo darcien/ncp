@@ -313,6 +313,46 @@ fn value_from_the_credential_file_expands_in_env_and_the_environment_wins() {
     assert_eq!(text_of(&env_value(&home).stdout()), "from-env");
 }
 
+/// `ncp` clears the environment of a stdio server. The SDK of the server
+/// cannot change this, so the test uses the fixture and not an interop
+/// server.
+#[test]
+fn stdio_server_gets_only_the_environment_of_ncp_and_its_entry() {
+    let home = Home::new("server-env");
+    home.configure(&json!({"fx": {"command": FIXTURE, "args": ["modern"],
+        "env": {"TOKEN": "${USED}", "GREETING": "hello"}}}));
+    for (name, value) in [("USED", "used-value"), ("UNUSED", "unused-value")] {
+        let run = home.run_with_stdin(
+            &["secret", "set", name, "--credential-store", "file"],
+            value,
+        );
+        assert_eq!(run.code(), 0, "{}", run.describe());
+    }
+
+    let run = home.run(&["tool", "call", "fx", "env-names"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let stdout = run.stdout();
+    // macOS CoreFoundation adds this name to each process that loads it.
+    // It holds the text encoding of the user, not a value of ncp.
+    let names: Vec<&str> = text_of(&stdout)
+        .lines()
+        .filter(|name| *name != "__CF_USER_TEXT_ENCODING")
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "GREETING",
+            "HOME",
+            "TOKEN",
+            "XDG_CACHE_HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_STATE_HOME"
+        ]
+    );
+    let token = home.run(&["tool", "call", "fx", "env", "name=TOKEN"]);
+    assert_eq!(text_of(&token.stdout()), "used-value");
+}
+
 #[test]
 fn native_store_comes_before_the_file_and_list_shows_both_places() {
     let home = Home::new("native-secret").with_fake_keychain();
