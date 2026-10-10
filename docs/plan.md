@@ -394,6 +394,9 @@ These fixes need no new decision. Each one is a small commit.
 
 ## Milestone 17: bind stored secrets to origins
 
+Status: done on 2026-10-10. Three review rounds; the findings are fixed.
+Not tested: the question on a TTY (it needs a terminal).
+
 Design: `docs/design/secret-binding.md`. Research:
 `docs/research/pnpm-credentials.md`, `docs/research/add-command.md`.
 
@@ -432,6 +435,10 @@ Items from before this milestone need no migration, because there is no
 release. An old `secret/NAME` item is then a value for stdio servers.
 
 ## Milestone 18: project configuration (gate)
+
+Status: the proposal `docs/design/project-config.md` (revision 2) had an
+adversarial and a simplicity review. It waits for the decision of the
+user, with two changes to the items below (section 7 of the proposal).
 
 The user decided on 2026-10-10 that `ncp` reads a project `.mcp.json`
 (S5). The rules below come from the backlog. Write them as a design in
