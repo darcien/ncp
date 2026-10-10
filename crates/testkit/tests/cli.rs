@@ -575,6 +575,30 @@ async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
     assert_eq!(run.error()["message"], "K is not stored");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn rejected_stored_header_value_gives_the_secret_hint_before_the_login_hint() {
+    let fixture = serve_http_with(Mode::Modern, Some("t0ken")).await.unwrap();
+    let home = Home::new("old-key").with_fake_keychain();
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url,
+        "headers": {"Authorization": "Bearer ${K}"}}}));
+    let run = home.run_with_stdin(&["secret", "set", "K", "--credential-store", "file"], "old");
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 4, "{}", run.describe());
+    assert_eq!(run.error()["hint"], "ncp secret set K --server web");
+    assert!(
+        run.stderr()
+            .contains(&json!({"hint": {"message": "ncp auth login web", "server": "web"}})),
+        "{}",
+        run.describe()
+    );
+    // A value from the environment is not stored, so only the login hint.
+    let home = home.set("K", "old");
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 4, "{}", run.describe());
+    assert_eq!(run.error()["hint"], "ncp auth login web");
+}
+
 #[test]
 fn stored_value_needs_a_literal_origin_and_an_environment_value_does_not() {
     let home = Home::new("literal-origin").set("PORT", "1");

@@ -102,6 +102,12 @@ fn secret_name(name: &str) -> Result<SecretName, Failure> {
     SecretName::parse(name).map_err(|error| Failure::usage(error.to_string()))
 }
 
+/// The values of an entry, and the names whose values came from a store.
+pub(super) struct Resolved {
+    pub values: Values,
+    pub stored: Vec<SecretName>,
+}
+
 /// The expanded `env` or `headers` values of the server.
 ///
 /// # Errors
@@ -109,12 +115,13 @@ fn secret_name(name: &str) -> Result<SecretName, Failure> {
 /// Returns a usage failure for a name that no place has for the
 /// destination of the entry, and an authorization failure when the native
 /// store cannot answer and the file does not have the item.
-pub(super) async fn resolve(context: &Context<'_>, server: &Server) -> Result<Values, Failure> {
+pub(super) async fn resolve(context: &Context<'_>, server: &Server) -> Result<Resolved, Failure> {
     let destination = binding::value_destination(server);
-    let values = values_of(context, server, server.value_names(), destination).await?;
-    server
+    let (values, stored) = values_of(context, server, server.value_names(), destination).await?;
+    let values = server
         .expand_values(&values)
-        .map_err(|error| Failure::usage(error.to_string()).server(server.name.as_str()))
+        .map_err(|error| Failure::usage(error.to_string()).server(server.name.as_str()))?;
+    Ok(Resolved { values, stored })
 }
 
 /// The expanded `oauth.clientSecret`, or `None` for a client with no
@@ -133,7 +140,8 @@ pub(super) async fn client_secret(
         return Ok(None);
     };
     let names = secret.names().into_iter().collect();
-    let values = values_of(context, server, names, binding::issuer_destination(issuer)).await?;
+    let (values, _) =
+        values_of(context, server, names, binding::issuer_destination(issuer)).await?;
     secret
         .expand(&values)
         .map(|value| Some(Secret::new(value)))
@@ -147,13 +155,14 @@ pub(super) async fn client_secret(
 }
 
 /// The environment with the value of each name that it does not have,
-/// from the items of the destination in the stores.
+/// from the items of the destination in the stores, and the names that
+/// came from a store.
 async fn values_of(
     context: &Context<'_>,
     server: &Server,
     names: BTreeSet<&str>,
     destination: Result<Destination, OriginError>,
-) -> Result<Env, Failure> {
+) -> Result<(Env, Vec<SecretName>), Failure> {
     let name_of_server = server.name.as_str();
     let (set, missing): (Vec<&str>, Vec<&str>) = names
         .into_iter()
@@ -166,7 +175,7 @@ async fn values_of(
     }
     let mut values: Env = context.env.clone();
     if missing.is_empty() {
-        return Ok(values);
+        return Ok((values, Vec::new()));
     }
     let destination =
         destination.map_err(|error| not_literal(&missing, &error).server(name_of_server))?;
@@ -181,14 +190,16 @@ async fn values_of(
     if let Some(timings) = &context.timings {
         timings.update(|record| super::timings::add(&mut record.credentials, started.elapsed()));
     }
+    let mut stored = Vec::new();
     for (name, secret, place) in found.map_err(|failure| failure.server(name_of_server))? {
         context.ui.debug(
             Some(name_of_server),
             &format!("{name} from {place}, for {destination}"),
         );
         values.insert(name.to_string(), secret.expose().to_string());
+        stored.push(name);
     }
-    Ok(values)
+    Ok((values, stored))
 }
 
 /// The stop for a stored value of an entry with no literal origin. An

@@ -21,6 +21,7 @@ use super::{
 use crate::{
     client::{self, ConnectError, Connection, Launch, RequestError, RequestLimits},
     config::{self, Config, EntryError, LookupError, Server, Target, Transport},
+    credential::SecretName,
     era::{Era, EraCache},
     era_file,
     expand::{Env, ExpandError},
@@ -243,12 +244,7 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
                 challenge: challenge.as_deref(),
             };
             let Some(authorized) = stored_login(context, &login).await? else {
-                return Err(connect_failure(
-                    context.env,
-                    server,
-                    &error,
-                    &prepared.notes.get(),
-                ));
+                return Err(prepared.connect_failure(context, server, &error));
             };
             let launch = Launch {
                 authorized: Some(&authorized),
@@ -258,7 +254,7 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
         }
         (result, ..) => result,
     }
-    .map_err(|error| connect_failure(context.env, server, &error, &prepared.notes.get()))?;
+    .map_err(|error| prepared.connect_failure(context, server, &error))?;
     prepared.save_era(context, server, connection.era());
     Ok(connection)
 }
@@ -313,6 +309,7 @@ pub async fn open_with_login(
             .server(server.name.as_str())
             .hint(login_hint(server))
     };
+    let needs_login = || with_secret_hints(needs_login(), server, &prepared.stored);
     let (Transport::Http(remote), Some(http)) = (&server.transport, &prepared.http) else {
         return Err(needs_login());
     };
@@ -333,7 +330,7 @@ pub async fn open_with_login(
     };
     let connection = Box::pin(client::connect(&launch))
         .await
-        .map_err(|error| connect_failure(context.env, server, &error, &prepared.notes.get()))?;
+        .map_err(|error| prepared.connect_failure(context, server, &error))?;
     prepared.save_era(context, server, connection.era());
     Ok(connection)
 }
@@ -367,6 +364,8 @@ struct Prepared {
     cache: EraCache,
     cached: Option<Era>,
     values: crate::config::Values,
+    /// The names of the values that came from a store.
+    stored: Vec<SecretName>,
     observer: client::observe::Observer,
     http: Option<reqwest::Client>,
     /// What the HTTP client saw that a transport error does not say.
@@ -393,7 +392,8 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
         .then(|| cache.lookup(&server.name, &server.target).cloned())
         .flatten();
     ui.debug(Some(name), &cached_era_text(cached.as_ref()));
-    let values = super::secrets::resolve(context, server).await?;
+    let super::secrets::Resolved { values, stored } =
+        super::secrets::resolve(context, server).await?;
     let shown = server.clone();
     let observer = diagnostics::observer(ui, name, context.timings.clone(), shown_url(&shown));
     // Only an http server needs the HTTP client. Thus a bad SSL_CERT_FILE
@@ -416,6 +416,7 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
         cache,
         cached,
         values,
+        stored,
         observer,
         http,
         notes,
@@ -428,6 +429,20 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
 }
 
 impl Prepared {
+    fn connect_failure(
+        &self,
+        context: &Context<'_>,
+        server: &Server,
+        error: &ConnectError,
+    ) -> Failure {
+        let failure = connect_failure(context.env, server, error, &self.notes.get());
+        if error.needs_authorization() {
+            with_secret_hints(failure, server, &self.stored)
+        } else {
+            failure
+        }
+    }
+
     fn launch<'a>(&'a self, context: &'a Context<'_>, server: &'a Server) -> Launch<'a> {
         Launch {
             server,
@@ -657,6 +672,22 @@ fn causes(error: &(dyn std::error::Error + 'static)) -> String {
 }
 
 /// The command that logs in to the server.
+/// The hints of a `401` or `403` after a request with a stored header
+/// value. A new value comes first: after the user changes the key at one
+/// origin, the key at another origin can be old (B51).
+fn with_secret_hints(failure: Failure, server: &Server, stored: &[SecretName]) -> Failure {
+    if !matches!(server.transport, Transport::Http(_)) || stored.is_empty() {
+        return failure;
+    }
+    let word = super::render::shell_word(server.name.as_str());
+    let hints = stored
+        .iter()
+        .map(|name| format!("ncp secret set {name} --server {word}"))
+        .chain(failure.hints.iter().cloned())
+        .collect();
+    Failure { hints, ..failure }
+}
+
 fn login_hint(server: &Server) -> String {
     format!(
         "ncp auth login {}",
