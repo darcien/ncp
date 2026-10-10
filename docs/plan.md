@@ -111,8 +111,9 @@ Stop and ask the user (from AGENTS.md, and the points below):
 - A test that needs a real Keychain, a real Secret Service, a real Mac
   dialog, or a third-party server. Write the steps for the user instead.
 - A change to a decision of the design (C1 to C7) or to a MUST requirement.
-- Code from outside the allowed sources, for example Node or npm packages
-  that do not come from the MCP organization.
+- Code from outside the allowed sources of `AGENTS.md`, for example an npm
+  package that is not from the MCP organization and is not in the lock file
+  of such a package.
 
 ## Milestone 6: client core changes from the design
 
@@ -321,13 +322,13 @@ behavior. Do the items in order. Each item is one or more small commits.
 11. Check the claims in `.scratch/backlog/review-claims.md`. Fix each claim
     that is true. Remove the file when done.
 
-## Milestone 14: release build (gate)
+## Milestone 14: release build
 
 Status: items 1 to 3 done on 2026-10-10 at commit 3066c47 (report
 `docs/research/release-build-2026-10-10.md`). The release step also makes
 the archives and `SHA256SUMS` of the decided release form, with no upload.
-Item 4 waits for the user: the workflow needs action pins from github.com,
-and the push, the tag and the CIMD URL need the user.
+Item 4 moved to milestone 16: the user decided on 2026-10-10 to do the
+interop tests before the distribution.
 
 1. Static musl builds for `x86_64` and `aarch64` in the Linux harness, macOS
    builds for both architectures, and checksums (D3).
@@ -335,5 +336,38 @@ and the push, the tag and the CIMD URL need the user.
    and `linux/amd64`.
 3. Start time (F3): measure `ncp --version` and `ncp server list`, and
    record the result in a research report.
-4. **Stop and ask** before the distribution channel (D2), CI, and any push or
+4. Moved to milestone 16.
+
+## Milestone 15: interop tests
+
+Test `ncp` against the official server of a different SDK, with no
+network. Design: `docs/design/interop.md` (accepted on 2026-10-10). Interop
+is optional: it is not in the git hook, and later milestones do not need
+it.
+
+1. `harness/interop/` (design section 4): pnpm pinned in `mise.toml` and in
+   `devEngines.packageManager`, `server-everything` at `2026.8.31`,
+   `pnpm-workspace.yaml`, a committed `pnpm-lock.yaml`, and
+   `mise run interop:install`. If `typos` reports words in
+   `pnpm-lock.yaml`, exclude the file.
+2. Move the shared helpers of `crates/testkit/tests/cli.rs` to a module
+   that more test files can use.
+3. The interop tests over stdio (design section 5), and
+   `mise run interop`.
+4. The same tests over Streamable HTTP on `127.0.0.1`.
+5. The integration test for the environment of a stdio server (design
+   section 5, last part). This test is in the git hook.
+6. Run `mise run interop` one time. Record the result in
+   `docs/research/interop.md`: the protocol version, the times of the
+   first and the second contact, each failure and its cause, and any macOS
+   dialog.
+
+Done when the git hook passes and `mise run interop` passes one time.
+
+## Milestone 16: distribution (gate)
+
+The workflow needs action pins from github.com. The push, the tag and the
+CIMD URL need the user.
+
+1. **Stop and ask** before the distribution channel (D2), CI, and any push or
    upload. They add network destinations and accounts.
