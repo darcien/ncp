@@ -143,8 +143,9 @@ pub fn is_loopback(host: &Host<&str>) -> bool {
 }
 
 /// The rule for each URL that `ncp` sends a request to or opens: HTTPS,
-/// or HTTP to a loopback host (MCP 2025-11-25, basic/authorization,
-/// "Communication Security").
+/// or HTTP to a loopback host. This is an `ncp` rule. Tokens, headers and
+/// form values must not go over the network in plain text. A loopback host
+/// does not leave the machine, so local servers and tests can use HTTP.
 #[must_use]
 pub fn is_secure_url(url: &Url) -> bool {
     match (url.scheme(), url.host()) {
