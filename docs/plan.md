@@ -436,9 +436,10 @@ release. An old `secret/NAME` item is then a value for stdio servers.
 
 ## Milestone 18: project configuration (gate)
 
-Status: the proposal `docs/design/project-config.md` (revision 2) had an
-adversarial and a simplicity review. It waits for the decision of the
-user, with two changes to the items below (section 7 of the proposal).
+Status: proposal `docs/design/project-config.md` revision 3, after
+cited prior art (`docs/research/project-trust-prior-art.md`) and three
+reviews. It waits for the decisions A to F of its section 7. Decisions A,
+D, E and F change items 1 to 4 below.
 
 The user decided on 2026-10-10 that `ncp` reads a project `.mcp.json`
 (S5). The rules below come from the backlog. Write them as a design in

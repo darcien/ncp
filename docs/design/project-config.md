@@ -221,31 +221,117 @@ Accepted risks:
 
 ## 7. Decisions
 
-The reviewers agree on these: approval by a hash of path and bytes (not by
-folder or by name), `.mcp.json` only (Claude Code and VS Code read it; VS
-Code turned off the files of other applications by default, PR #260209),
-exit 2 with no TTY for a named project entry, no environment variable for
-trust, one gate before any action, and the full parsed entries in the
-question.
+Agreed by all three reviewers, no open question:
+- Approval by a hash of the path and the bytes. Not by folder (a pull
+  changes what runs with no question: Codex, Gemini, Zed) and not by name
+  (Cursor CVE-2025-54136).
+- Only `.mcp.json`. Claude Code and VS Code read it. VS Code turned off
+  the files of other applications by default (PR #260209).
+- No TTY and a named project entry: exit 2 before any action.
+- No environment variable gives trust (Gemini CVE-2026-12537, mise
+  CVE-2026-35533).
+- One gate before any action (rule 8).
+- The question shows the full parsed entries with escapes. Most tools
+  show only names (T8).
 
-For each open decision, the recommendation of this revision comes first.
+Each open decision below has the question, the options with their prior
+art, the recommendation with its reason, and its cost.
 
-| # | Decision | Options and prior art (PTA) | Regular user | Adversarial | Simplicity |
-|---|---|---|---|---|---|
-| A | Search range | **Up to the git root, the home folder or the root, with owner checks** (Codex and OpenCode stop at the git root; Claude Code keys trust on it; git checks owners) · current folder only (VS Code, Gemini, Goose) · up to `/` (direnv, Cargo) | Git root | Git root or home, with owner checks | Current folder, no owner checks |
-| B | Name clash | **Project wins after approval, and the question names the replaced user entry** (each of the 7 checked MCP clients lets the project win) · user wins (no checked tool) · error | Project wins after approval | User wins | User wins |
-| C | `${VAR}` in a project file | **By field: remote entries read the store only; no `${` in command, args, cwd, url** · no expansion (Codex; VS Code refuses it when it adds to `.mcp.json`) · empty a list of credential variables (Claude Code) · expand all (Gemini) | By field | By field | No expansion |
-| D | Approval with no TTY | **`ncp project approve`, asks only on a TTY; a saved No** (direnv allow and deny, mise trust) · a one-run flag that is not saved (Gemini `--skip-trust`, VS Code `--disable-workspace-trust`) · `--config-file` only | An approval command that the message names; a saved No | A one-run flag | `--config-file` only |
-| E | Worktrees | **Each path asks one time** (direnv rule) · a worktree inherits the approval of the main checkout (Codex, mise; Claude Code CVE-2026-40068 forged this link) | Inherit | Path in the key | Path in the key |
-| F | JSONC | **In milestone 19, with `jsonc-parser`** · in milestone 18 (plan item 1) | — | Test the nesting limit | Milestone 19 |
+### A. Search range
 
-Changes to the text of plan milestone 18: item 1 moves (F), item 2 adds
-the git and home stops and the owner checks of the file and its folder
-(A), item 3 approves the file and not each entry (E and the agreed hash),
-and item 4 replaces the one-run flag with `ncp project approve` (D).
+Question: where does `ncp` look for `.mcp.json`?
 
-Open, not in this milestone: OAuth tokens are keyed by the server name. A
-project entry `foo` in two projects shares one token item, so a login in
-one project replaces the tokens of the other. A13 stops a send to another
-URL. A key with the project root changes how secrets are stored, so it
-needs a decision of its own.
+| Option | Prior art (PTA) | Reviewer |
+|---|---|---|
+| Current folder only | VS Code, Gemini, Goose | Simplicity |
+| **Up to the git root, stop at home and root; owner checks of the file and its folder** | Codex and OpenCode stop at the git root; Claude Code keys trust on it; git checks owners | User, adversarial |
+| Up to `/` | direnv, Cargo | — |
+
+Reason: a user works in subfolders of a repository. The owner checks
+stop the `/tmp/.mcp.json` case (git CVE-2022-24765) for little code.
+Cost: an upward walk, and checks of the file and its folder. Changes plan
+item 2.
+
+### B. Name clash with a user entry
+
+Question: a project entry and a user entry have the same name. Which one
+runs?
+
+| Option | Prior art (PTA) | Reviewer |
+|---|---|---|
+| **Project wins after the approval; the question names the replaced user entry** | All 7 checked MCP clients let the project win | User |
+| User wins | No checked tool | Adversarial, simplicity |
+| Error | No checked tool | — |
+
+Reason: the same `.mcp.json` then means the same server in `ncp`, Claude
+Code and VS Code. The approval and the question show the change, and a
+stored value cannot follow the name to another host (milestone 17).
+Cost: a project can redirect a name that the user knows, after one Yes.
+"User wins" stops this, but `ncp` then differs from each other client.
+
+### C. `${VAR}` in a project file
+
+Question: which fields of a project entry can expand `${NAME}`?
+
+| Option | Prior art (PTA) | Reviewer |
+|---|---|---|
+| **By field: remote entries read the store only; no `${` in command, args, cwd, url; stdio `env` as in the user file** | pnpm ignores `${}` in a project `.npmrc` | User, adversarial |
+| No expansion | Codex; VS Code refuses `${}` when it adds to `.mcp.json` | Simplicity |
+| Empty a list of credential variables | Claude Code | — |
+| Expand all | Gemini | — |
+
+Reason: a rule by field cannot miss a variable. A list of names can
+(mise GHSA-wcqh: a gate by content leaked `GITHUB_TOKEN`). Stored header
+values and OAuth still work, because milestone 17 binds them to an
+origin. Cost: rules for each field. "No expansion" is simpler, but a
+Claude Code `.mcp.json` with `${API_KEY}` then does not work as it is.
+
+### D. Approval with no TTY
+
+Question: how does a user approve when an agent or CI runs `ncp`?
+
+| Option | Prior art (PTA) | Reviewer |
+|---|---|---|
+| **`ncp project approve`, which asks only on a TTY; a No is saved until the file changes** | `direnv allow`/`deny`, `mise trust`; VS Code, Claude Code and mise keep a refusal | User |
+| A flag for one run, not saved | Gemini `--skip-trust`, VS Code `--disable-workspace-trust` | Adversarial |
+| `--config-file .mcp.json` only | — | Simplicity |
+
+Reason: the agent can tell the user the command, but cannot answer it,
+so the agent cannot give itself trust. A flag for one run is one word for
+an agent to add. `--config-file` stays for CI: the user names the file.
+Cost: one new command. Changes plan item 4.
+
+### E. Worktrees
+
+Question: does a git worktree get the approval of its main checkout?
+
+| Option | Prior art (PTA) | Reviewer |
+|---|---|---|
+| **No: each path asks one time** | direnv rule | Adversarial, simplicity |
+| Yes, when the bytes are the same | Codex, mise | User |
+
+Reason: the link to the main checkout is in a file of the project.
+Claude Code CVE-2026-40068 forged this link with a crafted `commondir`.
+Cost: an agent that makes a new worktree for each task gets one question
+for each worktree.
+
+### F. JSONC
+
+Question: does milestone 18 read comments and trailing commas?
+
+| Option | Reviewer |
+|---|---|
+| **No: move JSONC to milestone 19, which adds `jsonc-parser` for the edit** | Simplicity |
+| Yes, as plan item 1 says | — |
+
+Reason: milestone 18 then adds no dependency. Cost: a project file with
+comments fails to parse until milestone 19, and gives a warning. Changes
+plan item 1.
+
+### Not in this milestone
+
+OAuth tokens are keyed by the server name. A project entry `foo` in two
+projects shares one token item, so a login in one project replaces the
+tokens of the other. A13 stops a send to another URL. A key with the
+project root changes how secrets are stored, so it needs its own
+decision.
