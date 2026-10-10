@@ -259,9 +259,11 @@ Accepted risks:
      trusted project entry has NAME (closes the gap of decision B).
    - **Values:** same rules in both files (requirement S10). A literal in
      a project file goes into git, as with `claude mcp add -s project`.
-   - **Unused secrets:** `secret list` and `secret delete --unused` use the
-     merged view of the current folder, and say that another project can
-     still use a name.
+   - **Unused secrets:** `secret list` and `secret delete --unused` count
+     the global file and the project file of the current folder. The help
+     and the output say that a project in another folder can still use a
+     name. The cost of an error is one new `secret set`. A list of tracked
+     files, as `mise prune` keeps, comes after the first release.
    - **Messages:** each message about an entry names its file.
 
 ## 4. Output
