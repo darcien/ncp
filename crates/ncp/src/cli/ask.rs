@@ -277,7 +277,7 @@ impl Asker {
 
 /// True when a label of the host is Punycode (RFC 3492): such a name can
 /// look like another name in Unicode.
-fn has_punycode_label(host: &str) -> bool {
+pub(super) fn has_punycode_label(host: &str) -> bool {
     host.split('.')
         .any(|label| label.to_ascii_lowercase().starts_with("xn--"))
 }
@@ -300,7 +300,7 @@ impl Asker {
         if opened {
             // This hint replaces "open the page": the page is open.
             Failure {
-                hints: vec!["when the page is done, run the command again".into()],
+                hints: Box::new(["when the page is done, run the command again".into()]),
                 ..failure
             }
         } else {

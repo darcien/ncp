@@ -12,7 +12,7 @@
 use std::time::{Duration, Instant};
 
 use ncp::{
-    credential::{CredentialKey, Secret, SecretName},
+    credential::{CredentialKey, Destination, Secret, SecretName},
     server::ServerName,
     store::{self, CredentialStore, NativeStore, StoreError},
 };
@@ -21,7 +21,10 @@ use ncp::{
 const LIMIT: Duration = Duration::from_secs(3);
 
 fn secret_key() -> CredentialKey {
-    CredentialKey::Secret(SecretName::parse("NCP_TEST_TOKEN").unwrap())
+    CredentialKey::Secret {
+        destination: Destination::Stdio,
+        name: SecretName::parse("NCP_TEST_TOKEN").unwrap(),
+    }
 }
 
 async fn open() -> Result<std::sync::Arc<NativeStore>, StoreError> {

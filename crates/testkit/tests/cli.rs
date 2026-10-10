@@ -264,8 +264,18 @@ fn name_that_no_place_has_names_the_secret_set_command() {
     let run = env_value(&home);
     assert_eq!(run.code(), 2, "{}", run.describe());
     let error = run.error();
-    assert_eq!(error["message"], "FIXTURE_TOKEN is not set and not stored");
-    assert_eq!(error["hint"], "ncp secret set FIXTURE_TOKEN");
+    assert_eq!(
+        error["message"],
+        "FIXTURE_TOKEN is not set, and not stored for stdio servers. ncp did not start server fx."
+    );
+    assert_eq!(error["hint"], "ncp secret set FIXTURE_TOKEN --server fx");
+    assert_eq!(error["destination"], Value::Null);
+    assert!(
+        run.stderr()
+            .contains(&json!({"hint": {"message": "ncp secret list", "server": "fx"}})),
+        "{}",
+        run.describe()
+    );
 }
 
 #[test]
@@ -276,13 +286,13 @@ fn name_with_no_native_store_names_the_file_option() {
     assert_eq!(run.code(), 4, "{}", run.describe());
     assert_eq!(
         run.error()["hint"],
-        "ncp secret set FIXTURE_TOKEN --credential-store file"
+        "ncp secret set FIXTURE_TOKEN --server fx --credential-store file"
     );
     let run = home.run_with_stdin(&["secret", "set", "FIXTURE_TOKEN"], "v\n");
     assert_eq!(run.code(), 4, "{}", run.describe());
     assert_eq!(
         run.error()["hint"],
-        "ncp secret set FIXTURE_TOKEN --credential-store file"
+        "ncp secret set FIXTURE_TOKEN --server fx --credential-store file"
     );
 }
 
@@ -303,7 +313,8 @@ fn value_from_the_credential_file_expands_in_env_and_the_environment_wins() {
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert_eq!(
         run.stdout(),
-        json!({"name": "FIXTURE_TOKEN", "place": "file"})
+        json!({"name": "FIXTURE_TOKEN", "place": "file", "destination": null,
+            "servers": ["fx"]})
     );
     let path = home.root.join("state/ncp/credentials.json");
     let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
@@ -321,13 +332,12 @@ fn stdio_server_gets_only_the_environment_of_ncp_and_its_entry() {
     let home = Home::new("server-env");
     home.configure(&json!({"fx": {"command": FIXTURE, "args": ["modern"],
         "env": {"TOKEN": "${USED}", "GREETING": "hello"}}}));
-    for (name, value) in [("USED", "used-value"), ("UNUSED", "unused-value")] {
-        let run = home.run_with_stdin(
-            &["secret", "set", name, "--credential-store", "file"],
-            value,
-        );
-        assert_eq!(run.code(), 0, "{}", run.describe());
-    }
+    let run = home.run_with_stdin(
+        &["secret", "set", "USED", "--credential-store", "file"],
+        "used-value",
+    );
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    home.store_in_file("secret/UNUSED", "unused-value");
 
     let run = home.run(&["tool", "call", "fx", "env-names"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
@@ -380,18 +390,17 @@ fn native_store_comes_before_the_file_and_list_shows_both_places() {
         "{}",
         run.describe()
     );
-    set(
-        &["secret", "set", "UNUSED", "--credential-store", "file"],
-        "x",
-    );
+    home.store_in_file("secret/UNUSED", "x");
     assert_eq!(text_of(&env_value(&home).stdout()), "native");
     let list = home.run(&["secret", "list"]);
     assert_eq!(list.code(), 0, "{}", list.describe());
     assert_eq!(
         list.stdout(),
         json!({"secrets": [
-            {"name": "FIXTURE_TOKEN", "places": ["native", "file"], "used": true},
-            {"name": "UNUSED", "places": ["file"], "used": false}
+            {"name": "FIXTURE_TOKEN", "destination": null, "places": ["native", "file"],
+                "used": true, "servers": ["fx"]},
+            {"name": "UNUSED", "destination": null, "places": ["file"], "used": false,
+                "servers": []}
         ]})
     );
     let calls = std::fs::read_to_string(home.root.join("keychain/calls.log")).unwrap();
@@ -403,7 +412,8 @@ fn native_store_comes_before_the_file_and_list_shows_both_places() {
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert_eq!(
         run.stdout(),
-        json!({"name": "FIXTURE_TOKEN", "places": ["native", "file"]})
+        json!({"name": "FIXTURE_TOKEN", "file": null,
+            "removed": [{"destination": null, "places": ["native", "file"]}]})
     );
     let run = home.run(&["secret", "delete", "FIXTURE_TOKEN"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
@@ -413,15 +423,18 @@ fn native_store_comes_before_the_file_and_list_shows_both_places() {
 #[test]
 fn secret_set_rejects_a_bad_name_and_an_empty_value() {
     let home = Home::new("secret-bad");
+    home.configure(&json!({"s": {"command": "s", "env": {"A": "${A}"}}}));
     let run = home.run_with_stdin(&["secret", "set", "A-B", "--credential-store", "file"], "x");
     assert_eq!(run.code(), 2, "{}", run.describe());
     let run = home.run_with_stdin(&["secret", "set", "A", "--credential-store", "file"], "\n");
     assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(run.error()["message"], "the value of A is empty");
 }
 
 #[test]
 fn secret_set_stops_when_a_pipe_gives_no_value_in_the_time_limit() {
     let home = Home::new("secret-wait");
+    home.configure(&json!({"s": {"command": "s", "env": {"A": "${A}"}}}));
     let mut child = Command::new(NCP)
         .args([
             "--timeout",
@@ -462,6 +475,159 @@ async fn stored_bearer_token_goes_in_a_static_header() {
     assert_eq!(run.code(), 0, "{}", run.describe());
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
+}
+
+/// The origin of a fixture URL, as `ncp` writes it in a store key.
+fn origin_of(url: &str) -> String {
+    url::Url::parse(url).unwrap().origin().ascii_serialization()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
+    let fixture = serve_http_with(Mode::Modern, Some("t0ken")).await.unwrap();
+    let web = origin_of(&fixture.url);
+    // The same server under another host name is another origin.
+    let other_url = fixture.url.replace("127.0.0.1", "localhost");
+    let other = origin_of(&other_url);
+    let home = Home::new("origin-binding").with_fake_keychain();
+    let header = json!({"Authorization": "Bearer ${K}"});
+    home.configure(&json!({
+        "web": {"type": "http", "url": fixture.url, "headers": header},
+        "other": {"type": "http", "url": other_url, "headers": header}}));
+    let set = |args: &[&str]| {
+        let args: Vec<&str> = ["secret", "set", "K", "--credential-store", "file"]
+            .iter()
+            .chain(args)
+            .copied()
+            .collect();
+        home.run_with_stdin(&args, "t0ken")
+    };
+
+    let run = set(&[]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    let message = run.error()["message"].as_str().unwrap().to_string();
+    assert!(
+        message.contains(&web) && message.contains(&other),
+        "{message}"
+    );
+    assert_eq!(run.error()["hint"], "ncp secret set K --server <SERVER>");
+
+    let run = set(&["--server", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(
+        run.stdout(),
+        json!({"name": "K", "place": "file", "destination": web, "servers": ["web"]})
+    );
+    assert_eq!(home.run(&["tool", "list", "web"]).code(), 0);
+    let run = home.run(&["tool", "list", "other"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(
+        run.error()["message"],
+        format!(
+            "K is not set, and not stored for {other}. ncp sent nothing to server other. \
+             If this URL is correct, store the value for it."
+        )
+    );
+    assert_eq!(run.error()["destination"], other.as_str());
+    assert_eq!(run.error()["hint"], "ncp secret set K --server other");
+
+    assert_eq!(set(&["--server", "other"]).code(), 0);
+    let list = home.run(&["secret", "list"]);
+    let rows: Vec<(Value, Value)> = list.stdout()["secrets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| (row["destination"].clone(), row["servers"].clone()))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (json!(web), json!(["web"])),
+            (json!(other), json!(["other"]))
+        ]
+    );
+
+    let run = home.run(&["secret", "delete", "K"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(
+        run.error()["message"]
+            .as_str()
+            .unwrap()
+            .ends_with("ncp removed nothing"),
+        "{}",
+        run.describe()
+    );
+    let run = home.run(&["secret", "delete", "K", "--server", "other"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(
+        run.stdout(),
+        json!({"name": "K", "file": home.config_path().display().to_string(),
+            "removed": [{"destination": other, "places": ["file"]}]})
+    );
+
+    // After a URL change, the old item is unused.
+    home.configure(&json!({"web": {"type": "http", "url": other_url, "headers": header}}));
+    let run = home.run(&["secret", "delete", "K", "--unused"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(run.stdout()["removed"][0]["destination"], web.as_str());
+    let run = home.run(&["secret", "delete", "K", "--all"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(run.error()["message"], "K is not stored");
+}
+
+#[test]
+fn stored_value_needs_a_literal_origin_and_an_environment_value_does_not() {
+    let home = Home::new("literal-origin").set("PORT", "1");
+    home.configure(
+        &json!({"web": {"type": "http", "url": "http://127.0.0.1:${PORT}/mcp",
+        "headers": {"Authorization": "Bearer ${K}"}}}),
+    );
+    let run = home.run_with_stdin(&["secret", "set", "K", "--credential-store", "file"], "v");
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(
+        run.error()["message"]
+            .as_str()
+            .unwrap()
+            .contains("only to a literal origin"),
+        "{}",
+        run.describe()
+    );
+    home.store_in_file("secret/http://127.0.0.1:1/K", "v");
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    let message = run.error()["message"].as_str().unwrap().to_string();
+    assert!(message.contains("only to a literal origin"), "{message}");
+    // The message shows the URL as the file writes it.
+    assert!(message.contains("${PORT}"), "{message}");
+}
+
+#[test]
+fn client_secret_is_stored_for_the_origin_of_the_issuer() {
+    let home = Home::new("issuer-key").with_fake_keychain();
+    home.configure(&json!({
+        "acme": {"type": "http", "url": "https://mcp.acme.example/mcp",
+            "oauth": {"clientId": "c", "clientSecret": "${S}",
+                "issuer": "https://login.acme.example/tenant"}},
+        "x": {"type": "http", "url": "https://mcp.acme.example/mcp",
+            "headers": {"X": "${S}"}}}));
+    let run = home.run_with_stdin(
+        &[
+            "secret",
+            "set",
+            "S",
+            "--server",
+            "acme",
+            "--credential-store",
+            "file",
+        ],
+        "s3cr3t",
+    );
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(run.stdout()["destination"], "https://login.acme.example");
+    // A header at the origin of the MCP server cannot read it.
+    let run = home.run(&["tool", "list", "x"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(run.error()["destination"], "https://mcp.acme.example");
 }
 
 #[test]
@@ -713,6 +879,7 @@ fn secret_set_warns_when_another_place_wins() {
     let home = Home::new("copy-warnings")
         .with_fake_keychain()
         .set("SHADOWED", "env");
+    home.configure(&json!({"s": {"command": "s", "env": {"A": "${A}", "B": "${SHADOWED}"}}}));
     let run = home.run_with_stdin(&["secret", "set", "A"], "native");
     assert_eq!(warnings(&run), Vec::<String>::new(), "{}", run.describe());
     let run = home.run_with_stdin(
@@ -727,7 +894,7 @@ fn secret_set_warns_when_another_place_wins() {
     );
     assert!(
         run.stderr()
-            .contains(&json!({"hint": {"message": "ncp secret delete A"}})),
+            .contains(&json!({"hint": {"message": "ncp secret delete A --server s"}})),
         "{}",
         run.describe()
     );
@@ -745,6 +912,7 @@ fn secret_set_warns_when_another_place_wins() {
 #[test]
 fn secret_commands_work_with_no_native_store_and_no_noise() {
     let home = Home::new("file-only");
+    home.configure(&json!({"s": {"command": "s", "env": {"A": "${A}"}}}));
     let run = home.run_with_stdin(&["secret", "set", "A", "--credential-store", "file"], "x");
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert_eq!(warnings(&run), Vec::<String>::new());
@@ -762,7 +930,7 @@ fn secret_list_works_with_a_configuration_that_does_not_load() {
     let path = home.config_path();
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, "{").unwrap();
-    home.run_with_stdin(&["secret", "set", "A", "--credential-store", "file"], "x");
+    home.store_in_file("secret/A", "x");
     let run = home.run(&["secret", "list"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert_eq!(run.stdout()["secrets"][0]["used"], false);
@@ -773,10 +941,13 @@ fn secret_list_works_with_a_configuration_that_does_not_load() {
 fn name_used_only_in_args_is_not_used_and_names_the_rule() {
     let home = Home::new("args-only");
     home.configure(&json!({"fx": {"command": FIXTURE, "args": ["${ARG_ONLY}"]}}));
-    home.run_with_stdin(
+    let run = home.run_with_stdin(
         &["secret", "set", "ARG_ONLY", "--credential-store", "file"],
         "modern",
     );
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(run.error()["hint"], "export ARG_ONLY=<value>");
+    home.store_in_file("secret/ARG_ONLY", "modern");
     let list = home.run(&["secret", "list"]);
     assert_eq!(list.stdout()["secrets"][0]["used"], false);
     let run = home.run(&["tool", "list", "fx"]);
@@ -788,6 +959,7 @@ fn name_used_only_in_args_is_not_used_and_names_the_rule() {
 #[test]
 fn copy_check_of_a_slow_native_store_stops_at_its_limit_and_leaves_no_program() {
     let home = Home::new("slow-copy-check").with_fake_keychain();
+    home.configure(&json!({"s": {"command": "s", "env": {"A": "${A}"}}}));
     std::fs::write(home.root.join("keychain/delay"), "20000").unwrap();
     let start = std::time::Instant::now();
     let run = home.run_with_stdin(&["secret", "set", "A", "--credential-store", "file"], "x");
@@ -968,8 +1140,12 @@ async fn verbose_output_names_the_proxy_route_and_a_stored_value_source() {
         .iter()
         .map(|note| note["message"].as_str().unwrap().to_string())
         .collect();
+    let origin = url::Url::parse(&fixture.url)
+        .unwrap()
+        .origin()
+        .ascii_serialization();
     assert!(
-        messages.contains(&"WEB_TOKEN from the credential file".to_string()),
+        messages.contains(&format!("WEB_TOKEN from the credential file, for {origin}")),
         "{messages:?}"
     );
     let route = format!(
@@ -2789,10 +2965,8 @@ async fn login_logout_and_a_secret_change_remove_the_cached_lists() {
     );
     assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
     cached(&home);
-    let run = home.run_with_stdin(
-        &["secret", "set", "ANY", "--credential-store", "file"],
-        "v\n",
-    );
+    home.store_in_file("secret/ANY", "v");
+    let run = home.run(&["secret", "delete", "ANY"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert!(
         !list_file(&home, "web").exists(),

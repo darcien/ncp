@@ -9,7 +9,7 @@ use std::{fs, path::PathBuf};
 use serde_json::json;
 
 use ncp::{
-    credential::{CredentialKey, Secret, SecretName},
+    credential::{CredentialKey, Destination, Secret, SecretName},
     server::ServerName,
     store::{CredentialStore, SecurityStore, StoreError},
 };
@@ -55,7 +55,10 @@ fn calls(dir: &std::path::Path) -> String {
 fn keeps_secrets_by_key() {
     let dir = keychain("contract");
     let store = store(&dir);
-    let env = CredentialKey::Secret(SecretName::parse("API_KEY").unwrap());
+    let env = CredentialKey::Secret {
+        destination: Destination::Stdio,
+        name: SecretName::parse("API_KEY").unwrap(),
+    };
     let other_server = CredentialKey::OAuthTokens(server("b"));
 
     assert_eq!(store.load(&tokens()).unwrap(), None);
@@ -217,12 +220,36 @@ fn keeps_the_parts_of_a_save_that_can_still_run() {
 fn deletes_the_head_and_the_parts() {
     let dir = keychain("delete-parts");
     let store = store(&dir);
-    let other = CredentialKey::Secret(SecretName::parse("A").unwrap());
+    let other = CredentialKey::Secret {
+        destination: Destination::Stdio,
+        name: SecretName::parse("A").unwrap(),
+    };
     store.save(&other, &secret("keep")).unwrap();
     store.save(&tokens(), &secret(&long_value())).unwrap();
     assert!(store.delete(&tokens()).unwrap());
     assert_eq!(items(&dir).keys().collect::<Vec<_>>(), ["secret/A"]);
     assert_eq!(store.load(&tokens()).unwrap(), None);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_long_value_of_an_origin_keeps_the_items_of_other_destinations() {
+    let dir = keychain("origin-parts");
+    let store = store(&dir);
+    let key = |destination| CredentialKey::Secret {
+        destination,
+        name: SecretName::parse("https").unwrap(),
+    };
+    let origin = ncp::server::Origin::parse("https://h").unwrap();
+    let stdio = key(Destination::Stdio);
+    let header = key(Destination::Origin(origin));
+    store.save(&stdio, &secret("keep")).unwrap();
+    store.save(&header, &secret(&long_value())).unwrap();
+    assert_eq!(store.load(&header).unwrap(), Some(secret(&long_value())));
+    assert_eq!(store.keys().unwrap(), [header.clone(), stdio.clone()]);
+    assert!(store.delete(&header).unwrap());
+    assert_eq!(items(&dir).keys().collect::<Vec<_>>(), ["secret/https"]);
+    assert_eq!(store.load(&stdio).unwrap(), Some(secret("keep")));
     fs::remove_dir_all(dir).unwrap();
 }
 

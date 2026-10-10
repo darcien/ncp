@@ -66,6 +66,16 @@ impl Home {
         self.set("NCP_TEST_SECURITY_PROGRAM", &program)
     }
 
+    /// Writes an item to the credential file, with no entry that names it.
+    /// `secret set` writes only an item that an entry uses.
+    pub fn store_in_file(&self, account: &str, value: &str) {
+        use ncp::store::CredentialStore as _;
+        let key = ncp::credential::CredentialKey::from_account(account).unwrap();
+        ncp::store::FileStore::new(self.root.join("state/ncp/credentials.json"))
+            .save(&key, &ncp::credential::Secret::new(value.into()))
+            .unwrap();
+    }
+
     pub fn set(mut self, name: &str, value: &str) -> Self {
         self.env.push((name.into(), value.into()));
         self

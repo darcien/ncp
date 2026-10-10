@@ -1,13 +1,17 @@
 //! The credential model: the secrets, and the key of each item in a store.
 //!
-//! A secret is a named value, the same as an environment variable. The
-//! configuration names it with `${NAME}`. OAuth tokens and client
-//! credentials are separate items for each server. No secret goes to the
-//! configuration file.
+//! A secret is a named value for one destination. The configuration names
+//! it with `${NAME}`, and the destination comes from the entry (S9): a
+//! stored value goes only to the destination in its key. OAuth tokens and
+//! client credentials are separate items for each server. No secret goes to
+//! the configuration file.
 
 use std::fmt;
 
-use crate::{expand::is_variable_name, server::ServerName};
+use crate::{
+    expand::is_variable_name,
+    server::{Origin, ServerName},
+};
 
 /// The service name of all `ncp` items in the credential store.
 pub const SERVICE: &str = "ncp";
@@ -72,11 +76,45 @@ impl fmt::Display for SecretName {
     }
 }
 
+/// The party that may get a stored value.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Destination {
+    /// A `headers` value goes to the origin of its entry, and a client
+    /// secret to the origin of its issuer.
+    Origin(Origin),
+    /// An `env` value of a stdio server. The value goes to a local process,
+    /// so `ncp` has no destination to compare.
+    Stdio,
+}
+
+impl Destination {
+    #[must_use]
+    pub fn origin(&self) -> Option<&Origin> {
+        match self {
+            Self::Origin(origin) => Some(origin),
+            Self::Stdio => None,
+        }
+    }
+}
+
+impl fmt::Display for Destination {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Origin(origin) => f.write_str(origin.as_str()),
+            Self::Stdio => f.write_str("stdio servers"),
+        }
+    }
+}
+
 /// The key of one item in a store.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CredentialKey {
-    /// A named value for `${NAME}`.
-    Secret(SecretName),
+    /// A named value for `${NAME}`. The key has no form with only a name,
+    /// so no code can read a value with no destination.
+    Secret {
+        destination: Destination,
+        name: SecretName,
+    },
     /// The OAuth access token and refresh token of a server.
     OAuthTokens(ServerName),
     /// The OAuth client credentials of a server, with the issuer that
@@ -85,23 +123,35 @@ pub enum CredentialKey {
 }
 
 impl CredentialKey {
-    /// The account of the item in the store. A secret name and a server
-    /// name have no `/`, so each key gives a different account.
+    /// The account of the item in the store: `secret/NAME` for stdio,
+    /// `secret/ORIGIN/NAME` for an origin. Only this function and
+    /// [`Self::from_account`] know the text form.
     #[must_use]
     pub fn account(&self) -> String {
         match self {
-            Self::Secret(name) => format!("{SECRET_PREFIX}{}", name.as_str()),
+            Self::Secret {
+                destination: Destination::Stdio,
+                name,
+            } => format!("{SECRET_PREFIX}{name}"),
+            Self::Secret {
+                destination: Destination::Origin(origin),
+                name,
+            } => format!("{SECRET_PREFIX}{origin}/{name}"),
             Self::OAuthTokens(server) => format!("{OAUTH_PREFIX}{}/tokens", server.as_str()),
             Self::OAuthClient(server) => format!("{OAUTH_PREFIX}{}/client", server.as_str()),
         }
     }
 
     /// The key of an account, or `None` for an account that `ncp` does not
-    /// make, for example from an older version.
+    /// make, for example from an older version or a part of a long value.
+    ///
+    /// A name has no `/` and no `:`, and an origin in normal form has no
+    /// path. Thus the first `/` after `://` ends the origin, and a stdio
+    /// item `secret/https` is not a prefix of an origin item.
     #[must_use]
     pub fn from_account(account: &str) -> Option<Self> {
-        if let Some(name) = account.strip_prefix(SECRET_PREFIX) {
-            return SecretName::parse(name).ok().map(Self::Secret);
+        if let Some(rest) = account.strip_prefix(SECRET_PREFIX) {
+            return secret_key(rest);
         }
         let (server, item) = account.strip_prefix(OAUTH_PREFIX)?.split_once('/')?;
         let server = ServerName::parse(server).ok()?;
@@ -111,6 +161,25 @@ impl CredentialKey {
             _ => None,
         }
     }
+}
+
+fn secret_key(rest: &str) -> Option<CredentialKey> {
+    let Some(scheme_end) = rest.find("://") else {
+        return SecretName::parse(rest)
+            .ok()
+            .map(|name| CredentialKey::Secret {
+                destination: Destination::Stdio,
+                name,
+            });
+    };
+    let host_start = scheme_end + "://".len();
+    let split = host_start + rest[host_start..].find('/')?;
+    let origin = Origin::parse(&rest[..split])?;
+    let name = SecretName::parse(&rest[split + 1..]).ok()?;
+    Some(CredentialKey::Secret {
+        destination: Destination::Origin(origin),
+        name,
+    })
 }
 
 #[cfg(test)]
@@ -128,17 +197,44 @@ mod tests {
         assert_eq!(secret.expose(), "s3cr3t");
     }
 
+    fn secret(destination: Destination, name: &str) -> CredentialKey {
+        CredentialKey::Secret {
+            destination,
+            name: SecretName::parse(name).unwrap(),
+        }
+    }
+
+    fn origin(text: &str) -> Destination {
+        Destination::Origin(Origin::parse(text).unwrap())
+    }
+
     #[test]
     fn gives_a_different_account_for_each_key() {
         let keys = [
-            CredentialKey::Secret(SecretName::parse("GITHUB_TOKEN").unwrap()),
+            secret(Destination::Stdio, "GITHUB_TOKEN"),
+            secret(origin("https://mcp.linear.app"), "LINEAR_KEY"),
+            secret(origin("http://127.0.0.1:8080"), "K"),
+            secret(origin("https://[::1]"), "K"),
+            secret(origin("https://xn--bcher-kva.example"), "K"),
+            secret(origin("https://h."), "K"),
+            secret(Destination::Stdio, "https"),
             CredentialKey::OAuthTokens(server()),
             CredentialKey::OAuthClient(server()),
         ];
         let accounts: Vec<String> = keys.iter().map(CredentialKey::account).collect();
         assert_eq!(
             accounts,
-            ["secret/GITHUB_TOKEN", "oauth/gh/tokens", "oauth/gh/client"]
+            [
+                "secret/GITHUB_TOKEN",
+                "secret/https://mcp.linear.app/LINEAR_KEY",
+                "secret/http://127.0.0.1:8080/K",
+                "secret/https://[::1]/K",
+                "secret/https://xn--bcher-kva.example/K",
+                "secret/https://h./K",
+                "secret/https",
+                "oauth/gh/tokens",
+                "oauth/gh/client"
+            ]
         );
         for (key, account) in keys.iter().zip(&accounts) {
             assert_eq!(CredentialKey::from_account(account).as_ref(), Some(key));
@@ -150,11 +246,39 @@ mod tests {
         for account in [
             "gh/env/API_KEY",
             "secret/1A",
+            "secret/HTTPS://MCP.LINEAR.APP/K",
+            "secret/https://h:443/K",
+            "secret/https://h/mcp/K",
+            "secret/https://h/",
+            "secret/https://h",
+            "secret/file:///x/K",
+            "secret/https://h/K/gen/0",
+            "secret/A/gen/0",
             "oauth/gh/other",
             "oauth/a.b/tokens",
             "",
         ] {
             assert_eq!(CredentialKey::from_account(account), None, "{account}");
+        }
+    }
+
+    #[test]
+    fn no_account_is_another_account_and_a_slash() {
+        // The clean-up of the parts of a long value removes the accounts
+        // under `ACCOUNT/`; it must never find another item there.
+        let accounts = [
+            secret(Destination::Stdio, "https"),
+            secret(Destination::Stdio, "A"),
+            secret(origin("https://h"), "A"),
+        ]
+        .map(|key| key.account());
+        for account in &accounts {
+            for other in &accounts {
+                assert!(
+                    !other.starts_with(&format!("{account}/")),
+                    "{account} {other}"
+                );
+            }
         }
     }
 

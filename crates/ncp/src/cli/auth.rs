@@ -506,8 +506,7 @@ pub(super) async fn stored_login(
     // rmcp configures only the client ID from the tokens. A refresh of a
     // confidential client needs its secret too (RFC 6749 §6).
     if let Some(client) = configured {
-        if let Some(template) = client.secret() {
-            let secret = secrets::client_secret(context, name, template).await?;
+        if let Some(secret) = secrets::client_secret(context, server, client).await? {
             let config = OAuthClientConfig::new(client_id, RedirectUri::new(0).to_string())
                 .with_client_secret(secret.expose());
             manager
@@ -887,13 +886,12 @@ async fn client_request(
         .with_scopes(scopes.clone());
     if let Some(client) = &remote.oauth_client {
         let request = request.with_preregistered_client(client.client_id.clone());
-        return Ok(match client.secret() {
-            Some(template) => {
-                let secret = secrets::client_secret(context, name, template).await?;
-                request.with_client_secret(secret.expose())
-            }
-            None => request,
-        });
+        return Ok(
+            match secrets::client_secret(context, server, client).await? {
+                Some(secret) => request.with_client_secret(secret.expose()),
+                None => request,
+            },
+        );
     }
     let key = CredentialKey::OAuthClient(server.name.clone());
     let stored = secrets::call(context, store, {

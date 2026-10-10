@@ -190,22 +190,36 @@ pub enum AuthCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum SecretCommand {
-    /// Read one value from stdin and keep it under the name. On a TTY the
-    /// input is not shown.
+    /// Read one value from stdin and keep it under the name, for the
+    /// destination of the entries that name ${NAME}. On a TTY the input is
+    /// not shown.
     Set {
         /// The name, as in ${NAME} in the configuration
         name: String,
+        /// Use only the destination of this entry.
+        #[arg(long, value_name = "SERVER")]
+        server: Option<String>,
         /// The place for the value.
         #[arg(long, value_enum, default_value_t = CredentialPlace::Native)]
         credential_store: CredentialPlace,
     },
-    /// List the names of the stored secrets and the place of each one.
-    /// Shows no value.
+    /// List the stored secrets: the name, the destination, the place and
+    /// the servers that use each one. Shows no value.
     List,
-    /// Remove the secret from all places.
+    /// Remove the stored secret from all places. With no flag, only when
+    /// the name has one destination.
     Delete {
         /// The name, as in ${NAME} in the configuration
         name: String,
+        /// Remove only the item of the destination of this entry.
+        #[arg(long, value_name = "SERVER", group = "removal")]
+        server: Option<String>,
+        /// Remove the items that no entry of the configuration uses.
+        #[arg(long, group = "removal")]
+        unused: bool,
+        /// Remove the items of all destinations.
+        #[arg(long, group = "removal")]
+        all: bool,
     },
 }
 
@@ -319,6 +333,7 @@ mod tests {
         let Command::Secret(SecretCommand::Set {
             name,
             credential_store,
+            ..
         }) = cli.command
         else {
             panic!("not secret set")
@@ -328,6 +343,19 @@ mod tests {
         assert!(
             Cli::try_parse_from(["ncp", "secret", "set", "T", "--credential-store", "x"]).is_err()
         );
+    }
+
+    #[test]
+    fn secret_delete_takes_one_removal_flag() {
+        let parse = |args: &[&str]| {
+            Cli::try_parse_from(["ncp", "secret", "delete", "K"].iter().chain(args))
+        };
+        assert!(parse(&[]).is_ok());
+        assert!(parse(&["--server", "a"]).is_ok());
+        assert!(parse(&["--unused"]).is_ok());
+        assert!(parse(&["--all"]).is_ok());
+        assert!(parse(&["--all", "--unused"]).is_err());
+        assert!(parse(&["--server", "a", "--all"]).is_err());
     }
 
     #[test]

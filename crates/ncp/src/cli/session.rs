@@ -788,10 +788,12 @@ mod tests {
         let set = env(&[("SSL_CERT_FILE", "/roots.pem")]);
         let failure = || Failure::protocol("x");
         assert_eq!(with_tls_hint(&set, &noted, failure()).hints.len(), 1);
-        assert_eq!(with_tls_hint(&env(&[]), &noted, failure()).hints, [""; 0]);
+        assert!(with_tls_hint(&env(&[]), &noted, failure()).hints.is_empty());
         assert_eq!(
-            with_tls_hint(&set, &client::http::Notes::default(), failure()).hints,
-            [""; 0]
+            with_tls_hint(&set, &client::http::Notes::default(), failure())
+                .hints
+                .len(),
+            0
         );
     }
 

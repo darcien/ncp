@@ -428,6 +428,9 @@ pub fn error_text(format: Format, failure: &Failure) -> String {
             if let Some(hint) = failure.hints.first() {
                 body["hint"] = json!(hint);
             }
+            if let Some(destination) = &failure.destination {
+                body["destination"] = super::secrets::destination_json(destination);
+            }
             if !failure.pages.is_empty() {
                 let pages: Vec<Value> = failure
                     .pages

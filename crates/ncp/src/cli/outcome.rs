@@ -59,7 +59,8 @@ pub struct Failure {
     pub exit: Exit,
     pub server: Option<String>,
     pub message: String,
-    pub hints: Vec<String>,
+    /// Boxed like `pages`, so that each `Result` with a failure stays small.
+    pub hints: Box<[String]>,
     /// Set for a `401` on a connection with no token, with the challenge
     /// of the answer: a stored login can answer it.
     pub login_challenge: Option<String>,
@@ -67,6 +68,9 @@ pub struct Failure {
     /// answer. A person at a TTY can open them; an agent gets them in the
     /// JSON error.
     pub pages: Box<[crate::elicit::Page]>,
+    /// The destination of a stored value that no place has (S9). Boxed,
+    /// as `hints` and `pages` are.
+    pub destination: Option<Box<crate::credential::Destination>>,
 }
 
 impl Failure {
@@ -76,9 +80,10 @@ impl Failure {
             exit,
             server: None,
             message: message.into(),
-            hints: Vec::new(),
+            hints: Box::default(),
             login_challenge: None,
             pages: Box::default(),
+            destination: None,
         }
     }
 
@@ -94,9 +99,21 @@ impl Failure {
 
     /// Adds a hint after the hints that the failure has.
     #[must_use]
-    pub fn hint(mut self, hint: impl Into<String>) -> Self {
-        self.hints.push(hint.into());
-        self
+    pub fn hint(self, hint: impl Into<String>) -> Self {
+        let mut hints = self.hints.into_vec();
+        hints.push(hint.into());
+        Self {
+            hints: hints.into_boxed_slice(),
+            ..self
+        }
+    }
+
+    #[must_use]
+    pub fn destination(self, destination: crate::credential::Destination) -> Self {
+        Self {
+            destination: Some(Box::new(destination)),
+            ..self
+        }
     }
 
     #[must_use]

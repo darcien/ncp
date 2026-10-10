@@ -1,13 +1,20 @@
 //! Secrets: the values of `${NAME}`, and the `secret` commands.
 //!
 //! `ncp` gets the value of a name from the first place that has it: the
-//! environment, the native store, then the opt-in credential file. It opens
-//! the native store only for a name that the environment does not set, so a
-//! server with no `${NAME}` never opens it. Each store call runs on a
+//! environment, the native store, then the opt-in credential file. A store
+//! gives only the item of the destination of the field (S9), so a value
+//! never follows its name to another origin. `ncp` opens the native store
+//! only for a name that the environment does not set, so a server with no
+//! `${NAME}` never opens it. Each store call runs on a
 //! blocking thread with a time limit, because a locked store can wait for
 //! an unlock prompt with no limit. Ctrl-C ends a store call at once.
 
-use std::{collections::BTreeSet, io::IsTerminal, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    io::IsTerminal,
+    sync::Arc,
+    time::Duration,
+};
 
 use serde_json::json;
 
@@ -19,9 +26,11 @@ use super::{
     session::{self, Context},
 };
 use crate::{
-    config::{EntryError, Server, Values},
-    credential::{CredentialKey, Secret, SecretName},
-    expand::{Env, Template},
+    binding::{self, Field, Target, TargetError, Use},
+    config::{ClientKind, EntryError, PreRegisteredClient, Server, Values},
+    credential::{CredentialKey, Destination, Secret, SecretName},
+    expand::{self, Env},
+    server::{Origin, OriginError},
     store::{self, CredentialStore, FileStore, StoreError},
 };
 
@@ -89,94 +98,123 @@ pub(super) async fn call<T: Send + 'static>(
     interruptible(context, blocking).await
 }
 
-fn key(name: &str) -> Result<CredentialKey, Failure> {
-    SecretName::parse(name)
-        .map(CredentialKey::Secret)
-        .map_err(|error| Failure::usage(error.to_string()))
+fn secret_name(name: &str) -> Result<SecretName, Failure> {
+    SecretName::parse(name).map_err(|error| Failure::usage(error.to_string()))
 }
 
 /// The expanded `env` or `headers` values of the server.
 ///
 /// # Errors
 ///
-/// Returns a usage failure for a name that no place has, and an
-/// authorization failure when the native store cannot answer and the file
-/// does not have the name.
+/// Returns a usage failure for a name that no place has for the
+/// destination of the entry, and an authorization failure when the native
+/// store cannot answer and the file does not have the item.
 pub(super) async fn resolve(context: &Context<'_>, server: &Server) -> Result<Values, Failure> {
-    let name_of_server = server.name.as_str();
-    let values = values_of(context, name_of_server, server.value_names()).await?;
+    let destination = binding::value_destination(server);
+    let values = values_of(context, server, server.value_names(), destination).await?;
     server
         .expand_values(&values)
-        .map_err(|error| Failure::usage(error.to_string()).server(name_of_server))
+        .map_err(|error| Failure::usage(error.to_string()).server(server.name.as_str()))
 }
 
-/// The expanded `oauth.clientSecret`, from the same places as a `headers`
-/// value. No error shows the value.
+/// The expanded `oauth.clientSecret`, or `None` for a client with no
+/// secret. A stored value comes only from the item of the origin of
+/// `oauth.issuer`. No error shows the value.
 ///
 /// # Errors
 ///
 /// Returns the failure of [`resolve`] for a name of the template.
 pub(super) async fn client_secret(
     context: &Context<'_>,
-    server: &str,
-    template: &Template,
-) -> Result<Secret, Failure> {
-    let values = values_of(context, server, template.names().into_iter().collect()).await?;
-    template.expand(&values).map(Secret::new).map_err(|error| {
-        let error = EntryError::Variable {
-            field: "oauth.clientSecret".into(),
-            error,
-        };
-        Failure::usage(error.to_string()).server(server)
-    })
+    server: &Server,
+    client: &PreRegisteredClient,
+) -> Result<Option<Secret>, Failure> {
+    let ClientKind::Confidential { secret, issuer } = &client.kind else {
+        return Ok(None);
+    };
+    let names = secret.names().into_iter().collect();
+    let values = values_of(context, server, names, binding::issuer_destination(issuer)).await?;
+    secret
+        .expand(&values)
+        .map(|value| Some(Secret::new(value)))
+        .map_err(|error| {
+            let error = EntryError::Variable {
+                field: "oauth.clientSecret".into(),
+                error,
+            };
+            Failure::usage(error.to_string()).server(server.name.as_str())
+        })
 }
 
 /// The environment with the value of each name that it does not have,
-/// from the stores.
+/// from the items of the destination in the stores.
 async fn values_of(
     context: &Context<'_>,
-    server: &str,
+    server: &Server,
     names: BTreeSet<&str>,
+    destination: Result<Destination, OriginError>,
 ) -> Result<Env, Failure> {
+    let name_of_server = server.name.as_str();
     let (set, missing): (Vec<&str>, Vec<&str>) = names
         .into_iter()
         .partition(|name| context.env.contains_key(*name));
     for name in set {
-        context
-            .ui
-            .debug(Some(server), &format!("{name} from the environment"));
+        context.ui.debug(
+            Some(name_of_server),
+            &format!("{name} from the environment"),
+        );
     }
     let mut values: Env = context.env.clone();
-    if !missing.is_empty() {
-        // The time of the store reads, also when they fail: a slow or
-        // locked store is the reason to measure.
-        let started = std::time::Instant::now();
-        let found = read_stored(context, &missing).await;
-        if let Some(timings) = &context.timings {
-            timings
-                .update(|record| super::timings::add(&mut record.credentials, started.elapsed()));
-        }
-        for (name, secret, place) in found.map_err(|failure| failure.server(server))? {
-            context
-                .ui
-                .debug(Some(server), &format!("{name} from {place}"));
-            values.insert(name.to_string(), secret.expose().to_string());
-        }
+    if missing.is_empty() {
+        return Ok(values);
+    }
+    let destination =
+        destination.map_err(|error| not_literal(&missing, &error).server(name_of_server))?;
+    let names = missing
+        .iter()
+        .map(|name| secret_name(name))
+        .collect::<Result<Vec<_>, Failure>>()?;
+    // The time of the store reads, also when they fail: a slow or locked
+    // store is the reason to measure.
+    let started = std::time::Instant::now();
+    let found = read_stored(context, server, &destination, names).await;
+    if let Some(timings) = &context.timings {
+        timings.update(|record| super::timings::add(&mut record.credentials, started.elapsed()));
+    }
+    for (name, secret, place) in found.map_err(|failure| failure.server(name_of_server))? {
+        context.ui.debug(
+            Some(name_of_server),
+            &format!("{name} from {place}, for {destination}"),
+        );
+        values.insert(name.to_string(), secret.expose().to_string());
     }
     Ok(values)
 }
 
-/// The values of the names from the stores, with the place of each one.
-async fn read_stored<'a>(
+/// The stop for a stored value of an entry with no literal origin. An
+/// environment value has no binding, so the fix is the URL, not an export.
+fn not_literal(names: &[&str], error: &OriginError) -> Failure {
+    Failure::usage(format!(
+        "{} is not set, and ncp sends a stored value only to a literal origin: {error}",
+        names.join(", ")
+    ))
+}
+
+/// The values of the names from the items of the destination, with the
+/// place of each one.
+async fn read_stored(
     context: &Context<'_>,
-    names: &[&'a str],
-) -> Result<Vec<(&'a str, Secret, &'static str)>, Failure> {
+    server: &Server,
+    destination: &Destination,
+    names: Vec<SecretName>,
+) -> Result<Vec<(SecretName, Secret, &'static str)>, Failure> {
     let mut native = native(context).await;
     let file = file(context);
     let mut found = Vec::new();
     for name in names {
-        let (secret, place) = find(context, name, &mut native, &file).await?;
-        found.push((*name, secret, place));
+        let (secret, place) =
+            find(context, server, (destination, &name), &mut native, &file).await?;
+        found.push((name, secret, place));
     }
     Ok(found)
 }
@@ -192,18 +230,23 @@ pub(super) fn store_is_down(error: &StoreError) -> bool {
     )
 }
 
-/// The value of one name: the native store first, then the file. A native
+/// The value of one key: the native store first, then the file. A native
 /// store that is down does not stop the search, because the file can have
-/// the name. Its error replaces the store, so that the next name does not
+/// the item. Its error replaces the store, so that the next name does not
 /// wait for the time limit again. An error of one item stops the search,
-/// because a value from the file would then replace a newer value.
+/// because a value from the file would then replace a newer value. No item
+/// of another destination is a fallback.
 async fn find(
     context: &Context<'_>,
-    name: &str,
+    server: &Server,
+    (destination, name): (&Destination, &SecretName),
     native: &mut Opened,
     file: &Arc<dyn CredentialStore>,
 ) -> Result<(Secret, &'static str), Failure> {
-    let key = key(name)?;
+    let key = CredentialKey::Secret {
+        destination: destination.clone(),
+        name: name.clone(),
+    };
     if let Ok(store) = native {
         let wanted = key.clone();
         match call(context, store, move |store| store.load(&wanted)).await {
@@ -223,15 +266,45 @@ async fn find(
     {
         return Ok((secret, place_text(CredentialPlace::File)));
     }
-    Err(match native {
-        Ok(_) => Failure::usage(format!("{name} is not set and not stored"))
-            .hint(format!("ncp secret set {name}")),
-        Err(error) => Failure::new(
+    Err(miss(server, name, destination, native.as_ref().err()))
+}
+
+/// The stop when no place has the item of the destination (S9). The
+/// message names only the current destination: `ncp` reads no other item.
+fn miss(
+    server: &Server,
+    name: &SecretName,
+    destination: &Destination,
+    native_error: Option<&StoreError>,
+) -> Failure {
+    let word = render::shell_word(server.name.as_str());
+    let set = format!("ncp secret set {name} --server {word}");
+    let failure = match native_error {
+        None => {
+            let stop = match destination {
+                Destination::Origin(_) => format!(
+                    "ncp sent nothing to server {}. If this URL is correct, store the value for it.",
+                    server.name.as_str()
+                ),
+                Destination::Stdio => {
+                    format!("ncp did not start server {}.", server.name.as_str())
+                }
+            };
+            Failure::usage(format!(
+                "{name} is not set, and not stored for {destination}. {stop}"
+            ))
+            .hint(set)
+            .hint("ncp secret list")
+        }
+        Some(error) => Failure::new(
             Exit::Auth,
-            format!("{name} is not set, and the native store gave no value: {error}"),
+            format!(
+                "{name} is not set, and the native store gave no value for {destination}: {error}"
+            ),
         )
-        .hint(format!("ncp secret set {name} --credential-store file")),
-    })
+        .hint(format!("{set} --credential-store file")),
+    };
+    failure.destination(destination.clone())
 }
 
 /// The error again, for a second use. A store error holds no secret.
@@ -266,10 +339,24 @@ pub(super) async fn command(context: &Context<'_>, command: SecretCommand) -> Re
     match command {
         SecretCommand::Set {
             name,
+            server,
             credential_store,
-        } => set(context, &name, credential_store).await,
+        } => set(context, &name, server.as_deref(), credential_store).await,
         SecretCommand::List => list(context).await,
-        SecretCommand::Delete { name } => delete(context, &name).await,
+        SecretCommand::Delete {
+            name,
+            server,
+            unused,
+            all,
+        } => {
+            let removal = match (server, unused, all) {
+                (Some(server), _, _) => Removal::Server(server),
+                (None, true, _) => Removal::Unused,
+                (None, false, true) => Removal::All,
+                (None, false, false) => Removal::One,
+            };
+            delete(context, &name, removal).await
+        }
     }
 }
 
@@ -287,26 +374,152 @@ pub(super) fn place_text(place: CredentialPlace) -> &'static str {
     }
 }
 
-async fn set(context: &Context<'_>, name: &str, place: CredentialPlace) -> Result<(), Failure> {
-    let key = key(name)?;
+/// The entries that a destination is for, as text: "server linear", or
+/// "the issuer of server acme" for a client secret.
+fn users_text(uses: &[Use<'_>]) -> String {
+    uses.iter()
+        .map(|item| match item.field {
+            Field::Value => format!("server {}", item.server.name.as_str()),
+            Field::ClientSecret => format!("the issuer of server {}", item.server.name.as_str()),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn server_names(uses: &[Use<'_>]) -> Vec<String> {
+    uses.iter()
+        .map(|item| item.server.name.as_str().to_string())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// The JSON of a destination: the origin, or `null` for stdio.
+pub(super) fn destination_json(destination: &Destination) -> serde_json::Value {
+    json!(destination.origin().map(Origin::as_str))
+}
+
+/// The one destination that `secret set` (and `secret delete --server`)
+/// uses: the entries that name `${NAME}` in `env`, `headers` or
+/// `oauth.clientSecret`, or only the entry of `--server`.
+fn set_target<'a>(
+    context: &Context<'_>,
+    loaded: &'a session::Loaded,
+    name: &SecretName,
+    only: Option<&str>,
+) -> Result<Target<'a>, Failure> {
+    let servers: Vec<&Server> = match only {
+        Some(word) => vec![session::select(loaded, word, context.ui)?],
+        None => loaded.config.servers().collect(),
+    };
+    let uses = binding::uses(servers.iter().copied(), name.as_str());
+    binding::target(uses).map_err(|error| match error {
+        TargetError::NoUse => no_use(name, only, loaded),
+        TargetError::NotLiteral { server, error } => Failure::usage(format!(
+            "server {} names ${{{name}}}, and ncp sends a stored value only to a literal origin: {error}",
+            server.name.as_str()
+        )),
+        TargetError::Several(targets) => {
+            let list: Vec<String> = targets
+                .iter()
+                .map(|target| format!("{} ({})", target.destination, users_text(&target.uses)))
+                .collect();
+            Failure::usage(format!(
+                "{name} has more than one destination: {}; choose one entry",
+                list.join("; ")
+            ))
+            .hint(format!("ncp secret set {name} --server <SERVER>"))
+        }
+    })
+}
+
+/// No entry names `${NAME}` in a field that can read the store. A name in
+/// `command`, `args`, `cwd` or `url` comes only from the environment (B32),
+/// and an unset one makes the entry invalid.
+fn no_use(name: &SecretName, only: Option<&str>, loaded: &session::Loaded) -> Failure {
+    let fields = "env, headers or oauth.clientSecret";
+    let message = match only {
+        Some(word) => format!("server {word} does not name ${{{name}}} in {fields}"),
+        None => format!("no entry names ${{{name}}} in {fields}; add the entry first"),
+    };
+    let unset = loaded.config.invalid().any(|(server, error)| {
+        only.is_none_or(|word| word == server)
+            && matches!(
+                error,
+                EntryError::Variable { error: expand::ExpandError::Unset(unset), .. }
+                    if unset == name.as_str()
+            )
+    });
+    let failure = Failure::usage(message);
+    if unset {
+        failure.hint(format!("export {name}=<value>"))
+    } else {
+        failure
+    }
+}
+
+async fn set(
+    context: &Context<'_>,
+    name: &str,
+    only: Option<&str>,
+    place: CredentialPlace,
+) -> Result<(), Failure> {
+    let name = secret_name(name)?;
+    let loaded = session::load_config(&context.paths.config_file, context.env)?;
+    let target = set_target(context, &loaded, &name, only)?;
+    let destination = &target.destination;
+    let key = CredentialKey::Secret {
+        destination: destination.clone(),
+        name: name.clone(),
+    };
     // Check the store before the user types the value.
-    let target = match place {
+    let store = match place {
         CredentialPlace::Native => native(context).await.map_err(|error| {
-            store_failure(&error).hint(format!("ncp secret set {name} --credential-store file"))
+            let word = render::shell_word(target.uses[0].server.name.as_str());
+            store_failure(&error).hint(format!(
+                "ncp secret set {name} --server {word} --credential-store file"
+            ))
         })?,
         CredentialPlace::File => file(context),
     };
-    let value = read_value(context, name).await?;
+    if let Destination::Origin(origin) = destination
+        && let Some(host) = url::Url::parse(origin.as_str())
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_string))
+            .filter(|host| ask::has_punycode_label(host))
+    {
+        context.ui.warning(
+            None,
+            &format!(
+                "the host {host} has a Punycode label (xn--): its name can look like another name"
+            ),
+        );
+    }
+    let users = users_text(&target.uses);
+    let prompt = format!("Value of {name} for {destination} ({users}): ");
+    let value = read_value(context, name.as_str(), &prompt).await?;
     let saved = key.clone();
-    call(context, &target, move |store| store.save(&saved, &value))
+    call(context, &store, move |store| store.save(&saved, &value))
         .await
         .map_err(|error| store_failure(&error))?;
     // A list of a server can depend on the value.
     crate::list_cache::remove_all(&context.paths.cache_dir);
-    warn_about_copies(context, name, &key, place).await;
+    warn_about_copies(context, &key, place, target.uses[0].server).await;
     context.ui.result(
-        || format!("Stored {name} in {}.\n", place_text(place)),
-        || json!({"name": name, "place": place_name(place)}),
+        || {
+            format!(
+                "Stored {name} in {} for {destination} ({users}).\n",
+                place_text(place)
+            )
+        },
+        || {
+            json!({
+                "name": name.as_str(),
+                "place": place_name(place),
+                "destination": destination_json(destination),
+                "servers": server_names(&target.uses),
+            })
+        },
     )
 }
 
@@ -314,15 +527,18 @@ async fn set(context: &Context<'_>, name: &str, place: CredentialPlace) -> Resul
 /// warning, so it must not wait for a locked store.
 const COPY_CHECK_LIMIT: Duration = Duration::from_secs(5);
 
-/// Warnings when another place has a value for the name: `ncp` reads the
+/// Warnings when another place has a value for the key: `ncp` reads the
 /// environment first, then the native store, then the file.
 async fn warn_about_copies(
     context: &Context<'_>,
-    name: &str,
     key: &CredentialKey,
     place: CredentialPlace,
+    server: &Server,
 ) {
-    if context.env.contains_key(name) {
+    let CredentialKey::Secret { destination, name } = key else {
+        return;
+    };
+    if context.env.contains_key(name.as_str()) {
         context.ui.warning(
             None,
             &format!("{name} is also set in the environment, and ncp uses that value first"),
@@ -357,17 +573,23 @@ async fn warn_about_copies(
             );
             return;
         }
-        (Ok(true), CredentialPlace::File) => {
-            format!("the credential file also has {name}; ncp reads the native store first")
-        }
+        (Ok(true), CredentialPlace::File) => format!(
+            "the credential file also has {name} for {destination}; ncp reads the native store first"
+        ),
         (Ok(true), CredentialPlace::Native) => format!(
-            "the native store also has {name}, and ncp reads it first: the new value is not used"
+            "the native store also has {name} for {destination}, and ncp reads it first: the new value is not used"
         ),
     };
     context.ui.warning(None, &message);
-    // The design gives this command: it removes all copies, and then the
-    // user stores the value again in one place.
-    context.ui.hint(None, &format!("ncp secret delete {name}"));
+    // The design gives this command: it removes the copies of this
+    // destination, and then the user stores the value again in one place.
+    context.ui.hint(
+        None,
+        &format!(
+            "ncp secret delete {name} --server {}",
+            render::shell_word(server.name.as_str())
+        ),
+    );
 }
 
 /// Why `secret set` got no value.
@@ -383,9 +605,9 @@ enum Unread {
 /// would echo the value. Each read has the limit of `--timeout`. One new
 /// line at the end is not part of the value, because `echo` and a pasted
 /// line add it.
-async fn read_value(context: &Context<'_>, name: &str) -> Result<Secret, Failure> {
+async fn read_value(context: &Context<'_>, name: &str, prompt: &str) -> Result<Secret, Failure> {
     let text = if ask::interactive() {
-        read_hidden_line(context, name).await
+        read_hidden_line(context, prompt).await
     } else if std::io::stdin().is_terminal() {
         return Err(Failure::usage(format!(
             "cannot ask for the value of {name}: stderr is not a terminal"
@@ -461,9 +683,9 @@ fn stty(args: &[&str]) -> std::io::Result<String> {
 /// The terminal is in non-canonical mode: in canonical mode macOS keeps
 /// only 1024 bytes of a line, and a longer token would never end. Thus
 /// `ncp` does the backspace itself.
-async fn read_hidden_line(context: &Context<'_>, name: &str) -> Result<String, Unread> {
+async fn read_hidden_line(context: &Context<'_>, prompt: &str) -> Result<String, Unread> {
     let saved = stty(&["-g"]).map_err(Unread::Failed)?;
-    eprint!("Value of {name}: ");
+    eprint!("{prompt}");
     // Fail closed: with no echo control, the value would show.
     stty(&["-echo", "-icanon", "min", "1", "time", "0"]).map_err(Unread::Failed)?;
     let (sender, receiver) = tokio::sync::oneshot::channel();
@@ -513,14 +735,14 @@ fn read_terminal_line(input: &mut impl std::io::Read) -> std::io::Result<String>
     String::from_utf8(line).map_err(|_| std::io::Error::other("the value is not UTF-8 text"))
 }
 
-/// The secret names of a store. A store that cannot answer gives a
-/// warning and no names. A host with no native store gives no warning,
-/// because the user then keeps all values in the file.
-async fn names_in(
+/// The secret keys of a store, as (name, destination). A store that
+/// cannot answer gives a warning and no keys. A host with no native store
+/// gives no warning, because the user then keeps all values in the file.
+async fn secrets_in(
     context: &Context<'_>,
     store: &Opened,
     place: CredentialPlace,
-) -> Vec<SecretName> {
+) -> Vec<(SecretName, Destination)> {
     let keys = match store {
         Ok(store) => call(context, store, |store| store.keys()).await,
         Err(StoreError::Unavailable(_)) => return Vec::new(),
@@ -530,7 +752,7 @@ async fn names_in(
         Ok(keys) => keys
             .into_iter()
             .filter_map(|key| match key {
-                CredentialKey::Secret(name) => Some(name),
+                CredentialKey::Secret { destination, name } => Some((name, destination)),
                 _ => None,
             })
             .collect(),
@@ -544,25 +766,83 @@ async fn names_in(
     }
 }
 
+/// The places of each stored item, from the keys of the two places.
+fn items_by_place(
+    native: Vec<(SecretName, Destination)>,
+    file: Vec<(SecretName, Destination)>,
+) -> BTreeMap<(SecretName, Destination), Vec<&'static str>> {
+    let mut items: BTreeMap<(SecretName, Destination), Vec<&'static str>> = BTreeMap::new();
+    let tagged = native
+        .into_iter()
+        .map(|item| (item, "native"))
+        .chain(file.into_iter().map(|item| (item, "file")));
+    for (item, place) in tagged {
+        let places = items.entry(item).or_default();
+        if !places.contains(&place) {
+            places.push(place);
+        }
+    }
+    items
+}
+
+async fn stored_items(
+    context: &Context<'_>,
+) -> Result<BTreeMap<(SecretName, Destination), Vec<&'static str>>, Failure> {
+    let native_keys = secrets_in(context, &native(context).await, CredentialPlace::Native).await;
+    if context.cancel.is_cancelled() {
+        return Err(session::interrupted());
+    }
+    let file_keys = secrets_in(context, &Ok(file(context)), CredentialPlace::File).await;
+    Ok(items_by_place(native_keys, file_keys))
+}
+
+/// One row of `secret list`: an item and the servers that use its key.
+struct SecretRow {
+    name: SecretName,
+    destination: Destination,
+    places: Vec<&'static str>,
+    servers: Vec<String>,
+}
+
+fn secret_rows(
+    items: BTreeMap<(SecretName, Destination), Vec<&'static str>>,
+    servers: &[&Server],
+) -> Vec<SecretRow> {
+    items
+        .into_iter()
+        .map(|((name, destination), places)| {
+            let uses: Vec<Use<'_>> = binding::uses(servers.iter().copied(), name.as_str())
+                .into_iter()
+                .filter(|item| item.destination.as_ref() == Ok(&destination))
+                .collect();
+            SecretRow {
+                servers: server_names(&uses),
+                name,
+                destination,
+                places,
+            }
+        })
+        .collect()
+}
+
 async fn list(context: &Context<'_>) -> Result<(), Failure> {
-    // The names come from the stores. A configuration file that does not
+    // The items come from the stores. A configuration file that does not
     // load only takes away the "used" mark.
-    let used = match session::load_config(&context.paths.config_file, context.env) {
-        Ok(loaded) => loaded.config.variables().clone(),
+    let loaded = match session::load_config(&context.paths.config_file, context.env) {
+        Ok(loaded) => Some(loaded),
         Err(failure) => {
             context.ui.warning(
                 None,
                 &format!("{}; no secret shows as used", failure.message),
             );
-            BTreeSet::new()
+            None
         }
     };
-    let native_names = names_in(context, &native(context).await, CredentialPlace::Native).await;
-    if context.cancel.is_cancelled() {
-        return Err(session::interrupted());
-    }
-    let file_names = names_in(context, &Ok(file(context)), CredentialPlace::File).await;
-    let rows = secret_rows(&native_names, &file_names, &used);
+    let servers: Vec<&Server> = loaded
+        .iter()
+        .flat_map(|loaded| loaded.config.servers())
+        .collect();
+    let rows = secret_rows(stored_items(context).await?, &servers);
     context.ui.result(
         || {
             render::table(
@@ -570,9 +850,14 @@ async fn list(context: &Context<'_>) -> Result<(), Failure> {
                     .iter()
                     .map(|row| {
                         vec![
-                            row.name.clone(),
+                            row.name.to_string(),
+                            row.destination.to_string(),
                             row.places.join(", "),
-                            if row.used { "" } else { "not used" }.to_string(),
+                            if row.servers.is_empty() {
+                                "not used".to_string()
+                            } else {
+                                row.servers.join(", ")
+                            },
                         ]
                     })
                     .collect::<Vec<_>>(),
@@ -580,69 +865,154 @@ async fn list(context: &Context<'_>) -> Result<(), Failure> {
         },
         || {
             json!({"secrets": rows.iter().map(|row| json!({
-                "name": row.name, "places": row.places, "used": row.used,
+                "name": row.name.as_str(),
+                "destination": destination_json(&row.destination),
+                "places": row.places,
+                "used": !row.servers.is_empty(),
+                "servers": row.servers,
             })).collect::<Vec<_>>()})
         },
     )
 }
 
-struct SecretRow {
-    name: String,
-    places: Vec<&'static str>,
-    used: bool,
+/// The items that `secret delete` removes.
+enum Removal {
+    /// The item of the destination of this entry.
+    Server(String),
+    /// The items that no entry of the loaded file uses.
+    Unused,
+    All,
+    /// The item of the name when it has only one destination.
+    One,
 }
 
-fn secret_rows(
-    native: &[SecretName],
-    file: &[SecretName],
-    used: &BTreeSet<String>,
-) -> Vec<SecretRow> {
-    let names: BTreeSet<&SecretName> = native.iter().chain(file).collect();
-    names
-        .into_iter()
-        .map(|name| SecretRow {
-            name: name.to_string(),
-            places: [(native, "native"), (file, "file")]
+/// The destinations to remove, and the configuration file that `ncp` read
+/// to choose them.
+async fn chosen(
+    context: &Context<'_>,
+    name: &SecretName,
+    removal: Removal,
+) -> Result<(Vec<Destination>, Option<std::path::PathBuf>), Failure> {
+    let not_stored = || Failure::usage(format!("{name} is not stored")).hint("ncp secret list");
+    match removal {
+        Removal::Server(word) => {
+            let loaded = session::load_config(&context.paths.config_file, context.env)?;
+            let target = set_target(context, &loaded, name, Some(&word))?;
+            Ok((vec![target.destination], Some(loaded.path)))
+        }
+        Removal::All => {
+            let stored = stored_destinations(context, name).await?;
+            if stored.is_empty() {
+                return Err(not_stored());
+            }
+            Ok((stored, None))
+        }
+        Removal::One => {
+            let stored = stored_destinations(context, name).await?;
+            match stored.as_slice() {
+                [] => Err(not_stored()),
+                [_] => Ok((stored, None)),
+                _ => {
+                    let list: Vec<String> = stored.iter().map(ToString::to_string).collect();
+                    Err(Failure::usage(format!(
+                        "{name} is stored for more than one destination: {}; ncp removed nothing",
+                        list.join(", ")
+                    ))
+                    .hint(format!("ncp secret delete {name} --server <SERVER>")))
+                }
+            }
+        }
+        Removal::Unused => {
+            let loaded = strict_config(context)?;
+            let used: Vec<Destination> =
+                binding::by_destination(binding::uses(loaded.config.servers(), name.as_str()))
+                    .into_iter()
+                    .map(|target| target.destination)
+                    .collect();
+            let unused: Vec<Destination> = stored_destinations(context, name)
+                .await?
                 .into_iter()
-                .filter(|(names, _)| names.contains(name))
-                .map(|(_, place)| place)
-                .collect(),
-            used: used.contains(name.as_str()),
-        })
-        .collect()
+                .filter(|destination| !used.contains(destination))
+                .collect();
+            if unused.is_empty() {
+                return Err(
+                    Failure::usage(format!("no stored item of {name} is unused"))
+                        .hint("ncp secret list"),
+                );
+            }
+            Ok((unused, Some(loaded.path)))
+        }
+    }
 }
 
-async fn delete(context: &Context<'_>, name: &str) -> Result<(), Failure> {
-    let key = key(name)?;
+async fn stored_destinations(
+    context: &Context<'_>,
+    name: &SecretName,
+) -> Result<Vec<Destination>, Failure> {
+    Ok(stored_items(context)
+        .await?
+        .into_keys()
+        .filter(|(item, _)| item == name)
+        .map(|(_, destination)| destination)
+        .collect())
+}
+
+/// The configuration for `--unused`: an invalid entry can name the secret,
+/// so `ncp` cannot know that an item is unused.
+fn strict_config(context: &Context<'_>) -> Result<session::Loaded, Failure> {
+    let loaded = session::load_config(&context.paths.config_file, context.env)
+        .map_err(|failure| Failure::usage(failure.message))?;
+    if let Some((server, error)) = loaded.config.invalid().next() {
+        return Err(Failure::usage(format!(
+            "server {server}: {error}; ncp cannot know which items it uses"
+        )));
+    }
+    Ok(loaded)
+}
+
+async fn delete(context: &Context<'_>, name: &str, removal: Removal) -> Result<(), Failure> {
+    let name = secret_name(name)?;
+    let (destinations, config_file) = chosen(context, &name, removal).await?;
     let stores = [
         (CredentialPlace::Native, native(context).await),
         (CredentialPlace::File, Ok(file(context))),
     ];
-    let mut removed = Vec::new();
+    let mut removed: Vec<(Destination, Vec<CredentialPlace>)> = Vec::new();
     let mut failed = None;
-    for (place, store) in &stores {
-        // One call that removes and tells if the item was there: a second
-        // call could pass the limit and remove the item after the exit.
-        let result = match store {
-            Ok(store) => {
-                let wanted = key.clone();
-                call(context, store, move |store| store.delete(&wanted)).await
-            }
-            // A host with no native store has no copy there.
-            Err(StoreError::Unavailable(_)) => Ok(false),
-            Err(error) => Err(clone_error(error)),
+    for destination in destinations {
+        let key = CredentialKey::Secret {
+            destination: destination.clone(),
+            name: name.clone(),
         };
-        match result {
-            Ok(true) => removed.push(*place),
-            Ok(false) => {}
-            Err(StoreError::Interrupted) => return Err(session::interrupted()),
-            Err(error) => {
-                context.ui.warning(
-                    None,
-                    &format!("ncp cannot change {}: {error}", place_text(*place)),
-                );
-                failed = Some(error);
+        let mut places = Vec::new();
+        for (place, store) in &stores {
+            // One call that removes and tells if the item was there: a
+            // second call could pass the limit and remove the item after
+            // the exit.
+            let result = match store {
+                Ok(store) => {
+                    let wanted = key.clone();
+                    call(context, store, move |store| store.delete(&wanted)).await
+                }
+                // A host with no native store has no copy there.
+                Err(StoreError::Unavailable(_)) => Ok(false),
+                Err(error) => Err(clone_error(error)),
+            };
+            match result {
+                Ok(true) => places.push(*place),
+                Ok(false) => {}
+                Err(StoreError::Interrupted) => return Err(session::interrupted()),
+                Err(error) => {
+                    context.ui.warning(
+                        None,
+                        &format!("ncp cannot change {}: {error}", place_text(*place)),
+                    );
+                    failed = Some(error);
+                }
             }
+        }
+        if !places.is_empty() {
+            removed.push((destination, places));
         }
     }
     match (removed.is_empty(), failed) {
@@ -652,11 +1022,31 @@ async fn delete(context: &Context<'_>, name: &str) -> Result<(), Failure> {
         }
         (false, _) => {
             crate::list_cache::remove_all(&context.paths.cache_dir);
-            let places: Vec<&str> = removed.iter().map(|place| place_name(*place)).collect();
-            let text: Vec<&str> = removed.iter().map(|place| place_text(*place)).collect();
             context.ui.result(
-                || format!("Removed {name} from {}.\n", text.join(" and ")),
-                || json!({"name": name, "places": places}),
+                || {
+                    removed
+                        .iter()
+                        .map(|(destination, places)| {
+                            let text: Vec<&str> =
+                                places.iter().map(|place| place_text(*place)).collect();
+                            format!(
+                                "Removed {name} for {destination} from {}.\n",
+                                text.join(" and ")
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .concat()
+                },
+                || {
+                    json!({
+                        "name": name.as_str(),
+                        "file": config_file.as_ref().map(|path| path.display().to_string()),
+                        "removed": removed.iter().map(|(destination, places)| json!({
+                            "destination": destination_json(destination),
+                            "places": places.iter().map(|place| place_name(*place)).collect::<Vec<_>>(),
+                        })).collect::<Vec<_>>(),
+                    })
+                },
             )
         }
     }
@@ -666,26 +1056,61 @@ async fn delete(context: &Context<'_>, name: &str) -> Result<(), Failure> {
 mod tests {
     use super::*;
 
-    fn names(list: &[&str]) -> Vec<SecretName> {
-        list.iter()
-            .map(|name| SecretName::parse(name).unwrap())
-            .collect()
+    fn item(name: &str, destination: &str) -> (SecretName, Destination) {
+        let destination = match destination {
+            "stdio" => Destination::Stdio,
+            origin => Destination::Origin(crate::server::Origin::parse(origin).unwrap()),
+        };
+        (SecretName::parse(name).unwrap(), destination)
     }
 
     #[test]
-    fn secret_rows_merge_places_and_mark_unused_names() {
-        let used = ["A".to_string(), "C".to_string()].into_iter().collect();
-        let rows = secret_rows(&names(&["A", "B"]), &names(&["B", "C"]), &used);
-        let view: Vec<(&str, Vec<&str>, bool)> = rows
-            .iter()
-            .map(|row| (row.name.as_str(), row.places.clone(), row.used))
+    fn secret_rows_merge_places_and_name_the_servers_of_each_key() {
+        let config = crate::config::parse(
+            r#"{"mcpServers": {
+                "a": {"type": "http", "url": "https://h/mcp", "headers": {"X": "${K}"}},
+                "b": {"type": "http", "url": "https://other/mcp", "headers": {"X": "${K}"}},
+                "s": {"command": "s", "env": {"K": "${K}"}}
+            }}"#,
+            &Env::new(),
+        )
+        .unwrap();
+        let servers: Vec<&Server> = config.servers().collect();
+        let items = items_by_place(
+            vec![item("K", "https://h"), item("K", "stdio")],
+            vec![
+                item("K", "https://h"),
+                item("K", "https://old"),
+                item("C", "stdio"),
+            ],
+        );
+        let rows = secret_rows(items, &servers);
+        let view: Vec<(String, String, Vec<&str>, Vec<String>)> = rows
+            .into_iter()
+            .map(|row| {
+                (
+                    row.name.to_string(),
+                    row.destination.to_string(),
+                    row.places,
+                    row.servers,
+                )
+            })
             .collect();
+        let row = |name: &str, destination: &str, places: &[&'static str], servers: &[&str]| {
+            (
+                name.to_string(),
+                destination.to_string(),
+                places.to_vec(),
+                servers.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            )
+        };
         assert_eq!(
             view,
             [
-                ("A", vec!["native"], true),
-                ("B", vec!["native", "file"], false),
-                ("C", vec!["file"], true),
+                row("C", "stdio servers", &["file"], &[]),
+                row("K", "https://h", &["native", "file"], &["a"]),
+                row("K", "https://old", &["file"], &[]),
+                row("K", "stdio servers", &["native"], &["s"]),
             ]
         );
     }

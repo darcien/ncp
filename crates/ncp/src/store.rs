@@ -177,7 +177,10 @@ mod contract {
     //! The behavior that each store must have.
 
     use super::*;
-    use crate::{credential::SecretName, server::ServerName};
+    use crate::{
+        credential::{Destination, SecretName},
+        server::{Origin, ServerName},
+    };
 
     fn server(name: &str) -> ServerName {
         ServerName::parse(name).unwrap()
@@ -189,8 +192,23 @@ mod contract {
 
     pub fn check(store: &dyn CredentialStore) {
         let tokens = CredentialKey::OAuthTokens(server("a"));
-        let env = CredentialKey::Secret(SecretName::parse("API_KEY").unwrap());
+        let secret_for = |destination| CredentialKey::Secret {
+            destination,
+            name: SecretName::parse("API_KEY").unwrap(),
+        };
+        let origin = |text| Destination::Origin(Origin::parse(text).unwrap());
+        let env = secret_for(Destination::Stdio);
         let other_server = CredentialKey::OAuthTokens(server("b"));
+        // One name for two origins gives two items: a value never follows
+        // its name to another origin.
+        let header = secret_for(origin("https://a.test"));
+        store.save(&header, &secret("h1")).unwrap();
+        assert_eq!(
+            store.load(&secret_for(origin("https://b.test"))).unwrap(),
+            None
+        );
+        assert_eq!(store.load(&header).unwrap(), Some(secret("h1")));
+        assert!(store.delete(&header).unwrap());
 
         assert_eq!(store.load(&tokens).unwrap(), None);
         store.save(&tokens, &secret("t1")).unwrap();

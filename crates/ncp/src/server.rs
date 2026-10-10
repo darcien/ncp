@@ -115,6 +115,11 @@ impl ServerUrl {
         self.0.as_str()
     }
 
+    #[must_use]
+    pub fn as_url(&self) -> &Url {
+        &self.0
+    }
+
     /// The URL with no query and no fragment. An OAuth resource SHOULD NOT
     /// have a query (RFC 8707 §2), and a query can hold a key.
     #[must_use]
