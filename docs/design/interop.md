@@ -47,9 +47,9 @@ All files are in `harness/interop/`:
 
 | File | Content |
 |---|---|
-| `package.json` | `@modelcontextprotocol/server-everything` at `2026.8.31`, the version that `docs/research/test-harness.md` checked. `devEngines.packageManager`: pnpm at the exact version of `mise.toml`, with `"onFail": "error"`. |
+| `package.json` | `@modelcontextprotocol/server-everything` at `2026.8.31`, the version that `docs/research/test-harness.md` checked. No pnpm version: `mise.toml` is the only place for it. |
 | `pnpm-workspace.yaml` | The settings below. |
-| `pnpm-lock.yaml` | Committed. An integrity hash for each package, and the pnpm version. |
+| `pnpm-lock.yaml` | Committed. An integrity hash for each package. |
 | `.gitignore` | `/node_modules`, as in `harness/conformance/`. |
 
 pnpm itself:
@@ -58,8 +58,12 @@ pnpm itself:
   Use the newest pnpm 12 release that is at least one day old. mise gets it
   with its default backend (aqua, from the GitHub releases of pnpm), the
   same as `typos`, `shellcheck` and `cargo-deny`.
-- With `"onFail": "error"`, a different pnpm stops with an error, and pnpm
-  downloads no other version.
+- Use an exact version, not a major version such as `12`. A major version
+  selects the newest release at install time, so two installs can differ.
+- mise can also read the version from `devEngines.packageManager` in
+  `package.json` (setting `idiomatic_version_file_enable_tools`). Do not
+  use this: all other tools have their version in `mise.toml`, and one
+  place for each version is simpler.
 
 Settings in `pnpm-workspace.yaml`:
 

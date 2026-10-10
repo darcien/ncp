@@ -345,8 +345,8 @@ network. Design: `docs/design/interop.md` (accepted on 2026-10-10). Interop
 is optional: it is not in the git hook, and later milestones do not need
 it.
 
-1. `harness/interop/` (design section 4): pnpm pinned in `mise.toml` and in
-   `devEngines.packageManager`, `server-everything` at `2026.8.31`,
+1. `harness/interop/` (design section 4): pnpm pinned at an exact version in
+   `mise.toml` only, `server-everything` at `2026.8.31`,
    `pnpm-workspace.yaml`, a committed `pnpm-lock.yaml`, and
    `mise run interop:install`. If `typos` reports words in
    `pnpm-lock.yaml`, exclude the file.
