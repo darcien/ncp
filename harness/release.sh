@@ -7,7 +7,8 @@
 # Output in dist/:
 #   ncp-aarch64-apple-darwin, ncp-x86_64-apple-darwin
 #   ncp-aarch64-unknown-linux-musl, ncp-x86_64-unknown-linux-musl
-#   SHA256SUMS
+#   ncp-<version>-<target>.tar.gz for each binary, with the license files
+#   SHA256SUMS for the archives
 #
 # The Linux binaries are static musl builds in the Linux harness, with no
 # network. Each one then runs in an empty image (no libc, no files). The
@@ -34,7 +35,6 @@ for platform in linux/arm64 linux/amd64; do
 	NCP_LINUX_PLATFORM="$platform" harness/linux/run.sh smoke
 done
 
-cd dist
-shasum -a 256 ncp-aarch64-apple-darwin ncp-x86_64-apple-darwin \
-	ncp-aarch64-unknown-linux-musl ncp-x86_64-unknown-linux-musl >SHA256SUMS
-cat SHA256SUMS
+# The archives come from GNU tar in the harness, so that their bytes do
+# not depend on the tar of the host.
+harness/linux/run.sh pack

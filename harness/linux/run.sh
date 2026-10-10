@@ -9,11 +9,14 @@
 #   harness/linux/run.sh prune
 #   harness/linux/run.sh release
 #   harness/linux/run.sh smoke
+#   harness/linux/run.sh pack
 #
 # "release" builds the static release binary of ncp with no network, and
 # copies it to dist/ncp-<target>. Run "cargo fetch" first. "smoke" runs
 # that binary in an empty image (no shell, no libc, no files) with no
-# network: --version, server list, and secret list.
+# network: --version, server list, and secret list. "pack" puts each binary
+# in dist/ into an archive ncp-<version>-<target>.tar.gz with the license
+# files, and writes dist/SHA256SUMS for the archives.
 #
 # "offline" runs the container with no network. Run "cargo fetch" first:
 # the registry volume then has all crates. Tests use only local servers,
@@ -161,8 +164,49 @@ smoke() {
 	docker image rm "ncp-smoke:$name" >/dev/null
 }
 
+# The release archives, made with GNU tar and gzip with no network. Each
+# archive has one directory with the binary and the license files: the MIT
+# license asks for its notice in each copy, and mise and Homebrew remove
+# one top directory. The fixed order, owner and time give the same bytes
+# for the same binaries. The time is the time of the last commit.
+pack() {
+	version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$root/Cargo.toml" | head -n 1)"
+	epoch="$(git -C "$root" log -1 --format=%ct)"
+	docker run --rm --init \
+		--network none \
+		--platform "$platform" \
+		--user "$(id -u):$(id -g)" \
+		--env HOME=/tmp \
+		--env VERSION="$version" \
+		--env SOURCE_DATE_EPOCH="$epoch" \
+		--volume "$root:/work:ro" \
+		--volume "$root/dist:/dist" \
+		"$image" \
+		sh -eu -c '
+			cd /dist
+			rm -f ncp-*.tar.gz SHA256SUMS
+			stage="$(mktemp -d)"
+			for binary in ncp-*-apple-darwin ncp-*-unknown-linux-musl; do
+				[ -f "$binary" ] || { echo "run.sh: dist/$binary is missing" >&2; exit 2; }
+				target="${binary#ncp-}"
+				top="ncp-$VERSION-$target"
+				mkdir "$stage/$top"
+				cp "$binary" "$stage/$top/ncp"
+				cp /work/LICENSE-MIT /work/LICENSE-APACHE "$stage/$top/"
+				chmod 0755 "$stage/$top/ncp"
+				chmod 0644 "$stage/$top/LICENSE-MIT" "$stage/$top/LICENSE-APACHE"
+				tar -C "$stage" --sort=name --owner=0 --group=0 --numeric-owner \
+					--mtime="@$SOURCE_DATE_EPOCH" -cf - "$top" | gzip -n -9 >"$top.tar.gz"
+			done
+			rm -rf "$stage"
+			sha256sum ncp-*.tar.gz >SHA256SUMS
+		'
+	cat "$root/dist/SHA256SUMS"
+}
+
 case "${1:-}" in
 image) build_image ;;
+pack) pack ;;
 release) release ;;
 smoke) smoke ;;
 prune) prune ;;
@@ -188,7 +232,7 @@ offline)
 	run_cargo none "$@"
 	;;
 *)
-	echo "usage: run.sh image | run.sh [offline] cargo <command> [arguments] | run.sh secret-service | run.sh prune | run.sh release | run.sh smoke" >&2
+	echo "usage: run.sh image | run.sh [offline] cargo <command> [arguments] | run.sh secret-service | run.sh prune | run.sh release | run.sh smoke | run.sh pack" >&2
 	exit 2
 	;;
 esac
