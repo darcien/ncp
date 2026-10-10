@@ -75,7 +75,7 @@ ncp generate-shell-completion <bash|zsh|fish>
 | `auth status` | No | For each server: OAuth tokens present, expiry, scopes, issuer. No token value. |
 | `secret set` | No | Reads one value from stdin and keeps it under the name and its destination (section 2.4, B72). On a TTY the question shows the destination, and the input is not shown. The value never goes in an argument (S3). |
 | `secret list` | No | One row for each name and destination, with the place (native store, file, or both) and the servers that use it. Rows that no `${NAME}` in the configuration uses are marked. Never a value. |
-| `secret delete` | No | Removes the item of one destination, the unused items, or all items of the name, from all places (B72). It says which destinations and places. |
+| `secret delete` | No | Deletes the item of one destination, the unused items, or all items of the name, from all places (B72). It says which destinations and places. |
 | `generate-shell-completion` | No | The completion script for the shell. Server names come from the configuration. Tool names come only from a cache, or are not completed. Completion never starts a server. |
 
 `ncp --help` shows the normal order of work: `server list`, `server show`,
@@ -143,7 +143,7 @@ and the error says "missing tool name".
 | `--timeout <seconds>` | The time limit for one request, in whole seconds. Default 300 s (decision C7). A timeout sends a cancel request and exits with code 3. Progress notifications do not reset the clock. |
 | `--credential-store <native\|file>` | Only on `secret set` and `auth login`: the place for the new value. Default `native` (decision C2). |
 | `--server <SERVER>` | Only on `secret set` and `secret delete`: use only the destination of this entry (B72). |
-| `--unused`, `--all` | Only on `secret delete`: remove the items of the name that no entry uses, or all items of the name (B72). |
+| `--unused`, `--all` | Only on `secret delete`: delete the items of the name that no entry uses, or all items of the name (B72). |
 | `--no-browser` | Only on `auth login`: print the URL and read the redirect URL from stdin (A10). |
 | `--no-validate` | Only on `tool call`: do not check the arguments against the input schema. |
 
@@ -402,7 +402,7 @@ user reviews them.
 | B24 | `tool list` shows an annotation mark only for a hint that the server sets to true. | A mark for each default value would mark almost all tools. |
 | B25 | The JSON of `tool list` and `tool show` is the `Tool` object as rmcp reads it. A field that rmcp does not know is not in the output. | rmcp gives typed objects only. Known limit; see the backlog. |
 | B26 | When `-` reads the arguments from a TTY, a hint says to end the input with Ctrl-D. | Good ergonomics: nothing seems to hang. |
-| B27 | `secret set` writes `{"name", "place", "destination", "servers"}`, and `secret delete` writes `{"name", "file", "removed": [{"destination", "places"}]}`. `destination` is `null` for a stdio value. Text: one sentence, for example "Stored LINEAR_KEY in the native store for https://mcp.linear.app (server linear)." | Section 4 gives no shape for these commands; the names follow `secret list`. |
+| B27 | `secret set` writes `{"name", "place", "destination", "servers"}`, and `secret delete` writes `{"name", "file", "deleted": [{"destination", "places"}]}`. `destination` is `null` for a stdio value. Text: one sentence, for example "Stored LINEAR_KEY in the native store for https://mcp.linear.app (server linear)." | Section 4 gives no shape for these commands; the names follow `secret list`. |
 | B28 | `secret delete` of a name that no place has is a usage error (exit 2) with the hint `ncp secret list`. | The user can have a typing error in the name; a silent success hides it. |
 | B29 | `secret set` does not keep one new line at the end of the input (LF or CRLF). An empty value is a usage error. | `echo` and a pasted line add a new line, which is never part of a token. |
 | B30 | When a store cannot answer, `secret list` shows a warning and lists the other place. `secret delete` removes the copies that it can reach, and fails only when it removed none. With no flag, a place that cannot list stops the delete before it removes anything, because an item there could be a second destination (B72); the message says so and gives the hint `--server`. | Good ergonomics: one broken place does not hide the other. |

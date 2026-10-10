@@ -413,7 +413,7 @@ fn native_store_comes_before_the_file_and_list_shows_both_places() {
     assert_eq!(
         run.stdout(),
         json!({"name": "FIXTURE_TOKEN", "file": null,
-            "removed": [{"destination": null, "places": ["native", "file"]}]})
+            "deleted": [{"destination": null, "places": ["native", "file"]}]})
     );
     let run = home.run(&["secret", "delete", "FIXTURE_TOKEN"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
@@ -553,7 +553,7 @@ async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
         run.error()["message"]
             .as_str()
             .unwrap()
-            .ends_with("ncp removed nothing"),
+            .ends_with("ncp deleted nothing"),
         "{}",
         run.describe()
     );
@@ -562,14 +562,14 @@ async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
     assert_eq!(
         run.stdout(),
         json!({"name": "K", "file": home.config_path().display().to_string(),
-            "removed": [{"destination": other, "places": ["file"]}]})
+            "deleted": [{"destination": other, "places": ["file"]}]})
     );
 
     // After a URL change, the old item is unused.
     home.configure(&json!({"web": {"type": "http", "url": other_url, "headers": header}}));
     let run = home.run(&["secret", "delete", "K", "--unused"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
-    assert_eq!(run.stdout()["removed"][0]["destination"], web.as_str());
+    assert_eq!(run.stdout()["deleted"][0]["destination"], web.as_str());
     let run = home.run(&["secret", "delete", "K", "--all"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert_eq!(run.error()["message"], "K is not stored");
@@ -665,7 +665,7 @@ fn secret_delete_with_a_locked_native_store_needs_a_flag() {
         run.error()["message"]
             .as_str()
             .unwrap()
-            .ends_with("ncp removed nothing"),
+            .ends_with("ncp deleted nothing"),
         "{}",
         run.describe()
     );
@@ -678,7 +678,7 @@ fn secret_delete_with_a_locked_native_store_needs_a_flag() {
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert_eq!(warnings(&run).len(), 1, "{}", run.describe());
     assert_eq!(
-        run.stdout()["removed"],
+        run.stdout()["deleted"],
         json!([{"destination": null, "places": ["file"]}])
     );
 }

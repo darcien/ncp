@@ -1021,7 +1021,7 @@ async fn chosen(
             let failure = store_failure(error);
             Err(Failure {
                 message: format!(
-                    "ncp cannot list {}: {}; ncp removed nothing",
+                    "ncp cannot list {}: {}; ncp deleted nothing",
                     place_text(*place),
                     failure.message
                 ),
@@ -1038,7 +1038,7 @@ async fn chosen(
             _ => {
                 let list: Vec<String> = stored.iter().map(ToString::to_string).collect();
                 Err(Failure::usage(format!(
-                    "{name} is stored for more than one destination: {}; ncp removed nothing",
+                    "{name} is stored for more than one destination: {}; ncp deleted nothing",
                     list.join(", ")
                 ))
                 .hint(format!("ncp secret delete {name} --server <SERVER>")))
@@ -1157,7 +1157,7 @@ async fn delete(context: &Context<'_>, name: &str, removal: Removal) -> Result<(
                             let text: Vec<&str> =
                                 places.iter().map(|place| place_text(*place)).collect();
                             format!(
-                                "Removed {name} for {destination} from {}.\n",
+                                "Deleted {name} for {destination} from {}.\n",
                                 text.join(" and ")
                             )
                         })
@@ -1168,7 +1168,7 @@ async fn delete(context: &Context<'_>, name: &str, removal: Removal) -> Result<(
                     json!({
                         "name": name.as_str(),
                         "file": config_file.as_ref().map(|path| path.display().to_string()),
-                        "removed": removed.iter().map(|(destination, places)| json!({
+                        "deleted": removed.iter().map(|(destination, places)| json!({
                             "destination": destination_json(destination),
                             "places": places.iter().map(|place| place_name(*place)).collect::<Vec<_>>(),
                         })).collect::<Vec<_>>(),

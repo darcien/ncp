@@ -206,18 +206,18 @@ pub enum SecretCommand {
     /// List the stored secrets: the name, the destination, the place and
     /// the servers that use each one. Shows no value.
     List,
-    /// Remove the stored secret from all places. With no flag, only when
+    /// Delete the stored secret from all places. With no flag, only when
     /// the name has one destination.
     Delete {
         /// The name, as in ${NAME} in the configuration
         name: String,
-        /// Remove only the item of the destination of this entry.
+        /// Delete only the item of the destination of this entry.
         #[arg(long, value_name = "SERVER", group = "removal")]
         server: Option<String>,
-        /// Remove the items that no entry of the configuration uses.
+        /// Delete the items that no entry of the configuration uses.
         #[arg(long, group = "removal")]
         unused: bool,
-        /// Remove the items of all destinations.
+        /// Delete the items of all destinations.
         #[arg(long, group = "removal")]
         all: bool,
     },
