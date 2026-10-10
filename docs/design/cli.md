@@ -1,7 +1,7 @@
 # Design: command line
 
 Status: accepted by the user on 2026-10-08 (plan milestone 5, gate).
-Baseline: [target-requirements.md](../target-requirements.md). Input:
+Baseline: [requirements.md](../requirements.md). Input:
 [interface-and-config.md](../research/interface-and-config.md),
 [early-tests.md](../research/early-tests.md),
 [credential-store.md](../research/credential-store.md).

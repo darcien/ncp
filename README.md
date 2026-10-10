@@ -15,7 +15,7 @@ cargo build --release -p ncp
 
 The rules for contributors and agents are in `AGENTS.md`. The design is in
 `docs/design/cli.md`, and the requirements are in
-`docs/target-requirements.md`.
+`docs/requirements.md`.
 
 ## License
 

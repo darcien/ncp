@@ -8,7 +8,7 @@ written in Rust on the official SDK `rmcp`.
 - **MCP spec**: the official, versioned specification at
   modelcontextprotocol.io. `ncp` targets `2026-07-28`, with fallback to
   `2025-11-25`.
-- **Requirements**: `docs/target-requirements.md`. A temporary working
+- **Requirements**: `docs/requirements.md`. A temporary working
   document for the MVP. It goes away when `ncp` conforms to the MCP spec.
 - When a change adds or changes behavior, update the requirements first. Put
   the requirements change in the same commit as the code, or in an earlier

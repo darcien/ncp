@@ -34,7 +34,7 @@ results.
 organization), over stdio and Streamable HTTP. Its README calls it "a test
 server for builders of MCP clients".
 
-`target-requirements.md` section 4 accepts official MCP test parts as local
+`requirements.md` section 4 accepts official MCP test parts as local
 test servers. `AGENTS.md` accepts a pinned package of the MCP organization,
 with the dependencies that its lock file pins. The tests need no network.
 

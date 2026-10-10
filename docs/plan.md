@@ -1,6 +1,6 @@
 # Implementation plan
 
-Temporary working document for the MVP, like `target-requirements.md`.
+Temporary working document for the MVP, like `requirements.md`.
 Do the milestones in order. Each milestone ends with `mise run check` and
 `mise run test` green, and one or more commits.
 
@@ -91,7 +91,7 @@ for the points below.
 For each milestone:
 
 1. Read `.scratch/progress.md` and the backlog in `.scratch/backlog/`.
-2. Change `docs/target-requirements.md` first when behavior changes, in the
+2. Change `docs/requirements.md` first when behavior changes, in the
    same commit as the code or an earlier one.
 3. Write tests named by behavior. Tests use only local servers and never the
    macOS Keychain or the Linux Secret Service of the host.
