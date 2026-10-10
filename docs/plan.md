@@ -369,6 +369,9 @@ Done when the git hook passes and `mise run interop` passes one time.
 
 ## Milestone 16: fixes from the reviews of 2026-10-10
 
+Status: done on 2026-10-10. Item 5 was done already in milestone 13. One
+review round found only small items, and they are fixed.
+
 These fixes need no new decision. Each one is a small commit.
 
 1. The rule "HTTPS, or HTTP to a loopback host" for a server URL is an
