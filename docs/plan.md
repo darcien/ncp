@@ -324,7 +324,10 @@ behavior. Do the items in order. Each item is one or more small commits.
 ## Milestone 14: release build (gate)
 
 Status: items 1 to 3 done on 2026-10-10 at commit 3066c47 (report
-`docs/research/release-build-2026-10-10.md`). Item 4 waits for the user.
+`docs/research/release-build-2026-10-10.md`). The release step also makes
+the archives and `SHA256SUMS` of the decided release form, with no upload.
+Item 4 waits for the user: the workflow needs action pins from github.com,
+and the push, the tag and the CIMD URL need the user.
 
 1. Static musl builds for `x86_64` and `aarch64` in the Linux harness, macOS
    builds for both architectures, and checksums (D3).
