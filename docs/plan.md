@@ -327,8 +327,8 @@ behavior. Do the items in order. Each item is one or more small commits.
 Status: items 1 to 3 done on 2026-10-10 at commit 3066c47 (report
 `docs/research/release-build-2026-10-10.md`). The release step also makes
 the archives and `SHA256SUMS` of the decided release form, with no upload.
-Item 4 moved to milestone 16: the user decided on 2026-10-10 to do the
-interop tests before the distribution.
+Item 4 moved to milestone 20: the user decided on 2026-10-10 to do the
+interop tests before the distribution, and to do the distribution last.
 
 1. Static musl builds for `x86_64` and `aarch64` in the Linux harness, macOS
    builds for both architectures, and checksums (D3).
@@ -336,7 +336,7 @@ interop tests before the distribution.
    and `linux/amd64`.
 3. Start time (F3): measure `ncp --version` and `ncp server list`, and
    record the result in a research report.
-4. Moved to milestone 16.
+4. Moved to milestone 20.
 
 ## Milestone 15: interop tests
 
@@ -367,10 +367,161 @@ it.
 
 Done when the git hook passes and `mise run interop` passes one time.
 
-## Milestone 16: distribution (gate)
+## Milestone 16: fixes from the reviews of 2026-10-10
 
-The workflow needs action pins from github.com. The push, the tag and the
-CIMD URL need the user.
+These fixes need no new decision. Each one is a small commit.
+
+1. The rule "HTTPS, or HTTP to a loopback host" for a server URL is an
+   `ncp` rule. The MCP 2025-11-25 authorization text "Communication
+   Security" covers only the authorization server endpoints and the
+   redirect URIs. Remove the citation from `server.rs` and state the rule
+   and its reason in words (AGENTS.md).
+2. After the refresh lock, a token read that finds tokens of another
+   binding gives the B70 message, not "the server needs a login". Use a
+   marked store error that maps to the binding failure.
+3. When the login fails, the error path uses the `url_values` of the first
+   load of the configuration. It does not read the file again, because the
+   file can change during a long wait for the browser.
+4. Each wait has a time limit. `secret set` reads a piped value with the
+   `--timeout` limit. Its TTY test checks stdin and stderr, as
+   `cli/ask.rs` does.
+5. Clean-up after B66: remove the size comment in `oauth/items.rs`
+   ("about 2900 bytes"). The long-line refusal in `store/security.rs` uses
+   the split limit.
+
+## Milestone 17: bind stored secrets to origins
+
+Design: `docs/design/secret-binding.md`. Research:
+`docs/research/pnpm-credentials.md`, `docs/research/add-command.md`.
+
+1. Done: the user accepted the design on 2026-10-10.
+2. Done: requirements S9 and I8, and the changes of section 5 of the
+   design in `cli.md` (B72).
+3. Domain types, with no I/O:
+   - `Origin`: the scheme, host and port of the URL as the file writes it.
+     The text before the first `${` must reach the end of the host and
+     port. The url crate gives the normal form.
+   - The scope of a value: an origin, or no destination for stdio.
+   - The secret key holds the scope and the name. Remove the key that has
+     only a name, so that no code can read a stored value for an entry
+     without its origin.
+   - The account `secret/ORIGIN/NAME` or `secret/NAME`, and the parse of
+     an account back to a key.
+4. Lookup: a pure plan of the keys that an entry needs, then the store
+   reads, then the expansion. The miss error names only the current
+   origin. The key of `oauth.clientSecret` has the origin of
+   `oauth.issuer`, and the B68 issuer check stays.
+5. `secret set NAME [--server SERVER]`: the target rule as a pure function
+   of the configuration. The question and the result show the destination
+   and the servers that use it.
+6. `secret delete NAME [--server SERVER | --unused | --all]`. With no
+   flag, it removes nothing when NAME has two or more destinations.
+   `secret list` shows
+   one row for each name and store key. The copy check of B35 uses the
+   same key.
+7. A `401` after a stored header value gives the hint `ncp secret set
+   NAME --server SERVER` first, then `ncp auth login SERVER` (B51).
+8. Tests: the list in section 5 of the design, and this property: for each
+   URL with a literal origin, the literal origin is the origin of the
+   expanded URL.
+
+Items from before this milestone need no migration, because there is no
+release. An old `secret/NAME` item is then a value for stdio servers.
+
+## Milestone 18: project configuration (gate)
+
+The user decided on 2026-10-10 that `ncp` reads a project `.mcp.json`
+(S5). The rules below come from the backlog. Write them as a design in
+`docs/design/`, review it (adversarial and grug), then stop and ask the
+user to accept it.
+
+1. The loader reads JSONC: comments and trailing commas, not JSON5 (single
+   quotes, unquoted keys, hex numbers). Evidence: VS Code `mcp.json` and
+   Zed `settings.json` read both; no checked tool reads JSON5
+   (`docs/research/add-command.md` §4). Duplicate keys: the last value
+   wins, as today.
+2. Search: from the current folder upward, for one `.mcp.json`. Stop at
+   the folder that has `.git`, and stop when the owner of the folder
+   changes (git CVE-2022-24765). Read only one file. Find `.git` by a read
+   of the folders, never by a run of git (Zed CVE-2026-44465).
+3. Approval: stored outside the project, in the user state folder (0600,
+   atomic write). The key is the real path of the project root, with no
+   inheritance from a parent. The user approves each entry by the hash of
+   its content, and `ncp` asks again after a change (Cursor
+   CVE-2025-54136).
+4. A file that is not approved starts no command and sends no secret. With
+   no terminal, `ncp` refuses. A flag for one run can override this, and
+   `ncp` does not save it (Gemini CLI).
+5. `ncp` never reads `.env`. The content of a project file cannot change
+   the user configuration, the approvals or the place of the secrets
+   (Codex CVE-2025-61260).
+6. In a project file, `${NAME}` in `headers` and `oauth` does not expand
+   from the environment. `ncp` shows a warning. The store still applies,
+   because milestone 17 binds each stored value to an origin. Reason:
+   pnpm does not expand `${...}` in a project `.npmrc`
+   (`docs/research/pnpm-credentials.md` §1).
+
+## Milestone 19: `server add` and `server remove` (gate)
+
+Proposal: `.scratch/backlog/server-add.md` (version 4, two review rounds).
+The user wants one flow: the entry, the secret and the login hint in one
+step.
+
+1. Move the proposal to `docs/design/server-add.md`. Change it for
+   milestone 17:
+   - The two-command form adds the entry first, then runs `secret set`.
+   - `--secret` writes the item of the origin of the new entry. The result
+     gets `destination`.
+   - A stored value is shared only by entries with the same origin. Change
+     rule 13, `usedBy` and section 4.3 to match.
+   - `--env NAME` shows the other stdio entries that use NAME.
+   Review it again, then **stop and ask** the user to accept it.
+2. The settled decisions of the proposal (section 8): no question without
+   `--secret NAME`; literal values accepted with no warning; the exact
+   template for a credential header; no contact with the server at add;
+   no login at add, and the result gives `ncp auth login NAME`;
+   `--config-file` is an `ncp` file; the configuration file is the source
+   of truth.
+3. The dependency `jsonc-parser` (feature `cst`) for the edit of the file.
+   Every byte that `ncp` does not change stays. Check `deny.toml` first,
+   and stop and ask if it does not accept the crate. Pin a version that is
+   older than two weeks.
+4. The file write: strict JSON for the new entry, no clobber, a self-check
+   before the rename, an atomic rename, a lock, a new read before the
+   rename, and the modes of the proposal (section 5).
+5. `server remove`: remove the entry by its raw key, then the OAuth items
+   of the server. A store failure gives a warning and exit 0. The `${NAME}`
+   secrets stay.
+6. Manual interop with the Cloudflare servers of the proposal (section
+   10): **stop and ask** the user to approve the hosts first (AGENTS.md).
+   Record the result in a new report in `docs/research/`.
+
+## Milestone 20: distribution (gate)
+
+Do this milestone last. The workflow needs action pins from github.com. The
+push, the tag and the CIMD URL need the user.
 
 1. **Stop and ask** before the distribution channel (D2), CI, and any push or
    upload. They add network destinations and accounts.
+2. The decisions of 2026-10-09 (`.scratch/backlog/release.md`):
+   - Source: a public GitHub repository.
+   - CI: a GitHub Actions release workflow on a tag `vX.Y.Z`. Its first
+     step checks that the tag is the version in `Cargo.toml`. It uses
+     `harness/release.sh`.
+   - Artifacts: `ncp-X.Y.Z-<target>.tar.gz` (one top folder with `ncp` and
+     the licenses), one `SHA256SUMS`, and a GitHub artifact attestation.
+   - Channel: mise `github:OWNER/ncp` only. No Homebrew tap.
+   - Version: SemVer `0.y`.
+   - CIMD URL: `https://OWNER.github.io/ncp/oauth/client-metadata.json` on
+     GitHub Pages. Set the URL in the code at this release. Never move the
+     URL unless the old one still serves `200`, because CIMD permits no
+     redirects. Before the URL goes in, ask the user about the CIMD risks
+     in the release backlog (exact redirect match against a random port,
+     an authorization server that limits redirect URIs to the origin of
+     the document, company networks that cannot reach `github.io`).
+3. Checks at the first release: `mise install` works on macOS and Linux;
+   the binary has no quarantine attribute; the tag push starts the
+   workflow.
+4. Later, not in the MVP: a release with no manual tag and no hand-written
+   changelog (for example release-plz), and a version rule that follows
+   the MCP spec version.
