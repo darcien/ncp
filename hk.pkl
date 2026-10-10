@@ -47,6 +47,11 @@ steps {
     types = List("text")
     check = reads("mise run check:typos {{files}}")
   }
+  // The builtin also selects shell scripts with no extension, by the shebang.
+  // Its fix applies the diffs that shellcheck suggests.
+  ["shellcheck"] = (Builtins.shellcheck) {
+    check = reads("mise run check:shellcheck {{files}}")
+  }
   ["cargo-fmt"] {
     glob = "**/*.rs"
     check = reads("mise run check:fmt")

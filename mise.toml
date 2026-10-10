@@ -5,6 +5,7 @@ node = "22.23.3"
 cargo-deny = "0.20.2"
 typos = "1.50.3"
 hk = "2.5.0"
+shellcheck = "0.11.0"
 
 # `hk install` then runs the hooks through `mise x`, so that the hooks use
 # the pinned tools.
@@ -31,6 +32,12 @@ run = "cargo deny --locked check"
 description = "Check spelling in code and docs"
 run = "typos"
 
+# With no files, it checks all shell scripts that git tracks.
+[tasks."check:shellcheck"]
+description = "Lint shell scripts"
+usage = 'arg "[file]..." var=#true'
+run = 'shellcheck ${usage_file:-$(git ls-files "*.sh")}'
+
 # The build output and the container disk grow with no limit. Monitor them
 # to prevent a full disk.
 [tasks."check:disk"]
@@ -45,7 +52,7 @@ df -Ph "$data_dir" | awk 'NR == 2 { print $4 " free on " $6 }'
 
 [tasks.check]
 description = "Run all static checks"
-depends = ["check:fmt", "check:clippy", "check:deny", "check:typos"]
+depends = ["check:fmt", "check:clippy", "check:deny", "check:typos", "check:shellcheck"]
 
 [tasks.test]
 description = "Run all tests. Tests use only local servers"
