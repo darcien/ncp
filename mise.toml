@@ -102,6 +102,10 @@ description = "Install the pinned MCP everything server from its lock file"
 dir = "harness/interop"
 run = "pnpm install --frozen-lockfile"
 
+[tasks.interop]
+description = "Run the interop tests against the official MCP everything server"
+run = "cargo test -p ncp-testkit --locked --test interop -- --ignored"
+
 # Run it before the other Linux tasks: a volume that is in use cannot be
 # removed.
 [tasks."linux:prune"]
