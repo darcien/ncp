@@ -3,7 +3,7 @@
 Status: proposal, revision 4 (2026-10-11). Not accepted. Build:
 [plan.md](../plan.md) milestone 18 (gate).
 
-Revision 4 records the user decisions A and B, and keeps a refusal for
+Revision 4 records the user decisions A, B and C, and keeps a refusal for
 the project root, as mise does
 ([mise-trust-merge.md](../research/mise-trust-merge.md)).
 
@@ -65,6 +65,9 @@ Accepted risks:
 - An agent in a pseudo-terminal (for example tmux) can answer the
   question. `ncp` cannot tell a person from such an agent. The default
   answer is No.
+- After the approval, a project entry can send an environment variable
+  to a host of the project (T3). The question marks each `${NAME}` with
+  its host, as the only guard (decision C).
 - A network file system or a bind mount can give a false owner. The owner
   check of rule 2 then does not protect.
 
@@ -167,8 +170,8 @@ Accepted risks:
      argument, `cwd`, each `env` value, the URL, each header value, and
      `oauth`. It marks a known loader variable in `env` (for example
      `PATH`, `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`), a
-     command or `cwd` inside the project root, and each `${NAME}` that can
-     read a stored value. The marks only inform: a list of names cannot be complete, so no mark
+     command or `cwd` inside the project root, and each `${NAME}` with the
+     host that gets it (rule 6). The marks only inform: a list of names cannot be complete, so no mark
      blocks a value. The question ends with the count of servers and of
      commands, and asks "Approve? [y/N]".
    - There is no flag and no environment variable that approves for one
@@ -176,23 +179,18 @@ Accepted risks:
      in CI, gives the file with `--config-file`. The user then names the
      file, and its entries follow the rules of a user file.
 
-6. **What a project entry can expand.** In a project file (Decision C):
-   - A remote entry (`http` or `sse`) gets no value from the environment.
-     A `${NAME}` in `headers` or `oauth.clientSecret` comes only from the
-     store, which milestone 17 binds to an origin. The miss error adds "a
-     project file does not read the environment". A `${` in `url` makes the
-     entry invalid: "a project file cannot use ${NAME} in url" (T3).
-   - A `${` in `command`, `args` or `cwd` makes the entry invalid. The
-     value could come from an environment that the project sets, so the
-     same approved bytes could run another program.
-   - `env` values of a stdio entry expand as in the user file, from the
-     environment and the store. The question marks them.
-   - An invalid entry does not stop the other entries.
+6. **Expansion.** After the approval, a project entry expands `${NAME}`
+   in the same fields and from the same sources as a user entry
+   (Decision C). The question shows each value before the expansion. It
+   marks each `${NAME}` and, for a remote entry, the host that gets the
+   value (T3). A stored value goes only to its origin (milestone 17).
 
-   Reason: the rule is by field, not by variable name, so no list of
-   names can miss one. pnpm ignores `${...}` in a project `.npmrc` (PTA,
-   [pnpm-credentials.md](../research/pnpm-credentials.md) §1), and Codex
-   has no expansion (PTA part 1 Q7).
+   Reason: Claude Code and VS Code expand `${VAR}` in the `command`,
+   `args`, `env`, `url` and `headers` of `.mcp.json` (PTA part 1 Q7, part
+   2 §7). Gemini and mise expand all values of a trusted project file.
+   A `.mcp.json` for Claude Code thus works in `ncp` as it is. The
+   approval is the gate: an approved stdio command can read the whole
+   environment, so a rule for each field adds little.
 
 7. **Nothing else.** `ncp` reads only `mcpServers` from a project file.
    Other keys give the warning of an unknown key. `ncp` never reads `.env`.
@@ -247,10 +245,10 @@ Accepted risks:
   removes the deny record; a changed byte asks again; the same bytes at
   another path ask again; one file linked into two folders asks in each
   folder; `ncp project approve` refuses with no TTY.
-- Expansion: `${NAME}` in the `url`, `command`, `args` or `cwd` of a
-  project entry makes it invalid; a `${NAME}` that the environment sets
-  does not reach the fixture server through `headers`; a stored value
-  does.
+- Expansion: before the approval, no `${NAME}` of a project entry reads
+  the environment or the store; after it, a `${NAME}` in `headers`
+  reaches the fixture server from the environment and from the store; the
+  question shows the value before the expansion.
 - Gate: shell completion, did-you-mean, `auth status`, `secret set` and
   `auth login` do not use an entry of a file that is not approved.
 - The question: escapes of B15 for an argument with ESC and U+202E; the
@@ -271,7 +269,7 @@ Agreed by all three reviewers, no open question:
 - The question shows the full parsed entries with escapes. Most tools
   show only names (T8).
 
-Decided: A, B, F. Open: C, D, E. Each open decision below has the
+Decided: A, B, C, F. Open: D, E. Each open decision below has the
 question, the options with their prior art, the recommendation with its
 reason, and its cost.
 
@@ -345,22 +343,44 @@ Where `ncp` differs from mise, and why:
 | No TTY | The command fails. The shell hook skips the file with a warning. | `ncp` skips the file with a warning, as the shell hook of mise does. A named project entry gives exit 2. | An agent has no TTY. With the rule of mise, each `ncp` command fails in each project that has `.mcp.json`, also for the user servers. |
 | Search | Merges all files from `/` down to the current folder. | One file. The search stops at `.git`. | `.mcp.json` is one file at the project root, as in Claude Code. See decision A. |
 
-### C. `${VAR}` in a project file
+### C. `${VAR}` in a project file — decided 2026-10-11
 
-Question: which fields of a project entry can expand `${NAME}`?
+The user chose to match the prior art: after the approval, a project
+entry expands `${NAME}` as a user entry does (rule 6).
 
-| Option | Prior art (PTA) | Reviewer |
+Example: a team writes this entry for Claude Code. It works in `ncp` as
+it is. The question shows `Bearer ${GITHUB_TOKEN}` and marks that the
+value goes to `api.githubcopilot.com`.
+
+```json
+"github": {
+  "type": "http",
+  "url": "https://api.githubcopilot.com/mcp/",
+  "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" }
+}
+```
+
+| Option | Prior art (PTA part 1 Q7, part 2 §7) | Reviewer |
 |---|---|---|
-| **By field: remote entries read the store only; no `${` in command, args, cwd, url; stdio `env` as in the user file** | pnpm ignores `${}` in a project `.npmrc` | User, adversarial |
+| By field: remote entries read the store only; no `${` in command, args, cwd, url; stdio `env` as in the user file | pnpm ignores `${}` in a project `.npmrc` | User, adversarial |
 | No expansion | Codex; VS Code refuses `${}` when it adds to `.mcp.json` | Simplicity |
-| Empty a list of credential variables | Claude Code | — |
-| Expand all | Gemini | — |
+| Empty a list of credential variables in remote fields | Claude Code | — |
+| **Expand as in the user file** | Claude Code and VS Code (`.mcp.json`), Gemini, mise | User (2026-10-11) |
 
-Reason: a rule by field cannot miss a variable. A list of names can
-(mise GHSA-wcqh: a gate by content leaked `GITHUB_TOKEN`). Stored header
-values and OAuth still work, because milestone 17 binds them to an
-origin. Cost: rules for each field. "No expansion" is simpler, but a
-Claude Code `.mcp.json` with `${API_KEY}` then does not work as it is.
+Reason: a `.mcp.json` for Claude Code or VS Code works in `ncp` as it is.
+The approval is the gate for each kind of entry. An approved stdio
+command can read the whole environment, so a rule for each field
+protects only a project with remote entries only. The rule for
+`command`, `args` and `cwd` guarded against an environment that the
+project sets. Section 2 already accepts this risk.
+
+Claude Code empties its own credential variables (for example
+`ANTHROPIC_API_KEY`) in remote fields. `ncp` has no credential variables
+of its own: its secrets are in the store, and milestone 17 binds them to
+an origin.
+
+Cost: a user who approves by habit can send a variable to a host of the
+project. The question marks each `${NAME}` with its host.
 
 ### D. Approval with no TTY
 
