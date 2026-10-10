@@ -1,7 +1,11 @@
 # Design: project configuration files
 
-Status: proposal, revision 3 (2026-10-10). Not accepted. Build:
+Status: proposal, revision 4 (2026-10-11). Not accepted. Build:
 [plan.md](../plan.md) milestone 18 (gate).
+
+Revision 4 records the user decisions A and B, and keeps a refusal for
+the project root, as mise does
+([mise-trust-merge.md](../research/mise-trust-merge.md)).
 
 Revision 3 uses the cited prior art in
 [project-trust-prior-art.md](../research/project-trust-prior-art.md) (PTA)
@@ -62,7 +66,7 @@ Accepted risks:
   question. `ncp` cannot tell a person from such an agent. The default
   answer is No.
 - A network file system or a bind mount can give a false owner. The owner
-  checks of rule 2 then do not protect.
+  check of rule 2 then does not protect.
 
 ## 3. Rules
 
@@ -90,33 +94,56 @@ Accepted risks:
       also skips the home folder (PTA part 1 Q1).
    4. The root folder.
 
-   The check of a found file (T6), as git checks what it finds (PTA part 3
-   Q3): `ncp` opens the file with `O_NOFOLLOW`, and checks the open
-   descriptor with `fstat`: a regular file, owned by the effective user,
-   with no write access for the group or others. The folder that holds it
-   has the same owner and no write access for others. `ncp` reads the open
-   file one time, at most 1 MiB. It shows, hashes and runs this one copy.
-   A file that fails a check, or that does not parse, gives a warning, and
-   `ncp` continues with the user file only.
+   The check of a found file (T6): `ncp` uses the file only if it is a
+   regular file that the user owns. For a symlink, the target must be a
+   regular file that the user owns. git trusts a repository only if the
+   user owns it (PTA part 3 Q3). `ncp` applies this rule to the one file
+   that it reads, because that file holds all that runs. Another user
+   cannot make a file that the user owns. A change by another person
+   changes the bytes, so the approval asks again (rule 4). For this
+   reason, `ncp` does not check the mode of the file or the owner of the
+   folder. A group check would also refuse a clone with umask `002`.
+
+   The project root is the folder where `ncp` found `.mcp.json`, also for a
+   symlink. The approval and the commands use this folder. A user can thus
+   link one shared file into many projects, and each project asks one
+   time.
+
+   `ncp` reads the file one time, at most 1 MiB, and checks the owner on
+   the same open file. It shows, hashes and runs this one copy. A file
+   that fails the check, or that does not parse, gives a warning. `ncp`
+   does not search higher, and it continues with the user file only, as
+   git does when it finds a repository of another user.
 
 3. **Merge.** Before the approval, the project file has no effect: the
    user entries work as before (Codex keeps an untrusted layer off, PTA
    part 1 Q2). After the approval, a project entry replaces a user entry of
    the same name, as in each checked MCP client (PTA part 1 Q6, part 2
-   §6). The whole entry replaces the other, with no merge of fields. The
-   question names each user entry that a project entry replaces (T4). A
-   stored value cannot follow the name to another host, because milestone
-   17 binds it to an origin. (Decision B.)
+   §6) and in mise ([mise-trust-merge.md](../research/mise-trust-merge.md)
+   §1). The whole entry replaces the other, with no merge of fields, as
+   mise does for a tool. Against T4: the question shows each project entry
+   with its name, and `server list` shows the source of each entry. The
+   question does not mark the user entries that the project replaces,
+   because the name is already in the question, and mise gives no such
+   mark. A stored value cannot follow the name to another host, because
+   milestone 17 binds it to an origin. (Decision B.)
 
 4. **Approval.** The approval follows the rule of direnv (PTA part 3 Q2):
-   the key is the SHA-256 of the real path of the file, a new line, and
-   the bytes that `ncp` read. Each changed byte, and each other path,
-   needs a new approval (T2). A worktree at another path asks one time
-   (Decision E). The records are empty files:
-   - `$XDG_STATE_HOME/ncp/project/allow/<hex>`: the user approved.
-   - `$XDG_STATE_HOME/ncp/project/deny/<hex>`: the user said No. `ncp`
-     does not ask again until the file changes, as direnv, mise, VS Code
-     and Claude Code keep a refusal (PTA part 2 §3, part 3 Q2).
+   the key is the SHA-256 of the path where `ncp` found the file (the real
+   path of the project root and `.mcp.json`, with no resolution of a
+   symlink at `.mcp.json`), a new line, and the bytes that `ncp` read.
+   Each changed byte, and each other path, needs a new approval (T2). A
+   worktree at another path asks one time (Decision E). The records are
+   empty files:
+   - `$XDG_STATE_HOME/ncp/project/allow/<hex>`: the user approved. The key
+     is the path and the bytes.
+   - `$XDG_STATE_HOME/ncp/project/deny/<hex>`: the user said No. The key
+     is the path only. `ncp` does not ask again, also after a change of
+     the file, until the user runs `ncp project approve`. mise keeps a
+     refusal for the folder in the same way
+     ([mise-trust-merge.md](../research/mise-trust-merge.md) §4). direnv,
+     VS Code and Claude Code also keep a refusal (PTA part 2 §3, part 3
+     Q2). No answer (no TTY) writes no record.
 
    The records hold no content of a project file, because that content can
    hold literal secrets.
@@ -128,18 +155,20 @@ Accepted risks:
      `ncp` gives a warning that names the file and the command `ncp project
      approve`. A command that names a project entry then stops with exit 2
      before it starts a process or sends a request.
+   - A denied file has no effect, and `ncp` does not ask. `-v` names the
+     file.
    - `ncp project approve` asks the same question for the project file of
-     the current folder. It asks only with a TTY on stdin and stderr, so an
-     agent can tell the user to run it, but cannot answer it. Prior art:
-     `direnv allow` and `mise trust` (PTA part 3 Q2).
+     the current folder, also for a denied file. It asks only with a TTY
+     on stdin and stderr, so an agent can tell the user to run it, but
+     cannot answer it. A Yes removes the deny record. Prior art: `direnv
+     allow` and `mise trust` (PTA part 3 Q2).
    - The question shows the path of the file and each entry from the
      parsed value, with the escapes of B15 (T8): the command, each
      argument, `cwd`, each `env` value, the URL, each header value, and
      `oauth`. It marks a known loader variable in `env` (for example
      `PATH`, `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`), a
-     command or `cwd` inside the project root, each `${NAME}` that can read
-     a stored value, and each user entry that a project entry replaces.
-     The marks only inform: a list of names cannot be complete, so no mark
+     command or `cwd` inside the project root, and each `${NAME}` that can
+     read a stored value. The marks only inform: a list of names cannot be complete, so no mark
      blocks a value. The question ends with the count of servers and of
      commands, and asks "Approve? [y/N]".
    - There is no flag and no environment variable that approves for one
@@ -182,8 +211,7 @@ Accepted risks:
 ## 4. Output
 
 - `server list`: each entry gets `"source"`: `"user"`, `"project"` or
-  `"project-unapproved"`. Text output marks the project entries and the
-  user entries that they replace.
+  `"project-unapproved"`. Text output marks the project entries.
 - `-v` names the project file that `ncp` read, or the folder where the
   search stopped.
 - `ncp project approve` writes `{"file", "approved": true}` or
@@ -204,17 +232,21 @@ Accepted risks:
 
 - Search: a pure plan of the search over fake folder entries (file in the
   current folder, in a parent, stop at `.git` as a folder and as a file,
-  stop at the home folder); a symlinked file refused; a file with write
-  access for others refused; a file that does not parse gives a warning
-  and the user file still works; no search with `--config-file`.
+  stop at the home folder); a symlink to a file of the user is used, and
+  its project root is the folder of the link; a file of another user
+  gives a warning, and the search does not go higher; a file that does
+  not parse gives a warning and the user file still works; no search with
+  `--config-file`.
 - Merge: before the approval, a user entry works and the project entry of
   the same name does nothing; after it, the project entry replaces the
-  user entry, and the question names it.
+  user entry.
 - Approval: with no TTY, a warning and no start (a stdio fixture that
   writes a marker file); a project entry named in a command gives exit 2;
-  an allow record runs; a deny record does not ask; a changed byte asks
-  again; the same bytes at another path ask again; `ncp project approve`
-  refuses with no TTY.
+  an allow record runs; a deny record does not ask, also after a change
+  of the file; `ncp project approve` asks for a denied file, and a Yes
+  removes the deny record; a changed byte asks again; the same bytes at
+  another path ask again; one file linked into two folders asks in each
+  folder; `ncp project approve` refuses with no TTY.
 - Expansion: `${NAME}` in the `url`, `command`, `args` or `cwd` of a
   project entry makes it invalid; a `${NAME}` that the environment sets
   does not reach the fixture server through `headers`; a stored value
@@ -239,10 +271,24 @@ Agreed by all three reviewers, no open question:
 - The question shows the full parsed entries with escapes. Most tools
   show only names (T8).
 
-Decided: F. Open: A to E. Each open decision below has the question, the options with their prior
-art, the recommendation with its reason, and its cost.
+Decided: A, B, F. Open: C, D, E. Each open decision below has the
+question, the options with their prior art, the recommendation with its
+reason, and its cost.
 
-### A. Search range
+### A. Search range — decided 2026-10-11
+
+The user chose the walk up to the git root, with these changes to
+revision 3:
+- The check is the owner of the file only, as git trusts only what the
+  user owns. No check of the mode or of the folder (rule 2 gives the
+  reason).
+- A symlink is permitted. The owner check applies to the target. The
+  project root and the approval use the path where `ncp` found the link.
+- The plan said "stop when the owner of the folder changes". `ncp`
+  checks only the found file. The result is the same, because a file in
+  a folder of another user fails the owner check.
+
+The options as revision 3 gave them:
 
 Question: where does `ncp` look for `.mcp.json`?
 
@@ -257,22 +303,47 @@ stop the `/tmp/.mcp.json` case (git CVE-2022-24765) for little code.
 Cost: an upward walk, and checks of the file and its folder. Changes plan
 item 2.
 
-### B. Name clash with a user entry
+### B. Name clash with a user entry — decided 2026-10-11
 
-Question: a project entry and a user entry have the same name. Which one
-runs?
+The user chose: the project entry wins after the approval, as mise does.
+The user asked to match mise unless there is a good reason to differ
+([mise-trust-merge.md](../research/mise-trust-merge.md)).
 
-| Option | Prior art (PTA) | Reviewer |
+Example: the user file has `github` with the URL of the GitHub server. A
+cloned project has `github` with `npx @acme/github-mcp`. After the
+approval, `ncp tool call github list_issues` runs the project entry.
+
+| Option | Prior art | Reviewer |
 |---|---|---|
-| **Project wins after the approval; the question names the replaced user entry** | All 7 checked MCP clients let the project win | User |
+| **Project wins after the approval** | All 7 checked MCP clients (PTA), mise | User |
 | User wins | No checked tool | Adversarial, simplicity |
 | Error | No checked tool | — |
 
 Reason: the same `.mcp.json` then means the same server in `ncp`, Claude
-Code and VS Code. The approval and the question show the change, and a
-stored value cannot follow the name to another host (milestone 17).
-Cost: a project can redirect a name that the user knows, after one Yes.
-"User wins" stops this, but `ncp` then differs from each other client.
+Code and VS Code. With "user wins", the user approves the file but its
+entry does nothing. With "error", the user must rename their own entry,
+because they cannot change the file of the project.
+
+Cost and accepted gaps:
+- A project can redirect a name that the user knows, after one Yes. The
+  question shows the new command or URL. A stored value cannot follow
+  the name to another host (milestone 17). The data that the user types
+  into a tool call can go to the new host.
+- The approval covers only the bytes of the project file. If the user
+  adds an entry of the same name to the user file after the approval, the
+  project entry wins with no question. mise has the same behavior.
+  `server list` shows the source of each entry.
+
+Where `ncp` differs from mise, and why:
+
+| Point | mise | `ncp` | Reason |
+|---|---|---|---|
+| Approval key | The folder. Paranoid mode: the file and the SHA-256 of its content. | The path and the bytes, always. | A pull can change a command with no question (Cursor CVE-2025-54136). `ncp` matches the paranoid mode. |
+| Automatic trust | `MISE_YES`, `--yes`, `CI`, and implicit trust for `run` and `exec`. | None. | An agent can set a variable or add a flag and give itself trust (Gemini CVE-2026-12537, mise CVE-2026-35533). The paranoid mode of mise also turns these off. |
+| Content with no trust | Plain tool versions. | None. | Each MCP entry starts a process or sends a request. |
+| The question | Shows the folder only. | Shows each entry with its command, arguments and URL. | The MCP specification tells a client to show the exact command of a local server before it runs (2025-11-25, Security Best Practices, "Local MCP Server Compromise"). |
+| No TTY | The command fails. The shell hook skips the file with a warning. | `ncp` skips the file with a warning, as the shell hook of mise does. A named project entry gives exit 2. | An agent has no TTY. With the rule of mise, each `ncp` command fails in each project that has `.mcp.json`, also for the user servers. |
+| Search | Merges all files from `/` down to the current folder. | One file. The search stops at `.git`. | `.mcp.json` is one file at the project root, as in Claude Code. See decision A. |
 
 ### C. `${VAR}` in a project file
 
@@ -297,7 +368,7 @@ Question: how does a user approve when an agent or CI runs `ncp`?
 
 | Option | Prior art (PTA) | Reviewer |
 |---|---|---|
-| **`ncp project approve`, which asks only on a TTY; a No is saved until the file changes** | `direnv allow`/`deny`, `mise trust`; VS Code, Claude Code and mise keep a refusal | User |
+| **`ncp project approve`, which asks only on a TTY; a No is saved for the project root until `ncp project approve`** | `direnv allow`/`deny`, `mise trust`; VS Code, Claude Code and mise keep a refusal | User |
 | A flag for one run, not saved | Gemini `--skip-trust`, VS Code `--disable-workspace-trust` | Adversarial |
 | `--config-file .mcp.json` only | — | Simplicity |
 
