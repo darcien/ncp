@@ -481,8 +481,12 @@ step.
    of the server. A store failure gives a warning and exit 0. The `${NAME}`
    secrets stay.
 6. Manual interop with the Cloudflare servers of the proposal (section
-   10): **stop and ask** the user to approve the hosts first (AGENTS.md).
-   Record the result in a new report in `docs/research/`.
+   10). The hosts are `docs.mcp.cloudflare.com`, `blog.mcp.cloudflare.com`
+   and `mcp.cloudflare.com`. The user approved them on 2026-10-11
+   (AGENTS.md). Only this manual test uses them; the automated tests do
+   not. The user does the OAuth step of `mcp.cloudflare.com` in a
+   browser, with their own account. Record the result in a new report in
+   `docs/research/`.
 
 ## Milestone 20: distribution (gate)
 
