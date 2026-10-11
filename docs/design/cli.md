@@ -70,7 +70,7 @@ ncp generate-shell-completion <bash|zsh|fish>
 | `server show` | Yes | What the server says about itself in its handshake (`server/discover` or `initialize`): `serverInfo`, protocol version, capabilities and `instructions`, with the configuration target. No other request. |
 | `tool list` | Yes | The tools of the server. Text: one line for each tool, with the name, the title or the first line of the description, and a mark for the read-only or destructive hint. The mark says "hint": the spec tells clients to treat annotations from a server as untrusted. JSON: the full MCP `Tool` objects. When the server has `instructions`, a hint on stderr names `server show`. |
 | `tool show` | Yes | One tool for people to read: title, description, arguments (name, type, required, description, allowed values, default), output, the annotation hints with the spec defaults (B64), and an example call. JSON: the MCP `Tool` object. |
-| `tool call` | Yes | The tool result. `tool call <SERVER> <TOOL> --help` prints the same as `tool show`. |
+| `tool call` | Yes | The tool result. `tool call <SERVER> <TOOL> --help` prints the same as `tool show`, so it connects to the server (or reads the list cache, B62); the help says so. |
 | `auth login` | Yes | Runs the OAuth flow and keeps the tokens (section 5). |
 | `auth logout` | No | Removes the OAuth tokens of the server from all places (section 2.4). The client credentials stay, so the next login needs no new registration. |
 | `auth status` | No | For each server: OAuth tokens present, expiry, scopes, issuer. No token value. |

@@ -436,10 +436,9 @@ release. An old `secret/NAME` item is then a value for stdio servers.
 
 ## Milestone 18: project configuration (gate)
 
-Status: design `docs/design/project-config.md` revision 4. The user decided
-all of its open points (section 7, decisions A to H) on 2026-10-10 and
-2026-10-11. **Stop and ask** the user to accept the design before the
-build. The design is the source of truth; this list only orders the work.
+Status: design `docs/design/project-config.md` revision 4, accepted by the
+user on 2026-10-11. The design is the source of truth; this list only
+orders the work.
 
 1. Read JSONC in the global file and the project file (design rule 1).
 2. Search and owner check (rule 2), merge (rule 3), trust records (rule 4).
@@ -448,8 +447,8 @@ build. The design is the source of truth; this list only orders the work.
 4. Expansion (rule 6), what a project file can set (rule 7), and one gate
    before any action (rule 8).
 5. Output (section 4) and tests (section 6).
-6. Before the code: the changes to the requirements and to `cli.md` in
-   design section 5.
+6. The changes to the requirements and to `cli.md` in design section 5
+   are done (2026-10-11).
 
 ## Milestone 19: `server add` and `server remove` (gate)
 
