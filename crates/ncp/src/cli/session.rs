@@ -16,6 +16,7 @@ use super::{
     diagnostics,
     outcome::{Exit, Failure},
     timings::Timings,
+    trust::ProjectFile,
     ui::{Ui, Verbosity},
 };
 use crate::{
@@ -24,6 +25,7 @@ use crate::{
     credential::SecretName,
     expand::{Env, ExpandError},
     paths::Paths,
+    project::{self, Project, Trust},
     protocol_version::{ProtocolVersion, VersionCache},
     protocol_version_file,
 };
@@ -66,6 +68,8 @@ pub struct Context<'a> {
     pub cache: CacheUse,
     /// A person can answer questions: stdin and stderr are a TTY.
     pub interactive: bool,
+    /// `--config-file` names the file: no search for a project file.
+    pub named_config: bool,
 }
 
 impl Context<'_> {
@@ -94,19 +98,64 @@ impl Context<'_> {
 
 /// The configuration and where it comes from.
 pub struct Loaded {
+    /// The view that runs: the global entries, and the entries of a
+    /// trusted project file in place of global entries of the same names.
+    /// An entry of a project file that is not trusted is not in it, so no
+    /// command can start it, send to it, or read the store for it.
     pub config: Config,
+    /// The global file.
     pub path: PathBuf,
     pub exists: bool,
+    pub project: ProjectFile,
+    global: Config,
 }
 
-/// Reads the configuration file. A missing file gives an empty
-/// configuration: `ncp` never makes the file.
+impl Loaded {
+    /// The view after a change of the trust, from the same bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a usage failure when a trusted project file does not parse.
+    pub fn with_trust(self, trust: Trust, env: &Env) -> Result<Self, Failure> {
+        let project = match self.project {
+            ProjectFile::Read(project) => ProjectFile::Read(Project { trust, ..project }),
+            other => other,
+        };
+        assemble(self.global, self.path, self.exists, project, env)
+    }
+
+    /// Why the gate stops the server name, if it does.
+    #[must_use]
+    pub fn stop(&self, name: &str) -> Option<project::Stop> {
+        project::gate(self.project.project(), name, self.global.has(name))
+    }
+
+    /// The trusted project file, when it gives the entry of the name.
+    #[must_use]
+    pub fn project_of(&self, name: &str) -> Option<&Project> {
+        self.project
+            .project()
+            .filter(|project| project.trust == Trust::Trusted && project.has(name))
+    }
+
+    /// The file of the entry that runs for the name.
+    #[must_use]
+    pub fn file_of(&self, name: &str) -> &Path {
+        self.project_of(name)
+            .map_or(self.path.as_path(), |project| project.file.as_path())
+    }
+}
+
+/// Reads the global file and searches for the project file. A missing
+/// global file gives an empty configuration: `ncp` never makes the file.
+/// With `search` false (`--config-file`), there is no project file.
 ///
 /// # Errors
 ///
-/// Returns a usage failure when the file does not parse, and a local
-/// failure when it cannot be read.
-pub fn load_config(path: &Path, env: &Env) -> Result<Loaded, Failure> {
+/// Returns a usage failure when a file does not parse, and a local
+/// failure when the global file cannot be read.
+pub fn load_config(paths: &Paths, env: &Env, search: bool) -> Result<Loaded, Failure> {
+    let path = &paths.config_file;
     let (text, exists) = match std::fs::read_to_string(path) {
         Ok(text) => (text, true),
         Err(error) if error.kind() == ErrorKind::NotFound => ("{}".to_string(), false),
@@ -117,12 +166,126 @@ pub fn load_config(path: &Path, env: &Env) -> Result<Loaded, Failure> {
             )));
         }
     };
-    let config = config::parse(&text, env)
+    let global = config::parse(&text, env)
         .map_err(|error| Failure::usage(format!("{}: {error}", path.display())))?;
+    let project = if search {
+        super::trust::find(paths, env)
+    } else {
+        ProjectFile::NotSearched
+    };
+    assemble(global, path.clone(), exists, project, env)
+}
+
+/// Only a trusted project file joins the view. Its `${NAME}` values expand
+/// only then: before the trust, no value of the environment goes into it.
+fn assemble(
+    global: Config,
+    path: PathBuf,
+    exists: bool,
+    project: ProjectFile,
+    env: &Env,
+) -> Result<Loaded, Failure> {
+    let config = match project.project() {
+        Some(project) if project.trust == Trust::Trusted => global.clone().with_project(
+            config::parse(&project.text, env)
+                .map_err(|error| Failure::usage(format!("{}: {error}", project.file.display())))?,
+        ),
+        _ => global.clone(),
+    };
     Ok(Loaded {
         config,
-        path: path.to_path_buf(),
+        path,
         exists,
+        project,
+        global,
+    })
+}
+
+/// Loads the configuration for a command. When the command names a server
+/// of a project file that is not trusted, and a person can answer, shows
+/// the entries and asks, as `mise` asks. A Yes trusts the bytes that `ncp`
+/// read; a No writes the ignored record. With no answer, `select` stops
+/// with the entries.
+///
+/// # Errors
+///
+/// Returns the failures of `load_config`, a failure when a record cannot
+/// be written, and exit 130 at Ctrl-C.
+pub async fn load(context: &Context<'_>, named: Option<&str>) -> Result<Loaded, Failure> {
+    let loaded = context.timed(
+        |record, elapsed| record.config = Some(elapsed),
+        || load_config(&context.paths, context.env, !context.named_config),
+    )?;
+    report_files(context, &loaded);
+    let asks = context.interactive
+        && named
+            .and_then(|name| loaded.stop(name))
+            .is_some_and(|stop| matches!(stop, project::Stop::Untrusted { .. }));
+    let Some(project) = loaded.project.project().filter(|_| asks) else {
+        return Ok(loaded);
+    };
+    context
+        .ui
+        .diagnostic(&format!("{}\n", super::render::project_question(project)));
+    match super::ask::confirm(context, "Trust? [y/N] ").await? {
+        Some(true) => {
+            super::trust::trust(&context.paths, project)?;
+            loaded.with_trust(Trust::Trusted, context.env)
+        }
+        Some(false) => {
+            super::trust::ignore(&context.paths, project)?;
+            loaded.with_trust(Trust::Ignored, context.env)
+        }
+        None => Ok(loaded),
+    }
+}
+
+/// `-v` names the files, and a file that `ncp` does not use gives a
+/// warning.
+fn report_files(context: &Context<'_>, loaded: &Loaded) {
+    let state = if loaded.exists {
+        ""
+    } else {
+        " (does not exist)"
+    };
+    context.ui.debug(
+        None,
+        &format!("configuration file: {}{state}", loaded.path.display()),
+    );
+    match &loaded.project {
+        ProjectFile::NotSearched => {}
+        ProjectFile::Absent(folder) => context.ui.debug(
+            None,
+            &format!(
+                "no project file: the search stopped at {}",
+                folder.display()
+            ),
+        ),
+        ProjectFile::Unusable { file, reason } => context.ui.warning(
+            None,
+            &format!("ncp does not use {}: {reason}", file.display()),
+        ),
+        ProjectFile::Read(project) => context.ui.debug(
+            None,
+            &format!(
+                "project file: {} ({})",
+                project.file.display(),
+                project.trust.word()
+            ),
+        ),
+    }
+}
+
+/// The object of a project entry in `server list` and `ncp trust`.
+#[must_use]
+pub fn project_row(project: &Project, entry: &project::Entry) -> serde_json::Value {
+    serde_json::json!({
+        "name": entry.name,
+        "transport": entry.kind.transport(),
+        "target": super::render::entry_target(&entry.kind),
+        "scope": "project",
+        "file": project.file,
+        "trust": project.trust.word(),
     })
 }
 
@@ -151,12 +314,17 @@ pub fn joined_failure(word: &str, fix: &str) -> Failure {
 ///
 /// Returns a usage failure for an unknown server or an invalid entry.
 pub fn select<'a>(loaded: &'a Loaded, name: &str, ui: Ui) -> Result<&'a Server, Failure> {
+    if let (Some(stop), Some(project)) = (loaded.stop(name), loaded.project.project()) {
+        return Err(stop_failure(name, project, stop));
+    }
     let server = loaded.config.server(name).map_err(|error| match error {
         LookupError::NotFound(_) => {
-            let place = if loaded.exists {
-                format!("in {}", loaded.path.display())
-            } else {
-                format!("because {} does not exist", loaded.path.display())
+            let place = match (&loaded.project, loaded.exists) {
+                (ProjectFile::Read(project), _) if project.trust == Trust::Trusted => {
+                    format!("in {} or {}", loaded.path.display(), project.file.display())
+                }
+                (_, true) => format!("in {}", loaded.path.display()),
+                (_, false) => format!("because {} does not exist", loaded.path.display()),
             };
             let names = loaded
                 .config
@@ -169,12 +337,12 @@ pub fn select<'a>(loaded: &'a Loaded, name: &str, ui: Ui) -> Result<&'a Server, 
             Failure::usage(format!("no server {name:?} is configured {place}{near}"))
                 .hint("ncp server list")
         }
-        LookupError::Invalid { error, .. } => entry_failure(name, &error, &loaded.path),
+        LookupError::Invalid { error, .. } => entry_failure(name, &error, loaded.file_of(name)),
     })?;
     if let Transport::Sse(_) = server.transport {
         return Err(Failure::usage(format!(
             "the entry in {} has type \"sse\", and ncp connects only to stdio and http servers",
-            loaded.path.display()
+            loaded.file_of(name).display()
         ))
         .server(name));
     }
@@ -185,6 +353,35 @@ pub fn select<'a>(loaded: &'a Loaded, name: &str, ui: Ui) -> Result<&'a Server, 
         .filter(|warning| warning.server.as_deref() == Some(name))
         .for_each(|warning| ui.warning(Some(name), &unknown_key(&warning.key)));
     Ok(server)
+}
+
+/// The failure of a name that the gate stops, with the entries of the
+/// file, so that the user or an agent can check them before `ncp trust`.
+#[must_use]
+pub fn stop_failure(name: &str, project: &Project, stop: project::Stop) -> Failure {
+    let file = project.file.display();
+    match stop {
+        project::Stop::Untrusted { changed, in_global } => {
+            let state = if changed {
+                "which changed since you trusted it"
+            } else {
+                "which is not trusted"
+            };
+            let failure = Failure::usage(format!(
+                "{name} is in {file}, {state}:\n{}",
+                super::render::project_entries(&project.entries)
+            ))
+            .hint("ncp trust");
+            if in_global {
+                failure.hint("ncp trust --ignore")
+            } else {
+                failure
+            }
+        }
+        project::Stop::Ignored => {
+            Failure::usage(format!("{name} is in {file}, which you ignored")).hint("ncp trust")
+        }
+    }
 }
 
 #[must_use]
@@ -851,7 +1048,15 @@ mod tests {
 
     #[test]
     fn missing_file_gives_an_empty_configuration() {
-        let loaded = load_config(Path::new("/nonexistent/ncp/mcp.json"), &Env::new()).unwrap();
+        let paths = Paths {
+            config_file: "/nonexistent/ncp/mcp.json".into(),
+            ..Paths::from_env(&Env::from([(
+                "HOME".to_string(),
+                "/nonexistent".to_string(),
+            )]))
+            .unwrap()
+        };
+        let loaded = load_config(&paths, &Env::new(), false).unwrap();
         assert!(!loaded.exists);
         assert_eq!(loaded.config.servers().count(), 0);
         let failure = select(

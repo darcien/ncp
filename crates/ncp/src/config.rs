@@ -349,6 +349,28 @@ impl Config {
         &self.warnings
     }
 
+    /// True when the file has an entry of the name, valid or not.
+    #[must_use]
+    pub fn has(&self, name: &str) -> bool {
+        self.entries.contains_key(name)
+    }
+
+    /// The view after a trust of a project file: each project entry
+    /// replaces the global entry of the same name as a whole, with no
+    /// merge of fields, as mise does for a tool.
+    #[must_use]
+    pub fn with_project(self, project: Self) -> Self {
+        Self {
+            entries: self.entries.into_iter().chain(project.entries).collect(),
+            warnings: self.warnings.into_iter().chain(project.warnings).collect(),
+            variables: self
+                .variables
+                .into_iter()
+                .chain(project.variables)
+                .collect(),
+        }
+    }
+
     /// The names of all `${NAME}` in `env` and `headers` values and in
     /// `oauth.clientSecret`, also in invalid entries. Only these values can
     /// come from a store.
@@ -376,9 +398,7 @@ fn variables_in(value: &Value, found: &mut BTreeSet<String>) {
 /// Returns an error when the text is not JSON, or does not have the
 /// `mcpServers` shape.
 pub fn parse(text: &str, env: &Env) -> Result<Config, ConfigError> {
-    let root: Value = jsonc_parser::parse_to_serde_value(text, &JSONC)
-        .map_err(|error| ConfigError::Syntax(error.to_string()))?;
-    let root = root.as_object().ok_or(ConfigError::NotObject)?;
+    let root = parse_root(text)?;
     let top_warnings = root
         .keys()
         .filter(|key| *key != SERVERS_KEY)
@@ -386,10 +406,8 @@ pub fn parse(text: &str, env: &Env) -> Result<Config, ConfigError> {
             server: None,
             key: key.clone(),
         });
-    let servers = match root.get(SERVERS_KEY) {
-        None => &Map::new(),
-        Some(value) => value.as_object().ok_or(ConfigError::ServersNotObject)?,
-    };
+    let none = Map::new();
+    let servers = servers_of(&root)?.unwrap_or(&none);
     let parsed: Vec<(String, Result<Server, EntryError>, Vec<Warning>)> = servers
         .iter()
         .map(|(name, value)| {
@@ -429,6 +447,31 @@ pub fn parse(text: &str, env: &Env) -> Result<Config, ConfigError> {
         warnings,
         variables,
     })
+}
+
+/// The `mcpServers` map of the text, with no expansion and no check of
+/// the entries.
+///
+/// # Errors
+///
+/// Returns an error when the text is not JSONC, or does not have the
+/// `mcpServers` shape.
+pub fn parse_servers(text: &str) -> Result<Map<String, Value>, ConfigError> {
+    Ok(servers_of(&parse_root(text)?)?.cloned().unwrap_or_default())
+}
+
+fn parse_root(text: &str) -> Result<Map<String, Value>, ConfigError> {
+    match jsonc_parser::parse_to_serde_value(text, &JSONC) {
+        Ok(Value::Object(root)) => Ok(root),
+        Ok(_) => Err(ConfigError::NotObject),
+        Err(error) => Err(ConfigError::Syntax(error.to_string())),
+    }
+}
+
+fn servers_of(root: &Map<String, Value>) -> Result<Option<&Map<String, Value>>, ConfigError> {
+    root.get(SERVERS_KEY)
+        .map(|value| value.as_object().ok_or(ConfigError::ServersNotObject))
+        .transpose()
 }
 
 #[derive(Clone, Copy)]
@@ -1110,6 +1153,20 @@ mod tests {
                 EntryError::NoTransport,
             ]
         );
+    }
+
+    #[test]
+    fn a_project_entry_replaces_the_global_entry_of_the_same_name() {
+        let global =
+            load(r#"{"mcpServers": {"gh": {"command": "global"}, "g": {"command": "g"}}}"#);
+        let project = load(r#"{"mcpServers": {"gh": {"command": "project"}}}"#);
+        let merged = global.with_project(project);
+        let command = |name: &str| match &merged.server(name).unwrap().transport {
+            Transport::Stdio(stdio) => stdio.command.clone(),
+            _ => panic!("not stdio"),
+        };
+        assert_eq!(command("gh"), "project");
+        assert_eq!(command("g"), "g");
     }
 
     #[test]

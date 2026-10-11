@@ -20,6 +20,9 @@ const FAKE_SECURITY: &str = env!("CARGO_BIN_EXE_fake-security");
 pub struct Home {
     pub root: PathBuf,
     pub env: Vec<(String, String)>,
+    /// The current folder of each run. The home folder by default, where
+    /// the search for a project file stops.
+    pub cwd: PathBuf,
 }
 
 impl Home {
@@ -42,7 +45,31 @@ impl Home {
                 root.join("state").display().to_string(),
             ),
         ];
-        Self { root, env }
+        Self {
+            cwd: root.clone(),
+            root,
+            env,
+        }
+    }
+
+    /// Writes `.mcp.json` with the servers in the folder (relative to the
+    /// root) with a `.git` folder, and runs the next commands there.
+    pub fn project(mut self, folder: &str, servers: &Value) -> Self {
+        let dir = self.root.join(folder);
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::write(
+            dir.join(".mcp.json"),
+            json!({ "mcpServers": servers }).to_string(),
+        )
+        .unwrap();
+        self.cwd = dir;
+        self
+    }
+
+    /// The path of the project file of the current folder, as `ncp` finds
+    /// it: the real path.
+    pub fn project_file(&self) -> PathBuf {
+        std::fs::canonicalize(&self.cwd).unwrap().join(".mcp.json")
     }
 
     pub fn config_path(&self) -> PathBuf {
@@ -81,6 +108,11 @@ impl Home {
         self
     }
 
+    pub fn unset(mut self, name: &str) -> Self {
+        self.env.retain(|(key, _)| key != name);
+        self
+    }
+
     pub fn run(&self, args: &[&str]) -> Run {
         self.run_with_stdin(args, "")
     }
@@ -89,6 +121,7 @@ impl Home {
         use std::io::Write as _;
         let mut child = Command::new(NCP)
             .args(args)
+            .current_dir(&self.cwd)
             .env_clear()
             .envs(self.env.iter().cloned())
             .stdin(Stdio::piped())

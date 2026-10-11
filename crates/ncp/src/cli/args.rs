@@ -73,7 +73,9 @@ pub struct GlobalOptions {
     #[arg(long, global = true, value_enum, value_name = "FORMAT")]
     pub output_format: Option<OutputFormat>,
     /// The configuration file in place of the default file, mcp.json in the
-    /// ncp folder of the XDG configuration folder. It must exist.
+    /// ncp folder of the XDG configuration folder. It must exist. ncp then
+    /// does not search for a project .mcp.json, and runs the servers of this
+    /// file with no trust question.
     #[arg(long, global = true, value_name = "PATH")]
     pub config_file: Option<std::path::PathBuf>,
 }
@@ -107,6 +109,10 @@ pub enum Command {
     /// Named values for ${NAME} in the configuration
     #[command(subcommand)]
     Secret(SecretCommand),
+    /// Trust the project .mcp.json of the current folder, and show its
+    /// entries. Before the trust, its servers do not run. Each change of
+    /// the file needs a new trust.
+    Trust(TrustArgs),
     /// Print the completion script for a shell. Server names complete from
     /// the configuration.
     GenerateShellCompletion {
@@ -114,6 +120,21 @@ pub enum Command {
         #[arg(value_enum)]
         shell: CompletionShell,
     },
+}
+
+/// The options of `ncp trust`, as `mise trust`: only one of them.
+#[derive(Debug, Args)]
+#[group(multiple = false)]
+pub struct TrustArgs {
+    /// Show the entries and the trust state, and change nothing
+    #[arg(long)]
+    pub show: bool,
+    /// Remove the trust
+    #[arg(long)]
+    pub untrust: bool,
+    /// Ignore the file: ncp does not ask again until ncp trust
+    #[arg(long)]
+    pub ignore: bool,
 }
 
 /// A shell with a completion script.
@@ -204,7 +225,10 @@ pub enum SecretCommand {
         credential_store: CredentialPlace,
     },
     /// List the stored secrets: the name, the destination, the place and
-    /// the servers that use each one. Shows no value.
+    /// the servers that use each one. Shows no value. The servers come
+    /// from the global file and the project file of the current folder; a
+    /// project in another folder can still use a secret that no server
+    /// uses here.
     List,
     /// Delete the stored secret from all places. With no flag, only when
     /// the name has one destination.
@@ -214,7 +238,9 @@ pub enum SecretCommand {
         /// Delete only the item of the destination of this entry.
         #[arg(long, value_name = "SERVER", group = "removal")]
         server: Option<String>,
-        /// Delete the items that no entry of the configuration uses.
+        /// Delete the items that no entry of the global file or of the
+        /// project file of the current folder uses. A project in another
+        /// folder can still use them.
         #[arg(long, group = "removal")]
         unused: bool,
         /// Delete the items of all destinations.

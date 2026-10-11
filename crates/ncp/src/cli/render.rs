@@ -9,7 +9,10 @@ use rmcp::model::{JsonObject, Tool};
 use serde_json::Value;
 
 use super::tool_args;
-use crate::config::{Server, Target, Transport};
+use crate::{
+    config::{Server, Target, Transport},
+    project::{Entry, EntryKind, Project, Trust},
+};
 
 /// The transport name of an entry.
 #[must_use]
@@ -27,13 +30,128 @@ pub fn transport_name(server: &Server) -> &'static str {
 #[must_use]
 pub fn target(server: &Server) -> String {
     match &server.target {
-        Target::Stdio { command, args, .. } => std::iter::once(command)
-            .chain(args)
-            .map(|word| shell_word(word))
-            .collect::<Vec<_>>()
-            .join(" "),
+        Target::Stdio { command, args, .. } => command_line(command, args),
         Target::Remote { url } => url.clone(),
     }
+}
+
+fn command_line(command: &str, args: &[String]) -> String {
+    std::iter::once(command)
+        .chain(args.iter().map(String::as_str))
+        .map(shell_word)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The target of an entry of a project file, as `target` gives it.
+#[must_use]
+pub fn entry_target(kind: &EntryKind) -> String {
+    match kind {
+        EntryKind::Stdio { command, args, .. } => command_line(command, args),
+        EntryKind::Remote { url, .. } => url.clone(),
+        EntryKind::Invalid => String::new(),
+    }
+}
+
+/// One line for each server of a project file, for the user to check
+/// before a trust: the full command with `cwd` and the names of the `env`
+/// variables, or the URL with each `${NAME}` and the host that gets it.
+/// Never a value of `env` or of a header: it can be a literal secret, and
+/// the output can go into the transcript of an agent. `table` escapes
+/// each cell, so that no escape sequence hides an argument.
+#[must_use]
+pub fn project_entries(entries: &[Entry]) -> String {
+    let rows: Vec<Vec<String>> = entries
+        .iter()
+        .map(|entry| {
+            let details: Vec<String> = match &entry.kind {
+                EntryKind::Stdio { cwd, env, .. } => std::iter::once(entry_target(&entry.kind))
+                    .chain(cwd.iter().map(|cwd| format!("cwd: {cwd}")))
+                    .chain((!env.is_empty()).then(|| format!("env: {}", env.join(", "))))
+                    .collect(),
+                EntryKind::Remote { url, sends, .. } => std::iter::once(url.clone())
+                    .chain(sends.iter().map(|(name, host)| format!("{name} -> {host}")))
+                    .collect(),
+                EntryKind::Invalid => vec!["not a valid entry".into()],
+            };
+            vec![entry.name.clone(), details.join("   ")]
+        })
+        .collect();
+    table(&rows).lines().fold(String::new(), |mut text, line| {
+        let _ = writeln!(text, "  {line}");
+        text
+    })
+}
+
+/// The text before the question of the trust.
+#[must_use]
+pub fn project_question(project: &Project) -> String {
+    let state = match project.trust {
+        Trust::Untrusted { changed: true } => "changed since you trusted it",
+        _ => "is not trusted",
+    };
+    format!(
+        "{} {state}. It has these servers:\n{}",
+        super::ui::printable(&project.file.display().to_string()),
+        project_entries(&project.entries)
+    )
+}
+
+/// The text of `server list`: the project file with its state, then one
+/// row for each entry. A project entry has a mark with its state.
+#[must_use]
+pub fn server_list(project: Option<&Project>, servers: &[Value], invalid: &[Value]) -> String {
+    let text = |row: &Value, key: &str| {
+        row.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
+    let mark = |row: &Value| match (text(row, "scope").as_str(), text(row, "trust").as_str()) {
+        ("project", "trusted") => "project".to_string(),
+        ("project", state) => format!("project, {state}"),
+        _ => String::new(),
+    };
+    let rows: Vec<Vec<String>> = servers
+        .iter()
+        .map(|row| {
+            vec![
+                text(row, "name"),
+                text(row, "transport"),
+                text(row, "target"),
+                mark(row),
+            ]
+        })
+        .chain(invalid.iter().map(|row| {
+            vec![
+                text(row, "name"),
+                "invalid".into(),
+                text(row, "error"),
+                mark(row),
+            ]
+        }))
+        .collect();
+    let head = project
+        .map(|project| {
+            format!(
+                "Project file: {} ({})\n",
+                super::ui::printable(&project.file.display().to_string()),
+                project.trust.word()
+            )
+        })
+        .unwrap_or_default();
+    head + &table(&rows)
+}
+
+/// The text of `ncp trust`: the file with its state, then its entries.
+#[must_use]
+pub fn project_file(project: &Project) -> String {
+    format!(
+        "{} ({})\n{}",
+        super::ui::printable(&project.file.display().to_string()),
+        project.trust.word(),
+        project_entries(&project.entries)
+    )
 }
 
 /// The word as the user types it in a POSIX shell.

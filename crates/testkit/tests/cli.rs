@@ -53,14 +53,17 @@ fn server_list_shows_servers_invalid_entries_and_unknown_keys() {
     }));
     let run = home.run(&["server", "list"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
+    let file = home.config_path();
     assert_eq!(
         run.stdout(),
         json!({
             "servers": [
-                {"name": "local", "transport": "stdio", "target": "srv -v 'a b'"},
-                {"name": "remote", "transport": "http", "target": "https://example.com/mcp"}
+                {"name": "local", "transport": "stdio", "target": "srv -v 'a b'",
+                 "scope": "global", "file": file},
+                {"name": "remote", "transport": "http", "target": "https://example.com/mcp",
+                 "scope": "global", "file": file}
             ],
-            "invalid": [{"name": "broken", "error":
+            "invalid": [{"name": "broken", "scope": "global", "file": file, "error":
                 "entry has a \"url\" but no \"type\"; add \"type\": \"http\" or \"type\": \"sse\""}]
         })
     );

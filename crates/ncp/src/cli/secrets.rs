@@ -461,6 +461,9 @@ fn set_target<'a>(
 /// `command`, `args`, `cwd` or `url` comes only from the environment (B32),
 /// and an unset one makes the entry invalid.
 fn no_use(name: &SecretName, only: Option<&str>, loaded: &session::Loaded) -> Failure {
+    if let Some(failure) = untrusted_use(loaded, name, only) {
+        return failure;
+    }
     let fields = "env, headers or oauth.clientSecret";
     let message = match only {
         Some(word) => format!("server {word} does not name ${{{name}}} in {fields}"),
@@ -489,7 +492,7 @@ async fn set(
     place: CredentialPlace,
 ) -> Result<(), Failure> {
     let name = secret_name(name)?;
-    let loaded = session::load_config(&context.paths.config_file, context.env)?;
+    let loaded = session::load(context, only).await?;
     let target = set_target(context, &loaded, &name, only, None)?;
     let destination = &target.destination;
     let key = CredentialKey::Secret {
@@ -869,10 +872,15 @@ fn secret_rows(
         .collect()
 }
 
+/// `ncp` knows only the global file and the project file of the current
+/// folder. A list of the project files, as `mise prune` keeps, comes after
+/// the first release.
+const UNUSED_SCOPE: &str = "an unused item is unused in the global file and in the project file of the current folder; a project in another folder can still use it";
+
 async fn list(context: &Context<'_>) -> Result<(), Failure> {
     // The items come from the stores. A configuration file that does not
     // load only takes away the "used" mark.
-    let loaded = match session::load_config(&context.paths.config_file, context.env) {
+    let loaded = match session::load(context, None).await {
         Ok(loaded) => Some(loaded),
         Err(failure) => {
             context.ui.warning(
@@ -889,6 +897,9 @@ async fn list(context: &Context<'_>) -> Result<(), Failure> {
     let stored = stored_items(context, &native(context).await).await?;
     warn_unlisted(context, &stored.failed);
     let rows = secret_rows(stored.items, &servers);
+    if rows.iter().any(|row| row.servers.is_empty()) {
+        context.ui.hint(None, UNUSED_SCOPE);
+    }
     context.ui.result(
         || {
             render::table(
@@ -973,7 +984,7 @@ async fn chosen(
         Removal::Server(word) => {
             // The configuration first: a usage error must not wait for the
             // native store.
-            let loaded = session::load_config(&context.paths.config_file, context.env)?;
+            let loaded = session::load(context, Some(&word)).await?;
             let several_hint = format!("ncp secret delete {name} --all");
             let target = set_target(context, &loaded, name, Some(&word), Some(several_hint))?;
             return Ok(Choice {
@@ -990,7 +1001,7 @@ async fn chosen(
         Listed::One => Pick::One,
         Listed::All => Pick::All,
         Listed::Unused => {
-            let loaded = strict_config(context)?;
+            let loaded = strict_config(context, name).await?;
             let used =
                 binding::by_destination(binding::uses(loaded.config.servers(), name.as_str()))
                     .into_iter()
@@ -1063,6 +1074,7 @@ async fn chosen(
                 ),
                 (false, _) => {
                     warn_unlisted(context, &failed);
+                    context.ui.hint(None, UNUSED_SCOPE);
                     Ok(choice(unused, Some(config_file)))
                 }
             }
@@ -1072,15 +1084,52 @@ async fn chosen(
 
 /// The configuration for `--unused`: an invalid entry can name the secret,
 /// so `ncp` cannot know that an item is unused.
-fn strict_config(context: &Context<'_>) -> Result<session::Loaded, Failure> {
-    let loaded = session::load_config(&context.paths.config_file, context.env)
+/// An entry of a project file that is not trusted can name it too.
+async fn strict_config(
+    context: &Context<'_>,
+    name: &SecretName,
+) -> Result<session::Loaded, Failure> {
+    let loaded = session::load(context, None)
+        .await
         .map_err(|failure| Failure::usage(failure.message))?;
     if let Some((server, error)) = loaded.config.invalid().next() {
         return Err(Failure::usage(format!(
             "server {server}: {error}; ncp cannot know which items it uses"
         )));
     }
+    if let Some(failure) = untrusted_use(&loaded, name, None) {
+        return Err(Failure {
+            message: format!("{}; ncp cannot know which items it uses", failure.message),
+            ..failure
+        });
+    }
     Ok(loaded)
+}
+
+/// The failure when only an entry of a project file that is not trusted
+/// names `${NAME}`: the file and its state, with the hint `ncp trust`.
+fn untrusted_use(
+    loaded: &session::Loaded,
+    name: &SecretName,
+    only: Option<&str>,
+) -> Option<Failure> {
+    let project = loaded.project.project()?;
+    let entry = project.entries.iter().find(|entry| {
+        only.is_none_or(|word| word == entry.name) && entry.variables.contains(name.as_str())
+    })?;
+    let state = match project.trust {
+        crate::project::Trust::Trusted => return None,
+        crate::project::Trust::Ignored => "which you ignored",
+        crate::project::Trust::Untrusted { .. } => "which is not trusted",
+    };
+    Some(
+        Failure::usage(format!(
+            "server {} names ${{{name}}} in {}, {state}",
+            entry.name,
+            project.file.display()
+        ))
+        .hint("ncp trust"),
+    )
 }
 
 async fn delete(context: &Context<'_>, name: &str, removal: Removal) -> Result<(), Failure> {

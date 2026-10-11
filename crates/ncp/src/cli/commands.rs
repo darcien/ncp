@@ -22,13 +22,14 @@ use super::{
 };
 use crate::{
     client::{Answer, Connection, RequestError},
-    config::{EntryError, Server},
+    config::Server,
     list_cache,
+    project::Trust,
 };
 
 pub async fn server(context: &Context<'_>, command: ServerCommand) -> Result<(), Failure> {
     match command {
-        ServerCommand::List => server_list(context),
+        ServerCommand::List => server_list(context).await,
         ServerCommand::Show { server } => server_show(context, &server).await,
     }
 }
@@ -59,26 +60,8 @@ pub async fn tool(context: &Context<'_>, command: ToolCommand) -> Result<(), Fai
     }
 }
 
-fn load(context: &Context<'_>) -> Result<Loaded, Failure> {
-    let path = &context.paths.config_file;
-    let loaded = context.timed(
-        |record, elapsed| record.config = Some(elapsed),
-        || session::load_config(path, context.env),
-    )?;
-    let state = if loaded.exists {
-        ""
-    } else {
-        " (does not exist)"
-    };
-    context.ui.debug(
-        None,
-        &format!("configuration file: {}{state}", path.display()),
-    );
-    Ok(loaded)
-}
-
-fn server_list(context: &Context<'_>) -> Result<(), Failure> {
-    let loaded = load(context)?;
+async fn server_list(context: &Context<'_>) -> Result<(), Failure> {
+    let loaded = session::load(context, None).await?;
     let config = &loaded.config;
     for warning in config.warnings() {
         context.ui.warning(
@@ -86,8 +69,47 @@ fn server_list(context: &Context<'_>) -> Result<(), Failure> {
             &session::unknown_key(&warning.key),
         );
     }
-    let servers: Vec<&Server> = config.servers().collect();
-    let invalid: Vec<(&str, &EntryError)> = config.invalid().collect();
+    let scope = |name: &str| match loaded.project_of(name) {
+        Some(project) => json!({"scope": "project", "file": project.file, "trust": "trusted"}),
+        None => json!({"scope": "global", "file": loaded.path}),
+    };
+    let with_scope = |row: Value, name: &str| match (row, scope(name)) {
+        (Value::Object(mut row), Value::Object(scope)) => {
+            row.extend(scope);
+            Value::Object(row)
+        }
+        (row, _) => row,
+    };
+    // The entries of a project file that is not trusted show with their
+    // state, and nothing else happens for them (design rule 8).
+    let waiting = loaded
+        .project
+        .project()
+        .filter(|project| project.trust != Trust::Trusted);
+    let servers: Vec<Value> = config
+        .servers()
+        .map(|server| {
+            let name = server.name.as_str();
+            with_scope(
+                json!({
+                    "name": name,
+                    "transport": render::transport_name(server),
+                    "target": render::target(server),
+                }),
+                name,
+            )
+        })
+        .chain(waiting.into_iter().flat_map(|project| {
+            project
+                .entries
+                .iter()
+                .map(|entry| session::project_row(project, entry))
+        }))
+        .collect();
+    let invalid: Vec<Value> = config
+        .invalid()
+        .map(|(name, error)| with_scope(json!({"name": name, "error": error.to_string()}), name))
+        .collect();
     if servers.is_empty() && invalid.is_empty() {
         let path = loaded.path.display();
         let message = if loaded.exists {
@@ -98,35 +120,8 @@ fn server_list(context: &Context<'_>) -> Result<(), Failure> {
         context.ui.hint(None, &message);
     }
     context.ui.result(
-        || {
-            let rows: Vec<Vec<String>> = servers
-                .iter()
-                .map(|server| {
-                    vec![
-                        server.name.to_string(),
-                        render::transport_name(server).to_string(),
-                        render::target(server),
-                    ]
-                })
-                .chain(invalid.iter().map(|(name, error)| {
-                    vec![(*name).to_string(), "invalid".into(), error.to_string()]
-                }))
-                .collect();
-            render::table(&rows)
-        },
-        || {
-            json!({
-                "servers": servers.iter().map(|server| json!({
-                    "name": server.name.as_str(),
-                    "transport": render::transport_name(server),
-                    "target": render::target(server),
-                })).collect::<Vec<_>>(),
-                "invalid": invalid.iter().map(|(name, error)| json!({
-                    "name": name,
-                    "error": error.to_string(),
-                })).collect::<Vec<_>>(),
-            })
-        },
+        || render::server_list(loaded.project.project(), &servers, &invalid),
+        || json!({"servers": servers, "invalid": invalid}),
     )?;
     Ok(())
 }
@@ -198,7 +193,7 @@ fn asked<T>(
 }
 
 async fn server_show(context: &Context<'_>, word: &str) -> Result<(), Failure> {
-    let loaded = load(context)?;
+    let loaded = session::load(context, Some(word)).await?;
     let server = select(context, &loaded, word, show_fix)?;
     let info = with_connection(context, server, async |connection| {
         Ok(connection.server_info())
@@ -322,7 +317,7 @@ fn cached_list(context: &Context<'_>, server: &Server) -> Option<list_cache::Cac
 }
 
 async fn tool_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
-    let loaded = load(context)?;
+    let loaded = session::load(context, Some(word)).await?;
     let server = select(context, &loaded, word, show_fix)?;
     let cached = cached_list(context, server).map(|cached| (cached.tools, cached.has_instructions));
     let (tools, has_instructions) = match cached {
@@ -386,7 +381,7 @@ fn show_tool(context: &Context<'_>, server: &str, tool: &Tool) -> Result<(), Fai
 }
 
 async fn tool_show(context: &Context<'_>, word: &str, tool: Option<&str>) -> Result<(), Failure> {
-    let loaded = load(context)?;
+    let loaded = session::load(context, Some(word)).await?;
     let server = select(context, &loaded, word, show_fix)?;
     let name = server.name.as_str();
     let tool_name = tool_word(name, tool)?;
@@ -438,7 +433,7 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
     } else {
         tool_args::parse(&call.arguments).map_err(|error| Failure::usage(error.to_string()))?
     };
-    let loaded = load(context)?;
+    let loaded = session::load(context, Some(word)).await?;
     let server = session::select(&loaded, word, context.ui)?;
     let input = match input {
         Input::Stdin => Resolved::Object(read_stdin_object(context).await?),
@@ -560,7 +555,7 @@ fn empty_when_missing<T>(result: Result<Vec<T>, RequestError>) -> Result<Vec<T>,
 }
 
 async fn resource_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
-    let loaded = load(context)?;
+    let loaded = session::load(context, Some(word)).await?;
     let server = select(context, &loaded, word, show_fix)?;
     let name = server.name.as_str();
     let found = with_connection(context, server, async |connection| {
@@ -614,7 +609,7 @@ fn named_failure(server: &Server, method: &str, error: &RequestError, list: &str
 }
 
 async fn resource_read(context: &Context<'_>, word: &str, uri: &str) -> Result<(), Failure> {
-    let loaded = load(context)?;
+    let loaded = session::load(context, Some(word)).await?;
     let server = select(context, &loaded, word, show_fix)?;
     let name = server.name.as_str();
     let answer = with_connection(context, server, async |connection| {
@@ -693,7 +688,7 @@ fn input_required(
 }
 
 async fn prompt_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
-    let loaded = load(context)?;
+    let loaded = session::load(context, Some(word)).await?;
     let server = select(context, &loaded, word, show_fix)?;
     let name = server.name.as_str();
     let prompts = with_connection(context, server, async |connection| {
@@ -739,7 +734,7 @@ async fn prompt_get(
     words: &[String],
 ) -> Result<(), Failure> {
     let arguments = prompt_arguments(words)?;
-    let loaded = load(context)?;
+    let loaded = session::load(context, Some(word)).await?;
     let server = select(context, &loaded, word, show_fix)?;
     let name = server.name.as_str();
     let answer = with_connection(context, server, async |connection| {

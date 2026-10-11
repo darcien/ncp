@@ -21,7 +21,7 @@ http = "1"
 # that reqwest takes.
 hyper-util = { version = "0.1", default-features = false, features = ["client-proxy", "client-proxy-system"] }
 # The CPU time for --timings. process-wrap already depends on it.
-nix = { version = "0.31", default-features = false, features = ["resource"] }
+nix = { version = "0.31", default-features = false, features = ["resource", "user"] }
 jsonschema = { version = "0.58.6", default-features = false }
 process-wrap = { version = "10", default-features = false, features = ["tokio1", "process-group", "kill-on-drop"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "system-proxy"] }
@@ -41,6 +41,9 @@ url = "2.5.8"
 # JSONC: comments and trailing commas in the configuration files, as VS Code
 # and Zed read them.
 jsonc-parser = { version = "=0.33.2", default-features = false, features = ["serde"] }
+
+# The hash of a trusted project file. oauth2 of rmcp already depends on it.
+sha2 = "0.10"
 
 # Pure Rust, so the static musl build needs no libdbus. zbus with async-io
 # blocks with async_io::block_on and not with a tokio runtime, so a call from

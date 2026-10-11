@@ -14,6 +14,7 @@ pub mod secrets;
 mod session;
 mod timings;
 mod tool_args;
+mod trust;
 mod ui;
 
 use std::{
@@ -170,6 +171,7 @@ async fn run(
             open_browser: platform.open_browser,
             timings,
             interactive: (platform.interactive)(),
+            named_config: cli.options.config_file.is_some(),
             cache: match (cli.options.no_cache, cli.options.refresh) {
                 (true, _) => session::CacheUse::Off,
                 (false, true) => session::CacheUse::WriteOnly,
@@ -183,6 +185,7 @@ async fn run(
             Command::Prompt(command) => commands::prompt(&context, command).await,
             Command::Auth(command) => auth::command(&context, command).await,
             Command::Secret(command) => secrets::command(&context, command).await,
+            Command::Trust(args) => trust::command(&context, &args),
             Command::GenerateShellCompletion { shell } => completion::script(shell),
         }
     }

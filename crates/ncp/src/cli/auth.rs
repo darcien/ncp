@@ -78,7 +78,7 @@ pub(super) async fn command(context: &Context<'_>, command: AuthCommand) -> Resu
             ))
             .hint("give a longer limit with --timeout <SECONDS>");
             let notes = crate::client::http::ConnectNotes::default();
-            let loaded = session::load_config(&context.paths.config_file, context.env)?;
+            let loaded = session::load(context, Some(&server)).await?;
             let name = limited(
                 context,
                 limit,
@@ -1021,6 +1021,10 @@ async fn select<'a>(
         Ok(server) => return Ok(server),
         Err(failure) => failure,
     };
+    // A name that the gate stops gets no lookup of its issuer.
+    if loaded.stop(word).is_some() {
+        return Err(failure);
+    }
     Err(match loaded.config.server(word) {
         Err(LookupError::Invalid {
             error: EntryError::SecretWithoutIssuer { url },
@@ -1246,7 +1250,7 @@ async fn wait_for_redirect(
 }
 
 async fn logout(context: &Context<'_>, word: &str) -> Result<(), Failure> {
-    let loaded = session::load_config(&context.paths.config_file, context.env)?;
+    let loaded = session::load(context, Some(word)).await?;
     let server = session::select(&loaded, word, context.ui)?;
     let name = server.name.as_str();
     remote(server)?;
@@ -1312,7 +1316,8 @@ async fn remove_everywhere(
 }
 
 async fn status(context: &Context<'_>, word: Option<&str>) -> Result<(), Failure> {
-    let loaded = session::load_config(&context.paths.config_file, context.env)?;
+    // No question: auth status only reads.
+    let loaded = session::load(context, None).await?;
     let servers: Vec<&Server> = match word {
         Some(word) => {
             let server = session::select(&loaded, word, context.ui)?;

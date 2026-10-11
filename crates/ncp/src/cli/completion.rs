@@ -15,7 +15,7 @@ use super::{
     outcome::Failure,
     ui,
 };
-use crate::{config, expand::Env, paths::Paths};
+use crate::{expand::Env, paths::Paths};
 
 const BIN: &str = "ncp";
 
@@ -182,13 +182,21 @@ pub fn with_dynamic_names(shell: CompletionShell, script: &str) -> String {
     }
 }
 
+/// The view that runs: the global file and a trusted project file. An
+/// entry of a project file that is not trusted gives no name (design rule
+/// 8), and the load writes nothing to stderr.
+fn config(paths: &Paths, env: &Env) -> Option<crate::config::Config> {
+    super::session::load_config(paths, env, true)
+        .ok()
+        .map(|loaded| loaded.config)
+}
+
 /// Writes the configured server names, one on each line. A configuration
 /// that cannot be read gives no names and no error.
 pub fn servers(env: &Env) {
     let names = Paths::from_env(env)
         .ok()
-        .and_then(|paths| std::fs::read_to_string(paths.config_file).ok())
-        .and_then(|text| config::parse(&text, env).ok())
+        .and_then(|paths| config(&paths, env))
         .map(|config| {
             let mut names: Vec<String> = config
                 .servers()
@@ -234,8 +242,7 @@ pub fn tools(env: &Env, server: &str) {
     let names = Paths::from_env(env)
         .ok()
         .and_then(|paths| {
-            let text = std::fs::read_to_string(&paths.config_file).ok()?;
-            let config = config::parse(&text, env).ok()?;
+            let config = config(&paths, env)?;
             let entry = config
                 .servers()
                 .find(|entry| entry.name.as_str() == server)?;

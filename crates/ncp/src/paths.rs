@@ -13,6 +13,9 @@ pub struct Paths {
     pub cache_dir: PathBuf,
     pub version_cache: PathBuf,
     pub credential_file: PathBuf,
+    /// The trust records of project files: one file for each path.
+    pub trusted_configs: PathBuf,
+    pub ignored_configs: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -39,11 +42,14 @@ impl Paths {
             }
         };
         let cache_dir = base("XDG_CACHE_HOME", ".cache")?.join("ncp");
+        let state_dir = base("XDG_STATE_HOME", ".local/state")?.join("ncp");
         Ok(Self {
             config_file: base("XDG_CONFIG_HOME", ".config")?.join("ncp/mcp.json"),
             version_cache: cache_dir.join("protocol-versions.json"),
             cache_dir,
-            credential_file: base("XDG_STATE_HOME", ".local/state")?.join("ncp/credentials.json"),
+            credential_file: state_dir.join("credentials.json"),
+            trusted_configs: state_dir.join("trusted-configs"),
+            ignored_configs: state_dir.join("ignored-configs"),
         })
     }
 }
@@ -88,6 +94,8 @@ mod tests {
             Path::new("/h/.cache/ncp/protocol-versions.json")
         );
         assert_eq!(paths.credential_file, Path::new("/s/ncp/credentials.json"));
+        assert_eq!(paths.trusted_configs, Path::new("/s/ncp/trusted-configs"));
+        assert_eq!(paths.ignored_configs, Path::new("/s/ncp/ignored-configs"));
     }
 
     #[test]

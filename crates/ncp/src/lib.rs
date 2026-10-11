@@ -11,6 +11,7 @@ pub mod list_cache;
 pub mod oauth;
 pub mod paths;
 mod private_file;
+pub mod project;
 pub mod protocol_version;
 pub mod protocol_version_file;
 pub mod proxy;

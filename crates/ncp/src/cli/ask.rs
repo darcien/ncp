@@ -368,6 +368,25 @@ impl<T> Rounds for crate::client::Answer<T> {
     }
 }
 
+/// A yes or no question with No as the default, as `mise trust` asks.
+/// `None`: no answer (the end of stdin or the time limit).
+///
+/// # Errors
+///
+/// Returns exit 130 at Ctrl-C.
+pub async fn confirm(context: &Context<'_>, question: &str) -> Result<Option<bool>, Failure> {
+    let asker = Asker::new(context, "");
+    asker.say(question);
+    match asker.line().await {
+        Ok(line) => Ok(Some(matches!(
+            line.trim().to_ascii_lowercase().as_str(),
+            "y" | "yes"
+        ))),
+        Err(Stop::Interrupted) => Err(session::interrupted()),
+        Err(Stop::End | Stop::TimedOut) => Ok(None),
+    }
+}
+
 /// The failure of a question that got no answer.
 fn unanswered(stop: Stop, context: &Context<'_>, server: &str) -> Failure {
     match stop {
