@@ -1,5 +1,8 @@
 //! The configuration model: the common `mcpServers` JSON core.
 //!
+//! The files are JSONC: JSON with comments and trailing commas, as VS Code
+//! and Zed read them. No checked tool reads JSON5, so its forms are errors.
+//!
 //! Other agent tools write the same shape, so `ncp` reads their files too.
 //! Unknown keys give warnings and not errors. An invalid entry does not stop
 //! the other entries: its error shows when the user selects that server.
@@ -15,6 +18,17 @@ use crate::{
 };
 
 const SERVERS_KEY: &str = "mcpServers";
+/// Comments and trailing commas only. The other options of the parser are
+/// JSON5 forms.
+const JSONC: jsonc_parser::ParseOptions = jsonc_parser::ParseOptions {
+    allow_comments: true,
+    allow_trailing_commas: true,
+    allow_loose_object_property_names: false,
+    allow_missing_commas: false,
+    allow_single_quoted_strings: false,
+    allow_hexadecimal_numbers: false,
+    allow_unary_plus_numbers: false,
+};
 const STDIO_KEYS: [&str; 5] = ["type", "command", "args", "env", "cwd"];
 const REMOTE_KEYS: [&str; 4] = ["type", "url", "headers", "oauth"];
 /// The keys of the `oauth` object that the MVP reads (design C4, B68).
@@ -241,8 +255,8 @@ impl std::fmt::Display for Warning {
 /// An error in the file as a whole. No server can load.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    #[error("configuration is not valid JSON: {0}")]
-    Json(#[from] serde_json::Error),
+    #[error("configuration is not valid JSONC: {0}")]
+    Syntax(String),
     #[error("configuration is not a JSON object")]
     NotObject,
     #[error("\"{SERVERS_KEY}\" is not a JSON object")]
@@ -362,7 +376,8 @@ fn variables_in(value: &Value, found: &mut BTreeSet<String>) {
 /// Returns an error when the text is not JSON, or does not have the
 /// `mcpServers` shape.
 pub fn parse(text: &str, env: &Env) -> Result<Config, ConfigError> {
-    let root: Value = serde_json::from_str(text)?;
+    let root: Value = jsonc_parser::parse_to_serde_value(text, &JSONC)
+        .map_err(|error| ConfigError::Syntax(error.to_string()))?;
     let root = root.as_object().ok_or(ConfigError::NotObject)?;
     let top_warnings = root
         .keys()
@@ -1105,9 +1120,49 @@ mod tests {
     }
 
     #[test]
+    fn reads_comments_and_trailing_commas() {
+        let config = load(
+            r#"{
+                // line comment
+                "mcpServers": { /* block */ "s": {"command": "srv", "args": ["a",],}, },
+            }"#,
+        );
+        assert!(config.server("s").is_ok());
+    }
+
+    #[test]
+    fn refuses_json5_forms() {
+        for text in [
+            r"{'mcpServers': {}}",
+            r"{mcpServers: {}}",
+            r#"{"mcpServers": {"s": {"command": "srv", "n": 0x1F}}}"#,
+            r#"{"mcpServers": {"s": {"command": "srv", "n": +1}}}"#,
+            r#"{"mcpServers": {"a": {"command": "x"} "b": {"command": "y"}}}"#,
+        ] {
+            assert!(
+                matches!(parse(text, &env()), Err(ConfigError::Syntax(_))),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn last_duplicate_key_wins() {
+        let config = load(r#"{"mcpServers": {"s": {"command": "one"}, "s": {"command": "two"}}}"#);
+        assert_eq!(
+            config.server("s").unwrap().target,
+            Target::Stdio {
+                command: "two".into(),
+                args: Vec::new(),
+                cwd: None
+            }
+        );
+    }
+
+    #[test]
     fn rejects_text_that_is_not_the_mcp_servers_shape() {
         assert!(matches!(parse("[]", &env()), Err(ConfigError::NotObject)));
-        assert!(matches!(parse("{", &env()), Err(ConfigError::Json(_))));
+        assert!(matches!(parse("{", &env()), Err(ConfigError::Syntax(_))));
         assert!(matches!(
             parse(r#"{"mcpServers": []}"#, &env()),
             Err(ConfigError::ServersNotObject)

@@ -38,6 +38,9 @@ tokio-util = "0.7"
 tower-layer = "0.3"
 tower-service = "0.3"
 url = "2.5.8"
+# JSONC: comments and trailing commas in the configuration files, as VS Code
+# and Zed read them.
+jsonc-parser = { version = "=0.33.2", default-features = false, features = ["serde"] }
 
 # Pure Rust, so the static musl build needs no libdbus. zbus with async-io
 # blocks with async_io::block_on and not with a tokio runtime, so a call from

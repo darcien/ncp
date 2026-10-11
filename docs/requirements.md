@@ -144,7 +144,10 @@ no loss.
 ```
 
 - Path: `$XDG_CONFIG_HOME/ncp/mcp.json` (default `~/.config/ncp/mcp.json`)
-  on macOS and Linux. User scope only in the MVP. Project scope comes with S5.
+  on macOS and Linux. A project `.mcp.json` adds a project scope (S5).
+- Syntax: JSONC, which is JSON with comments (`//` and `/* */`) and
+  trailing commas, as VS Code and Zed read it. JSON5 forms are errors. With
+  duplicate keys, the last value wins.
 - `type` values: `stdio`, `http`, `sse`. A `url` entry needs `type`, because
   tools give a different meaning to a `url` with no `type`. An entry with
   `command` and no `type` is `stdio`, as in all tools that read this shape.
