@@ -8,6 +8,7 @@ mod completion;
 mod diagnostics;
 mod near;
 mod outcome;
+mod project_file;
 mod render;
 mod schema_check;
 pub mod secrets;

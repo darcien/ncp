@@ -1022,7 +1022,7 @@ async fn select<'a>(
         Err(failure) => failure,
     };
     // A name that the gate stops gets no lookup of its issuer.
-    if loaded.stop(word).is_some() {
+    if loaded.blocked_by(word).is_some() {
         return Err(failure);
     }
     Err(match loaded.config.server(word) {

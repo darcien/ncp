@@ -411,7 +411,7 @@ pub fn parse(text: &str, env: &Env) -> Result<Config, ConfigError> {
     let parsed: Vec<(String, Result<Server, EntryError>, Vec<Warning>)> = servers
         .iter()
         .map(|(name, value)| {
-            let (entry, warnings) = parse_entry(name, value, env);
+            let (entry, warnings) = parse_entry(name, value, Expansion::From(env));
             (name.clone(), entry, warnings)
         })
         .collect();
@@ -434,17 +434,6 @@ pub fn parse(text: &str, env: &Env) -> Result<Config, ConfigError> {
         warnings,
         variables,
     })
-}
-
-/// The `mcpServers` map of the text, with no expansion and no check of
-/// the entries.
-///
-/// # Errors
-///
-/// Returns an error when the text is not JSONC, or does not have the
-/// `mcpServers` shape.
-pub fn parse_servers(text: &str) -> Result<Map<String, Value>, ConfigError> {
-    Ok(servers_of(&parse_root(text)?)?.cloned().unwrap_or_default())
 }
 
 fn parse_root(text: &str) -> Result<Map<String, Value>, ConfigError> {
@@ -477,9 +466,26 @@ fn store_values(entry: &Map<String, Value>, kind: Kind) -> Vec<&Value> {
     values.into_iter().flatten().collect()
 }
 
-/// An entry as the file writes it, with no expansion, for a person to
-/// check before a trust. It uses the rules of `parse`, so the entry that
-/// shows is the entry that runs.
+fn names_in<'a>(values: impl IntoIterator<Item = &'a Value>) -> BTreeSet<String> {
+    let mut found = BTreeSet::new();
+    for value in values {
+        variables_in(value, &mut found);
+    }
+    found
+}
+
+/// One entry of a file, as the file writes it, for a person to check
+/// before a trust.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnexpandedEntry {
+    pub name: String,
+    /// An error here is an entry that the loader cannot read at all.
+    pub shape: Result<Unexpanded, EntryError>,
+}
+
+/// An entry with no expansion. The target comes from the code that gives
+/// the target of a loaded server, so the entry that shows is the entry
+/// that runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unexpanded {
     pub transport: &'static str,
@@ -492,55 +498,42 @@ pub struct Unexpanded {
     pub sends: Vec<(String, String)>,
     /// The names that can come from a store.
     pub variables: BTreeSet<String>,
+    /// An error of the checks of the loader that need no expansion. The
+    /// loader then refuses the entry, so nothing runs.
+    pub problem: Option<EntryError>,
 }
 
+/// The entries of the text with no expansion: no value of the environment
+/// goes into them.
+///
 /// # Errors
 ///
-/// Returns the error of the entry when the loader cannot read it, also
-/// before the expansion: the name, the shape and the type.
-pub fn unexpanded(name: &str, value: &Value) -> Result<Unexpanded, EntryError> {
+/// Returns an error when the text is not JSONC, or does not have the
+/// `mcpServers` shape.
+pub fn unexpanded_entries(text: &str) -> Result<Vec<UnexpandedEntry>, ConfigError> {
+    Ok(servers_of(&parse_root(text)?)?
+        .map(|servers| {
+            servers
+                .iter()
+                .map(|(name, value)| UnexpandedEntry {
+                    name: name.clone(),
+                    shape: unexpanded(name, value),
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+fn unexpanded(name: &str, value: &Value) -> Result<Unexpanded, EntryError> {
     ServerName::parse(name)?;
     let object = value.as_object().ok_or(EntryError::NotObject)?;
     let kind = kind_of(object)?;
     let target = configured_target(object, kind);
-    let names = |values: Vec<&Value>| {
-        let mut found = BTreeSet::new();
-        for value in values {
-            variables_in(value, &mut found);
-        }
-        found
-    };
-    let variables = names(store_values(object, kind));
-    let host = |url: &str| {
-        url::Url::parse(url)
-            .ok()
-            .and_then(|url| url.host_str().map(str::to_string))
-            .unwrap_or_else(|| url.to_string())
-    };
+    // A URL with `${NAME}` is a valid URL only after the expansion.
+    let problem = transport(object, kind, Expansion::Off).err().filter(|error| {
+        !matches!((error, &target), (EntryError::Url(_), Target::Remote { url }) if url.contains("${"))
+    });
     let (env, sends) = match &target {
-        Target::Remote { url } => {
-            let oauth = object.get("oauth");
-            let issuer = oauth
-                .and_then(|oauth| {
-                    oauth
-                        .get("issuer")
-                        .or_else(|| oauth.get("authorizationServer"))
-                })
-                .and_then(|issuer| issuer.as_str().or_else(|| issuer.get(0)?.as_str()))
-                .map_or_else(|| host(url), host);
-            let headers = names(object.get("headers").into_iter().collect())
-                .into_iter()
-                .map(|name| (name, host(url)));
-            let secret = names(
-                oauth
-                    .and_then(|oauth| oauth.get("clientSecret"))
-                    .into_iter()
-                    .collect(),
-            )
-            .into_iter()
-            .map(|name| (name, issuer.clone()));
-            (Vec::new(), headers.chain(secret).collect())
-        }
         Target::Stdio { .. } => (
             object
                 .get("env")
@@ -549,18 +542,69 @@ pub fn unexpanded(name: &str, value: &Value) -> Result<Unexpanded, EntryError> {
                 .unwrap_or_default(),
             Vec::new(),
         ),
+        Target::Remote { url } => (Vec::new(), sends(object, url)),
     };
     Ok(Unexpanded {
-        transport: match kind {
-            Kind::Stdio => "stdio",
-            Kind::Http => "http",
-            Kind::Sse => "sse",
-        },
+        transport: kind.name(),
+        variables: names_in(store_values(object, kind)),
         target,
         env,
         sends,
-        variables,
+        problem,
     })
+}
+
+/// Each `${NAME}` of `headers` with the host of the URL, and of
+/// `oauth.clientSecret` with the host of the issuer, which gets it.
+fn sends(object: &Map<String, Value>, url: &str) -> Vec<(String, String)> {
+    let oauth = object.get("oauth").and_then(Value::as_object);
+    let issuer = oauth
+        .and_then(|oauth| {
+            let issuer = oauth
+                .get("issuer")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            configured_issuer(issuer, oauth.get("authorizationServer")).ok()?
+        })
+        .map_or_else(|| host_of(url), |issuer| host_of(&issuer));
+    let headers = names_in(object.get("headers"))
+        .into_iter()
+        .map(|name| (name, host_of(url)));
+    let secret = names_in(oauth.and_then(|oauth| oauth.get("clientSecret")))
+        .into_iter()
+        .map(|name| (name, issuer.clone()));
+    headers.chain(secret).collect()
+}
+
+/// The host of a URL. With `${` in the URL, the authority as the file
+/// writes it: a parse would change the case of a variable name.
+fn host_of(url: &str) -> String {
+    if url.contains("${") {
+        let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+        return rest.split('/').next().unwrap_or(rest).to_string();
+    }
+    url::Url::parse(url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .unwrap_or_else(|| url.to_string())
+}
+
+/// How the parse treats `${NAME}` in `command`, `args`, `cwd` and `url`.
+#[derive(Clone, Copy)]
+enum Expansion<'a> {
+    From(&'a Env),
+    /// Keep the text, and check only its syntax: the entries of a project
+    /// file before the trust.
+    Off,
+}
+
+impl Expansion<'_> {
+    fn apply(self, text: &str) -> Result<String, ExpandError> {
+        match self {
+            Self::From(env) => expand(text, env),
+            Self::Off => Template::parse(text).map(|_| text.to_string()),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -570,7 +614,21 @@ enum Kind {
     Sse,
 }
 
-fn parse_entry(name: &str, value: &Value, env: &Env) -> (Result<Server, EntryError>, Vec<Warning>) {
+impl Kind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Stdio => "stdio",
+            Self::Http => "http",
+            Self::Sse => "sse",
+        }
+    }
+}
+
+fn parse_entry(
+    name: &str,
+    value: &Value,
+    expansion: Expansion<'_>,
+) -> (Result<Server, EntryError>, Vec<Warning>) {
     let head = ServerName::parse(name)
         .map_err(EntryError::from)
         .and_then(|name| {
@@ -581,7 +639,7 @@ fn parse_entry(name: &str, value: &Value, env: &Env) -> (Result<Server, EntryErr
         Err(error) => (Err(error), Vec::new()),
         Ok((server_name, object, kind)) => {
             let warnings = unknown_keys(name, object, kind);
-            let server = transport(object, kind, env).map(|transport| Server {
+            let server = transport(object, kind, expansion).map(|transport| Server {
                 name: server_name,
                 transport,
                 target: configured_target(object, kind),
@@ -661,26 +719,33 @@ fn configured_target(object: &Map<String, Value>, kind: Kind) -> Target {
     }
 }
 
-fn transport(object: &Map<String, Value>, kind: Kind, env: &Env) -> Result<Transport, EntryError> {
+fn transport(
+    object: &Map<String, Value>,
+    kind: Kind,
+    expansion: Expansion<'_>,
+) -> Result<Transport, EntryError> {
     match kind {
-        Kind::Stdio => stdio(object, env).map(Transport::Stdio),
-        Kind::Http => remote(object, env).map(Transport::Http),
-        Kind::Sse => remote(object, env).map(Transport::Sse),
+        Kind::Stdio => stdio(object, expansion).map(Transport::Stdio),
+        Kind::Http => remote(object, expansion).map(Transport::Http),
+        Kind::Sse => remote(object, expansion).map(Transport::Sse),
     }
 }
 
-fn stdio(object: &Map<String, Value>, env: &Env) -> Result<StdioServer, EntryError> {
-    let command = string(object, "command", env)?.ok_or(EntryError::Missing("command"))?;
+fn stdio(object: &Map<String, Value>, expansion: Expansion<'_>) -> Result<StdioServer, EntryError> {
+    let command = string(object, "command", expansion)?.ok_or(EntryError::Missing("command"))?;
     Ok(StdioServer {
         command,
-        args: strings(object, "args", env)?,
+        args: strings(object, "args", expansion)?,
         env: template_map(object, "env")?,
-        cwd: string(object, "cwd", env)?,
+        cwd: string(object, "cwd", expansion)?,
     })
 }
 
-fn remote(object: &Map<String, Value>, env: &Env) -> Result<RemoteServer, EntryError> {
-    let url = string(object, "url", env)?.ok_or(EntryError::Missing("url"))?;
+fn remote(
+    object: &Map<String, Value>,
+    expansion: Expansion<'_>,
+) -> Result<RemoteServer, EntryError> {
+    let url = string(object, "url", expansion)?.ok_or(EntryError::Missing("url"))?;
     let url = ServerUrl::parse(&url)?;
     let url_values = object
         .get("url")
@@ -688,7 +753,10 @@ fn remote(object: &Map<String, Value>, env: &Env) -> Result<RemoteServer, EntryE
         .map(expand::names)
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|name| env.get(name).filter(|value| !value.is_empty()).cloned())
+        .filter_map(|name| match expansion {
+            Expansion::From(env) => env.get(name).filter(|value| !value.is_empty()).cloned(),
+            Expansion::Off => None,
+        })
         .collect();
     Ok(RemoteServer {
         headers: template_map(object, "headers")?,
@@ -775,16 +843,20 @@ fn configured_issuer(
 fn string(
     object: &Map<String, Value>,
     field: &str,
-    env: &Env,
+    expansion: Expansion<'_>,
 ) -> Result<Option<String>, EntryError> {
     match object.get(field) {
         None => Ok(None),
-        Some(Value::String(text)) => expand_field(field, text, env).map(Some),
+        Some(Value::String(text)) => expand_field(field, text, expansion).map(Some),
         Some(_) => Err(wrong_type(field, "a string")),
     }
 }
 
-fn strings(object: &Map<String, Value>, field: &str, env: &Env) -> Result<Vec<String>, EntryError> {
+fn strings(
+    object: &Map<String, Value>,
+    field: &str,
+    expansion: Expansion<'_>,
+) -> Result<Vec<String>, EntryError> {
     match object.get(field) {
         None => Ok(Vec::new()),
         Some(Value::Array(items)) => items
@@ -794,7 +866,7 @@ fn strings(object: &Map<String, Value>, field: &str, env: &Env) -> Result<Vec<St
                 let field = format!("{field}[{index}]");
                 item.as_str()
                     .ok_or_else(|| wrong_type(&field, "a string"))
-                    .and_then(|text| expand_field(&field, text, env))
+                    .and_then(|text| expand_field(&field, text, expansion))
             })
             .collect(),
         Some(_) => Err(wrong_type(field, "an array of strings")),
@@ -825,8 +897,8 @@ fn template_map(
     }
 }
 
-fn expand_field(field: &str, text: &str, env: &Env) -> Result<String, EntryError> {
-    expand(text, env).map_err(|error| EntryError::Variable {
+fn expand_field(field: &str, text: &str, expansion: Expansion<'_>) -> Result<String, EntryError> {
+    expansion.apply(text).map_err(|error| EntryError::Variable {
         field: field.to_string(),
         error,
     })
@@ -1258,14 +1330,53 @@ mod tests {
         assert_eq!(command("g"), "g");
     }
 
+    /// For each entry: the shown target is the target that runs, and an
+    /// entry that the loader refuses shows a problem or an error.
     #[test]
     fn the_unexpanded_entry_is_the_entry_that_runs() {
-        let entry = serde_json::json!({"type": "stdio", "command": "sh",
-            "args": ["-c", "x"], "url": "https://x.test"});
-        let shown = unexpanded("fs", &entry).unwrap();
-        assert_eq!(shown.transport, "stdio");
-        let config = load(&serde_json::json!({"mcpServers": {"fs": entry}}).to_string());
-        assert_eq!(shown.target, config.server("fs").unwrap().target);
+        let entries = [
+            serde_json::json!({"type": "stdio", "command": "sh", "args": ["-c", "x"], "url": "https://x.test"}),
+            serde_json::json!({"command": "sh", "args": [1, "-c", "x"]}),
+            serde_json::json!({"command": "sh", "env": {"A": 1}}),
+            serde_json::json!({"command": "sh", "headers": {"A": 1}}),
+            serde_json::json!({"type": "http", "url": "http://example.com/mcp"}),
+            serde_json::json!({"type": "http", "url": "not a url"}),
+            serde_json::json!({"type": "http", "url": "https://${HOST}/mcp"}),
+            serde_json::json!({"type": "http", "url": "https://x.test/mcp",
+                "oauth": {"clientId": "c", "issuer": "https://a", "authorizationServer": "https://b"}}),
+            serde_json::json!({"url": "https://x.test/mcp"}),
+            serde_json::json!({"type": 1, "command": "sh"}),
+            serde_json::json!({"command": "${env:SHELL_NAME}"}),
+        ];
+        for entry in entries {
+            let text = serde_json::json!({"mcpServers": {"s": &entry}}).to_string();
+            let shown = unexpanded_entries(&text).unwrap().remove(0).shape;
+            let env = Env::from([
+                ("HOST".to_string(), "x.test".to_string()),
+                ("SHELL_NAME".to_string(), "sh".to_string()),
+            ]);
+            let loaded = parse(&text, &env).unwrap();
+            match (shown, loaded.server("s")) {
+                (Ok(shown), Ok(server)) => {
+                    assert_eq!(shown.problem, None, "{entry}");
+                    assert_eq!(shown.target, server.target, "{entry}");
+                }
+                (Ok(shown), Err(_)) => assert!(shown.problem.is_some(), "{entry}"),
+                (Err(_), Err(_)) => {}
+                (Err(error), Ok(_)) => panic!("{entry}: shown as {error}, but it runs"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_variable_host_shows_as_the_file_writes_it() {
+        let shown = unexpanded(
+            "web",
+            &serde_json::json!({"type": "http", "url": "https://${HOST}/mcp",
+                "headers": {"A": "${TOKEN}"}}),
+        )
+        .unwrap();
+        assert_eq!(shown.sends, [("TOKEN".to_string(), "${HOST}".to_string())]);
     }
 
     #[test]

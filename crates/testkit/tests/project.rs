@@ -69,7 +69,7 @@ fn global_entry_runs_with_no_message_beside_an_untrusted_project() {
     let home = home.project("app", &json!({"fs": {"command": "false"}}));
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
-    let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
+    let stderr = run.stderr_text();
     assert!(!stderr.contains(".mcp.json"), "{stderr}");
     assert_eq!(messages(&run, "warning"), Vec::<String>::new(), "{stderr}");
 }
@@ -136,7 +136,7 @@ fn yes_at_the_question_trusts_the_file_and_runs_the_entry() {
         .set("NCP_TEST_TTY", "1");
     let run = home.run_with_stdin(&["tool", "list", "fx"], "y\n");
     assert_eq!(run.code(), 0, "{}", run.describe());
-    let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
+    let stderr = run.stderr_text();
     assert!(
         stderr.contains("is not trusted. It has these servers:"),
         "{stderr}"
@@ -156,7 +156,7 @@ fn no_at_the_question_ignores_the_file_until_ncp_trust() {
     let file = home.project_file();
     // The question is text on stderr, before the JSON error. A pipe does
     // not echo the answer, so the error follows the question on its line.
-    let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
+    let stderr = run.stderr_text();
     let last = stderr.lines().last().unwrap();
     let error: Value = serde_json::from_str(&last[last.find('{').unwrap()..]).unwrap();
     assert_eq!(
@@ -169,7 +169,7 @@ fn no_at_the_question_ignores_the_file_until_ncp_trust() {
     std::fs::write(&file, format!("{text}\n")).unwrap();
     let run = home.run_with_stdin(&["tool", "list", "fx"], "y\n");
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert!(!String::from_utf8_lossy(&run.0.stderr).contains("Trust?"));
+    assert!(!run.stderr_text().contains("Trust?"));
     // ncp trust removes the ignored record.
     assert_eq!(home.run(&["trust"]).code(), 0);
     assert_eq!(home.run(&["tool", "list", "fx"]).code(), 0);
@@ -313,7 +313,8 @@ fn a_trusted_project_entry_replaces_the_global_entry() {
             {"name": "g", "transport": "stdio", "target": "false", "scope": "global",
              "file": home.config_path()},
             {"name": "fx", "transport": "stdio", "target": format!("{FIXTURE} modern"),
-             "scope": "project", "file": file, "trust": "untrusted"},
+             "scope": "project", "file": file, "trust": "untrusted",
+             "cwd": null, "env": [], "sends": []},
         ])
     );
     assert_eq!(home.run(&["trust"]).code(), 0);
@@ -342,12 +343,12 @@ fn listing_commands_and_completion_never_ask_and_skip_an_untrusted_file() {
     ] {
         let run = home.run_with_stdin(args, "y\n");
         assert_eq!(run.code(), 0, "{args:?}: {}", run.describe());
-        assert!(!String::from_utf8_lossy(&run.0.stderr).contains("Trust?"));
+        assert!(!run.stderr_text().contains("Trust?"));
     }
     assert_eq!(home.run(&["auth", "status"]).stdout()["servers"], json!([]));
     let run = home.run(&["__complete-servers"]);
-    assert_eq!(String::from_utf8_lossy(&run.0.stdout), "g\n");
-    assert_eq!(String::from_utf8_lossy(&run.0.stderr), "");
+    assert_eq!(run.stdout_text(), "g\n");
+    assert_eq!(run.stderr_text(), "");
     // Did-you-mean does not offer the name of the untrusted file.
     let run = home.unset("NCP_TEST_TTY").run(&["tool", "list", "f"]);
     assert!(!run.error()["message"].as_str().unwrap().contains("fs"));
@@ -366,7 +367,7 @@ fn shown_entries_escape_and_give_no_values() {
     );
     let run = home.run(&["trust", "--show", "--output-format", "text"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
-    let text = String::from_utf8_lossy(&run.0.stdout).to_string();
+    let text = run.stdout_text();
     assert!(text.contains("\\u{1b}"), "{text}");
     assert!(text.contains("\\u{202e}"), "{text}");
     assert!(!text.contains('\u{1b}'), "{text}");
@@ -501,7 +502,7 @@ fn a_word_of_the_file_cannot_look_like_two_parts_of_a_line() {
             "env": {"A   B -> safe.example": "v"}}}),
     );
     let run = home.run(&["trust", "--show", "--output-format", "text"]);
-    let text = String::from_utf8_lossy(&run.0.stdout).to_string();
+    let text = run.stdout_text();
     assert!(text.contains("cwd: 'x   env: SAFE'"), "{text}");
     assert!(text.contains("env: 'A   B -> safe.example'"), "{text}");
 }
@@ -541,7 +542,7 @@ fn server_list_text_names_the_project_file_and_marks_its_entries() {
     home.configure(&json!({"g": fixture()}));
     let home = home.project("app", &json!({"fx": fixture()}));
     let run = home.run(&["server", "list", "--output-format", "text"]);
-    let text = String::from_utf8_lossy(&run.0.stdout).to_string();
+    let text = run.stdout_text();
     let file = home.project_file();
     assert!(
         text.starts_with(&format!("Project file: {} (untrusted)\n", file.display())),
@@ -619,4 +620,79 @@ fn delete_unused_stops_when_an_untrusted_entry_names_the_secret() {
         "{}",
         run.describe()
     );
+}
+
+#[test]
+fn a_fifo_as_project_file_does_not_stop_the_command() {
+    let mut home = Home::new("p-fifo");
+    let dir = home.root.join("app");
+    std::fs::create_dir_all(&dir).unwrap();
+    let status = std::process::Command::new("mkfifo")
+        .arg(dir.join(".mcp.json"))
+        .status()
+        .unwrap();
+    assert!(status.success());
+    home.cwd = dir;
+    let run = home.run(&["server", "list"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(messages(&run, "warning")[0].ends_with("it is not a regular file"));
+}
+
+#[test]
+fn an_entry_that_the_loader_refuses_shows_its_target_and_the_problem() {
+    let home = Home::new("p-problem").project(
+        "app",
+        &json!({"fs": {"command": "sh", "args": [1, "-c", "evil"]}}),
+    );
+    let out = home.run(&["trust", "--show"]).stdout();
+    assert_eq!(out["servers"], json!([]));
+    assert_eq!(out["invalid"][0]["target"], "sh -c evil");
+    assert_eq!(out["invalid"][0]["error"], "\"args[0]\" must be a string");
+}
+
+#[test]
+fn trust_show_gives_cwd_env_names_and_each_variable_with_its_host() {
+    let home = Home::new("p-json").project(
+        "app",
+        &json!({
+            "fs": {"command": "node", "cwd": "x", "env": {"LD_PRELOAD": "lib.so"}},
+            "web": {"type": "http", "url": "https://mcp.example.com/mcp",
+                    "headers": {"Authorization": "Bearer ${TOKEN}"}}
+        }),
+    );
+    let out = home.run(&["trust", "--show"]).stdout();
+    assert_eq!(out["servers"][0]["cwd"], "x");
+    assert_eq!(out["servers"][0]["env"], json!(["LD_PRELOAD"]));
+    assert_eq!(
+        out["servers"][1]["sends"],
+        json!([{"name": "TOKEN", "host": "mcp.example.com"}])
+    );
+}
+
+#[test]
+fn a_url_shows_as_the_client_sends_it() {
+    let home = Home::new("p-url").project(
+        "app",
+        &json!({"web": {"type": "http",
+            "url": "https://mcp.sentry.dev\t\t.evil.example/x   TOKEN -> mcp.sentry.dev"}}),
+    );
+    let run = home.run(&["trust", "--show", "--output-format", "text"]);
+    let text = run.stdout_text();
+    assert!(
+        text.contains(
+            "https://mcp.sentry.dev.evil.example/x%20%20%20TOKEN%20-%3E%20mcp.sentry.dev"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn delete_unused_stops_when_an_untrusted_entry_is_invalid() {
+    let home = Home::new("p-unused-invalid").project(
+        "app",
+        &json!({"bad.name": {"command": "x", "env": {"Z": "${ZZ}"}}}),
+    );
+    home.store_in_file("secret/ZZ", "v");
+    let run = home.run(&["secret", "delete", "ZZ", "--unused"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
 }

@@ -22,6 +22,7 @@ use super::{
     args::{CredentialPlace, SecretCommand},
     ask,
     outcome::{Exit, Failure},
+    project_file::ProjectFile,
     render,
     session::{self, Context},
 };
@@ -30,6 +31,7 @@ use crate::{
     config::{ClientKind, EntryError, PreRegisteredClient, Server, Values},
     credential::{CredentialKey, Destination, Secret, SecretName},
     expand::{self, Env},
+    project::Trust,
     server::{Origin, OriginError},
     store::{self, CredentialStore, FileStore, StoreError},
 };
@@ -461,8 +463,8 @@ fn set_target<'a>(
 /// `command`, `args`, `cwd` or `url` comes only from the environment (B32),
 /// and an unset one makes the entry invalid.
 fn no_use(name: &SecretName, only: Option<&str>, loaded: &session::Loaded) -> Failure {
-    if let Some(failure) = untrusted_use(loaded, name, only) {
-        return failure;
+    if let Some(reason) = untrusted_use(loaded, name, only) {
+        return Failure::usage(reason).hint("ncp trust");
     }
     let fields = "env, headers or oauth.clientSecret";
     let message = match only {
@@ -1089,37 +1091,52 @@ async fn strict_config(
     context: &Context<'_>,
     name: &SecretName,
 ) -> Result<session::Loaded, Failure> {
+    let unknown =
+        |reason: String| Failure::usage(format!("{reason}; ncp cannot know which items it uses"));
     let loaded = session::load(context, None)
         .await
         .map_err(|failure| Failure::usage(failure.message))?;
     if let Some((server, error)) = loaded.config.invalid().next() {
-        return Err(Failure::usage(format!(
-            "server {server}: {error}; ncp cannot know which items it uses"
-        )));
+        return Err(unknown(format!("server {server}: {error}")));
     }
-    if let super::trust::ProjectFile::Unusable { file, reason } = &loaded.project {
-        return Err(Failure::usage(format!(
-            "ncp does not use {}: {reason}; ncp cannot know which items it uses",
-            file.display()
-        )));
+    let waiting = match &loaded.project {
+        ProjectFile::Unusable { file, reason } => {
+            return Err(unknown(format!(
+                "ncp does not use {}: {reason}",
+                file.display()
+            )));
+        }
+        ProjectFile::Read(project) if project.trust != Trust::Trusted => Some(project),
+        _ => None,
+    };
+    let invalid = waiting.and_then(|project| {
+        project
+            .entries
+            .iter()
+            .find_map(|entry| entry.shape.as_ref().err().map(|error| (&entry.name, error)))
+    });
+    if let Some((server, error)) = invalid {
+        return Err(unknown(format!("server {server}: {error}")).hint("ncp trust"));
     }
-    if let Some(failure) = untrusted_use(&loaded, name, None) {
-        return Err(Failure {
-            message: format!("{}; ncp cannot know which items it uses", failure.message),
-            ..failure
-        });
+    if let Some(reason) = untrusted_use(&loaded, name, None) {
+        return Err(unknown(reason).hint("ncp trust"));
     }
     Ok(loaded)
 }
 
-/// The failure when only an entry of a project file that is not trusted
-/// names `${NAME}`: the file and its state, with the hint `ncp trust`.
+/// The reason when only an entry of a project file that is not trusted
+/// names `${NAME}`: the entry, the file and its state.
 fn untrusted_use(
     loaded: &session::Loaded,
     name: &SecretName,
     only: Option<&str>,
-) -> Option<Failure> {
+) -> Option<String> {
     let project = loaded.project.project()?;
+    let state = match project.trust {
+        Trust::Trusted => return None,
+        Trust::Ignored => "which you ignored",
+        Trust::Untrusted { .. } => "which is not trusted",
+    };
     let entry = project.entries.iter().find(|entry| {
         only.is_none_or(|word| word == entry.name)
             && entry
@@ -1127,19 +1144,11 @@ fn untrusted_use(
                 .as_ref()
                 .is_ok_and(|shape| shape.variables.contains(name.as_str()))
     })?;
-    let state = match project.trust {
-        crate::project::Trust::Trusted => return None,
-        crate::project::Trust::Ignored => "which you ignored",
-        crate::project::Trust::Untrusted { .. } => "which is not trusted",
-    };
-    Some(
-        Failure::usage(format!(
-            "server {} names ${{{name}}} in {}, {state}",
-            entry.name,
-            project.file.display()
-        ))
-        .hint("ncp trust"),
-    )
+    Some(format!(
+        "server {} names ${{{name}}} in {}, {state}",
+        entry.name,
+        project.file.display()
+    ))
 }
 
 async fn delete(context: &Context<'_>, name: &str, removal: Removal) -> Result<(), Failure> {

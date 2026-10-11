@@ -3,18 +3,19 @@
 //! The JSON output copies MCP objects with no change, so it needs no code
 //! here. Text output is for reading, and can change between versions.
 
-use std::fmt::Write as _;
+use std::{
+    fmt::Write as _,
+    path::{Path, PathBuf},
+};
 
 use rmcp::model::{JsonObject, Tool};
 use serde_json::Value;
 
 use super::tool_args;
-use std::path::Path;
-
-use super::session::Row;
 use crate::{
+    config::UnexpandedEntry,
     config::{Server, Target, Transport},
-    project::{Entry, Project, Trust},
+    project::{Project, Trust},
 };
 
 /// The transport name of an entry.
@@ -47,6 +48,101 @@ pub fn target_text(target: &Target) -> String {
     }
 }
 
+/// What a person checks before a trust, beside the target: the parts of
+/// rule 5 of docs/design/project-config.md.
+pub struct Shown {
+    pub cwd: Option<String>,
+    pub env: Vec<String>,
+    pub sends: Vec<(String, String)>,
+}
+
+/// One row of `server list` and `ncp trust`: an entry with its file.
+pub struct Row {
+    pub name: String,
+    /// The transport and the target, when the loader can read the entry.
+    pub target: Option<(&'static str, String)>,
+    pub error: Option<String>,
+    pub file: PathBuf,
+    /// `None` for an entry of the global file.
+    pub trust: Option<Trust>,
+    /// Present for an entry of a project file that the user checks.
+    pub shown: Option<Shown>,
+}
+
+impl Row {
+    fn json(&self) -> Value {
+        let mut row = serde_json::json!({"name": self.name});
+        if let Some(error) = &self.error {
+            row["error"] = serde_json::json!(error);
+        }
+        if let Some((transport, target)) = &self.target {
+            row["transport"] = serde_json::json!(transport);
+            row["target"] = serde_json::json!(target);
+        }
+        row["scope"] = serde_json::json!(if self.trust.is_some() {
+            "project"
+        } else {
+            "global"
+        });
+        row["file"] = serde_json::json!(self.file);
+        if let Some(trust) = self.trust {
+            row["trust"] = serde_json::json!(trust.word());
+        }
+        if let Some(shown) = &self.shown {
+            row["cwd"] = serde_json::json!(shown.cwd);
+            row["env"] = serde_json::json!(shown.env);
+            row["sends"] = shown
+                .sends
+                .iter()
+                .map(|(name, host)| serde_json::json!({"name": name, "host": host}))
+                .collect();
+        }
+        row
+    }
+}
+
+/// The JSON of the rows: the servers, and the invalid entries with their
+/// errors (design section 4).
+#[must_use]
+pub fn rows_json(rows: &[Row]) -> (Vec<Value>, Vec<Value>) {
+    let (servers, invalid): (Vec<&Row>, Vec<&Row>) =
+        rows.iter().partition(|row| row.error.is_none());
+    (
+        servers.into_iter().map(Row::json).collect(),
+        invalid.into_iter().map(Row::json).collect(),
+    )
+}
+
+/// The rows of the entries of a project file, with no expansion.
+#[must_use]
+pub fn project_rows(project: &Project) -> Vec<Row> {
+    project
+        .entries
+        .iter()
+        .map(|entry| {
+            let shape = entry.shape.as_ref().ok();
+            Row {
+                name: entry.name.clone(),
+                target: shape.map(|shape| (shape.transport, target_text(&shape.target))),
+                error: match &entry.shape {
+                    Ok(shape) => shape.problem.as_ref().map(ToString::to_string),
+                    Err(error) => Some(error.to_string()),
+                },
+                file: project.file.clone(),
+                trust: Some(project.trust),
+                shown: shape.map(|shape| Shown {
+                    cwd: match &shape.target {
+                        Target::Stdio { cwd, .. } => cwd.clone(),
+                        Target::Remote { .. } => None,
+                    },
+                    env: shape.env.clone(),
+                    sends: shape.sends.clone(),
+                }),
+            }
+        })
+        .collect()
+}
+
 /// One line for each server of a project file, for the user to check
 /// before a trust: the full command with `cwd` and the names of the `env`
 /// variables, or the URL with each `${NAME}` and the host that gets it.
@@ -55,30 +151,39 @@ pub fn target_text(target: &Target) -> String {
 /// file gives is a shell word, so that a word cannot look like two parts,
 /// and `table` escapes each cell.
 #[must_use]
-pub fn project_entries(entries: &[Entry]) -> String {
+pub fn project_entries(entries: &[UnexpandedEntry]) -> String {
     let rows: Vec<Vec<String>> = entries
         .iter()
         .map(|entry| {
             let details: Vec<String> = match &entry.shape {
-                Ok(shape) => std::iter::once(target_text(&shape.target))
-                    .chain(match &shape.target {
-                        Target::Stdio { cwd, .. } => cwd
-                            .as_deref()
-                            .map(|cwd| format!("cwd: {}", shell_word(cwd))),
-                        Target::Remote { .. } => None,
-                    })
-                    .chain((!shape.env.is_empty()).then(|| {
-                        let names: Vec<String> =
-                            shape.env.iter().map(|name| shell_word(name)).collect();
-                        format!("env: {}", names.join(", "))
-                    }))
-                    .chain(
-                        shape
-                            .sends
-                            .iter()
-                            .map(|(name, host)| format!("{name} -> {}", shell_word(host))),
-                    )
-                    .collect(),
+                Ok(shape) => std::iter::once(match &shape.target {
+                    Target::Remote { url } => shown_url(url),
+                    stdio @ Target::Stdio { .. } => target_text(stdio),
+                })
+                .chain(match &shape.target {
+                    Target::Stdio { cwd, .. } => cwd
+                        .as_deref()
+                        .map(|cwd| format!("cwd: {}", shell_word(cwd))),
+                    Target::Remote { .. } => None,
+                })
+                .chain((!shape.env.is_empty()).then(|| {
+                    let names: Vec<String> =
+                        shape.env.iter().map(|name| shell_word(name)).collect();
+                    format!("env: {}", names.join(", "))
+                }))
+                .chain(
+                    shape
+                        .sends
+                        .iter()
+                        .map(|(name, host)| format!("{name} -> {}", shell_word(host))),
+                )
+                .chain(
+                    shape
+                        .problem
+                        .iter()
+                        .map(|problem| format!("not valid: {problem}")),
+                )
+                .collect(),
                 Err(error) => vec![format!("not valid: {error}")],
             };
             vec![entry.name.clone(), details.join("   ")]
@@ -88,6 +193,16 @@ pub fn project_entries(entries: &[Entry]) -> String {
         let _ = writeln!(text, "  {line}");
         text
     })
+}
+
+/// A URL as the client sends it: the parse removes tabs and encodes
+/// spaces, which could make one URL look like two parts of the line. A
+/// URL with `${NAME}` shows as a shell word.
+fn shown_url(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(parsed) if !url.contains("${") => parsed.to_string(),
+        _ => shell_word(url),
+    }
 }
 
 /// A path on one line: a folder name can hold a new line.
@@ -102,8 +217,18 @@ pub fn project_question(project: &Project) -> String {
         Trust::Untrusted { changed: true } => "changed since you trusted it",
         _ => "is not trusted",
     };
+    project_text(project, &format!("{state}. It has these servers:"))
+}
+
+/// The text of `ncp trust`: the file with its state, then its entries.
+#[must_use]
+pub fn project_file(project: &Project) -> String {
+    project_text(project, &format!("({})", project.trust.word()))
+}
+
+fn project_text(project: &Project, state: &str) -> String {
     format!(
-        "{} {state}. It has these servers:\n{}",
+        "{} {state}\n{}",
         path_text(&project.file),
         project_entries(&project.entries)
     )
@@ -116,9 +241,10 @@ pub fn server_list(project: Option<&Project>, rows: &[Row]) -> String {
     let rows: Vec<Vec<String>> = rows
         .iter()
         .map(|row| {
-            let (transport, target) = match &row.entry {
-                Ok((transport, target)) => ((*transport).to_string(), target.clone()),
-                Err(error) => ("invalid".to_string(), error.clone()),
+            let (transport, target) = match (&row.error, &row.target) {
+                (Some(error), _) => ("invalid".to_string(), error.clone()),
+                (None, Some((transport, target))) => ((*transport).to_string(), target.clone()),
+                (None, None) => (String::new(), String::new()),
             };
             let mark = match row.trust {
                 None => String::new(),
@@ -138,17 +264,6 @@ pub fn server_list(project: Option<&Project>, rows: &[Row]) -> String {
         })
         .unwrap_or_default();
     head + &table(&rows)
-}
-
-/// The text of `ncp trust`: the file with its state, then its entries.
-#[must_use]
-pub fn project_file(project: &Project) -> String {
-    format!(
-        "{} ({})\n{}",
-        path_text(&project.file),
-        project.trust.word(),
-        project_entries(&project.entries)
-    )
 }
 
 /// The word as the user types it in a POSIX shell.

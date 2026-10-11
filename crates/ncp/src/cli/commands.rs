@@ -24,6 +24,7 @@ use crate::{
     client::{Answer, Connection, RequestError},
     config::Server,
     list_cache,
+    project::Trust,
 };
 
 pub async fn server(context: &Context<'_>, command: ServerCommand) -> Result<(), Failure> {
@@ -67,7 +68,7 @@ async fn server_list(context: &Context<'_>) -> Result<(), Failure> {
             &session::unknown_key(&warning.key),
         );
     }
-    let rows = session::list_rows(&loaded);
+    let rows = list_rows(&loaded);
     if rows.is_empty() {
         let path = loaded.path.display();
         let message = if loaded.exists {
@@ -77,18 +78,51 @@ async fn server_list(context: &Context<'_>) -> Result<(), Failure> {
         };
         context.ui.hint(None, &message);
     }
-    let (servers, invalid): (Vec<&session::Row>, Vec<&session::Row>) =
-        rows.iter().partition(|row| row.entry.is_ok());
+    let (servers, invalid) = render::rows_json(&rows);
     context.ui.result(
         || render::server_list(loaded.project.project(), &rows),
-        || {
-            json!({
-                "servers": servers.iter().map(|row| row.json()).collect::<Vec<_>>(),
-                "invalid": invalid.iter().map(|row| row.json()).collect::<Vec<_>>(),
-            })
-        },
+        || json!({"servers": servers, "invalid": invalid}),
     )?;
     Ok(())
+}
+
+/// The rows of `server list`: the entries that run, then the entries of a
+/// project file that is not trusted, with their state. Nothing else
+/// happens for them (design rule 8).
+fn list_rows(loaded: &Loaded) -> Vec<render::Row> {
+    let place = |name: &str| match loaded.project_of(name) {
+        Some(project) => (project.file.clone(), Some(Trust::Trusted)),
+        None => (loaded.path.clone(), None),
+    };
+    let servers = loaded.config.servers().map(|server| {
+        let (file, trust) = place(server.name.as_str());
+        render::Row {
+            name: server.name.to_string(),
+            target: Some((render::transport_name(server), render::target(server))),
+            error: None,
+            file,
+            trust,
+            shown: None,
+        }
+    });
+    let invalid = loaded.config.invalid().map(|(name, error)| {
+        let (file, trust) = place(name);
+        render::Row {
+            name: name.to_string(),
+            target: None,
+            error: Some(error.to_string()),
+            file,
+            trust,
+            shown: None,
+        }
+    });
+    let waiting = loaded
+        .project
+        .project()
+        .filter(|project| project.trust != Trust::Trusted)
+        .map(render::project_rows)
+        .unwrap_or_default();
+    servers.chain(invalid).chain(waiting).collect()
 }
 
 /// Selects the server named by `word`. A joined word gives the fix.

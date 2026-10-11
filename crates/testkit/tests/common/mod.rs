@@ -155,6 +155,14 @@ impl Run {
             .unwrap_or_else(|_| panic!("stdout is not JSON: {}", self.describe()))
     }
 
+    pub fn stdout_text(&self) -> String {
+        String::from_utf8_lossy(&self.0.stdout).into_owned()
+    }
+
+    pub fn stderr_text(&self) -> String {
+        String::from_utf8_lossy(&self.0.stderr).into_owned()
+    }
+
     pub fn stdout_is_empty(&self) -> bool {
         self.0.stdout.is_empty()
     }

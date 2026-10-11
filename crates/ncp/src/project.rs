@@ -4,18 +4,16 @@
 //!
 //! Pure functions: the search over the folder entries that the caller
 //! gives, the trust state from the records, the gate of a server name, and
-//! the entries to show before a trust. The I/O is in `cli::trust`.
+//! the entries to show before a trust. The I/O is in `cli::project_file`.
 
 use std::{
-    fmt::Write as _,
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
 };
 
-use serde_json::{Map, Value};
 use sha2::{Digest as _, Sha256};
 
-use crate::config::{self, EntryError, Unexpanded};
+use crate::config::UnexpandedEntry;
 
 /// The name of the project file. Claude Code and VS Code read it.
 pub const FILE_NAME: &str = ".mcp.json";
@@ -96,12 +94,7 @@ impl Trust {
 /// The SHA-256 of the bytes, in lowercase hex.
 #[must_use]
 pub fn digest(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .fold(String::new(), |mut text, byte| {
-            let _ = write!(text, "{byte:02x}");
-            text
-        })
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 /// The file name of the records of a project file: the digest of its path,
@@ -122,7 +115,8 @@ pub struct Project {
     pub text: String,
     pub digest: String,
     pub trust: Trust,
-    pub entries: Vec<Entry>,
+    /// The entries with no expansion, for the user to check.
+    pub entries: Vec<UnexpandedEntry>,
 }
 
 impl Project {
@@ -132,56 +126,23 @@ impl Project {
     }
 }
 
-/// One entry of a project file, with no expansion, for the user to check
-/// before the trust. The loader reads it with the same rules, so the entry
-/// that shows is the entry that runs.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Entry {
-    pub name: String,
-    pub shape: Result<Unexpanded, EntryError>,
-}
-
-/// The entries of the `mcpServers` map.
+/// True when the gate in the lookup of a server name stops the name: it is
+/// a key of a project file that is not trusted. An ignored file stops only
+/// a name that the global file does not have, because then the global
+/// entry runs. A name that the project file does not have passes.
 #[must_use]
-pub fn entries(servers: &Map<String, Value>) -> Vec<Entry> {
-    servers
-        .iter()
-        .map(|(name, value)| Entry {
-            name: name.clone(),
-            shape: config::unexpanded(name, value),
-        })
-        .collect()
-}
-
-/// Why the gate stops a server name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Stop {
-    /// The name is a key of a project file that is not trusted. With
-    /// `in_global`, the global file has the name too: after a trust the
-    /// project entry wins, so the global entry does not run either.
-    Untrusted { changed: bool, in_global: bool },
-    /// The name is only in a project file that the user ignored.
-    Ignored,
-}
-
-/// The gate in the lookup of a server name. A name that the project file
-/// does not have passes, also when the file is not trusted.
-#[must_use]
-pub fn gate(project: Option<&Project>, name: &str, in_global: bool) -> Option<Stop> {
-    let project = project.filter(|project| project.has(name))?;
-    match project.trust {
-        Trust::Trusted => None,
-        Trust::Untrusted { changed } => Some(Stop::Untrusted { changed, in_global }),
-        Trust::Ignored if in_global => None,
-        Trust::Ignored => Some(Stop::Ignored),
-    }
+pub fn stops(project: &Project, name: &str, in_global: bool) -> bool {
+    project.has(name)
+        && match project.trust {
+            Trust::Trusted => false,
+            Trust::Untrusted { .. } => true,
+            Trust::Ignored => !in_global,
+        }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
-
-    use serde_json::json;
 
     use super::*;
 
@@ -206,20 +167,11 @@ mod tests {
     }
 
     #[test]
-    fn stops_after_a_git_folder_or_a_git_file() {
+    fn stops_after_git() {
         let has = tree(&["/w/.mcp.json", "/w/app/.git"]);
         assert_eq!(
             search(Path::new("/w/app/src"), None, &has),
             Search::Stopped("/w/app".into())
-        );
-    }
-
-    #[test]
-    fn reads_the_file_at_the_git_root() {
-        let has = tree(&["/w/app/.mcp.json", "/w/app/.git"]);
-        assert_eq!(
-            search(Path::new("/w/app"), None, &has),
-            Search::Found("/w/app".into())
         );
     }
 
@@ -266,51 +218,30 @@ mod tests {
         assert_ne!(one, record_name(Path::new("/w/other/.mcp.json")));
     }
 
-    fn servers(value: &Value) -> Vec<Entry> {
-        entries(value.as_object().unwrap())
-    }
-
-    #[test]
-    fn reads_each_entry_with_the_rules_of_the_loader() {
-        let entries = servers(&json!({
-            "fs": {"type": "stdio", "command": "sh", "args": ["-c", "x"], "url": "https://x"},
-            "bad": {"type": "ws"},
-        }));
-        assert_eq!(entries[0].name, "bad");
-        assert_eq!(entries[0].shape, Err(EntryError::UnknownType("ws".into())));
-        let fs = entries[1].shape.as_ref().unwrap();
-        assert_eq!(fs.transport, "stdio");
-    }
-
     fn project(trust: Trust) -> Project {
+        let text = r#"{"mcpServers": {"fs": {"command": "x"}}}"#;
         Project {
             file: "/w/.mcp.json".into(),
-            text: String::new(),
+            text: text.into(),
             digest: String::new(),
             trust,
-            entries: servers(&json!({"fs": {"command": "x"}})),
+            entries: crate::config::unexpanded_entries(text).unwrap(),
         }
     }
 
     #[test]
     fn gate_stops_only_a_name_of_a_project_file_that_is_not_trusted() {
         let untrusted = project(Trust::Untrusted { changed: false });
-        assert_eq!(gate(Some(&untrusted), "other", true), None);
-        assert_eq!(
-            gate(Some(&untrusted), "fs", true),
-            Some(Stop::Untrusted {
-                changed: false,
-                in_global: true
-            })
-        );
-        assert_eq!(gate(Some(&project(Trust::Trusted)), "fs", false), None);
-        assert_eq!(gate(None, "fs", false), None);
+        assert!(!stops(&untrusted, "other", true));
+        assert!(stops(&untrusted, "fs", true));
+        assert!(stops(&untrusted, "fs", false));
+        assert!(!stops(&project(Trust::Trusted), "fs", false));
     }
 
     #[test]
     fn an_ignored_file_stops_a_name_only_when_the_global_file_lacks_it() {
         let ignored = project(Trust::Ignored);
-        assert_eq!(gate(Some(&ignored), "fs", false), Some(Stop::Ignored));
-        assert_eq!(gate(Some(&ignored), "fs", true), None);
+        assert!(stops(&ignored, "fs", false));
+        assert!(!stops(&ignored, "fs", true));
     }
 }

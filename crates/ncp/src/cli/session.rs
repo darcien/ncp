@@ -15,8 +15,8 @@ use tokio_util::sync::CancellationToken;
 use super::{
     diagnostics,
     outcome::{Exit, Failure},
+    project_file::{self, Change, ProjectFile},
     timings::Timings,
-    trust::ProjectFile,
     ui::{Ui, Verbosity},
 };
 use crate::{
@@ -107,27 +107,17 @@ pub struct Loaded {
     pub path: PathBuf,
     pub exists: bool,
     pub project: ProjectFile,
-    global: Config,
 }
 
 impl Loaded {
-    /// The view after a change of the trust, from the same bytes.
-    ///
-    /// # Errors
-    ///
-    /// Returns a usage failure when a trusted project file does not parse.
-    pub fn with_trust(self, trust: Trust, env: &Env) -> Result<Self, Failure> {
-        let project = match self.project {
-            ProjectFile::Read(project) => ProjectFile::Read(Project { trust, ..project }),
-            other => other,
-        };
-        assemble(self.global, self.path, self.exists, project, env)
-    }
-
-    /// Why the gate stops the server name, if it does.
+    /// The project file that stops the name in the gate, if one does.
+    /// Before a trust, `config` is the global view, so it tells if the
+    /// global file has the name.
     #[must_use]
-    pub fn stop(&self, name: &str) -> Option<project::Stop> {
-        project::gate(self.project.project(), name, self.global.has(name))
+    pub fn blocked_by(&self, name: &str) -> Option<&Project> {
+        self.project
+            .project()
+            .filter(|project| project::stops(project, name, self.config.has(name)))
     }
 
     /// The trusted project file, when it gives the entry of the name.
@@ -148,7 +138,9 @@ impl Loaded {
 
 /// Reads the global file and searches for the project file. A missing
 /// global file gives an empty configuration: `ncp` never makes the file.
-/// With `search` false (`--config-file`), there is no project file.
+/// With `search` false (`--config-file`), there is no project file. Only a
+/// trusted project file joins the view, and its `${NAME}` values expand
+/// only then: before the trust, no value of the environment goes into it.
 ///
 /// # Errors
 ///
@@ -168,36 +160,33 @@ pub fn load_config(paths: &Paths, env: &Env, search: bool) -> Result<Loaded, Fai
     };
     let global = config::parse(&text, env)
         .map_err(|error| Failure::usage(format!("{}: {error}", path.display())))?;
-    let project = if search {
-        super::trust::find(paths, env)
-    } else {
-        ProjectFile::NotSearched
+    let loaded = Loaded {
+        config: global,
+        path: path.clone(),
+        exists,
+        project: project_file::find(paths, env, search),
     };
-    assemble(global, path.clone(), exists, project, env)
+    match loaded.project.project().map(|project| project.trust) {
+        Some(Trust::Trusted) => trusted(loaded, env),
+        _ => Ok(loaded),
+    }
 }
 
-/// Only a trusted project file joins the view. Its `${NAME}` values expand
-/// only then: before the trust, no value of the environment goes into it.
-fn assemble(
-    global: Config,
-    path: PathBuf,
-    exists: bool,
-    project: ProjectFile,
-    env: &Env,
-) -> Result<Loaded, Failure> {
-    let config = match project.project() {
-        Some(project) if project.trust == Trust::Trusted => global.clone().with_project(
-            config::parse(&project.text, env)
-                .map_err(|error| Failure::usage(format!("{}: {error}", project.file.display())))?,
-        ),
-        _ => global.clone(),
+/// The view after the trust: the project entries join it, from the same
+/// bytes that the user checked.
+fn trusted(loaded: Loaded, env: &Env) -> Result<Loaded, Failure> {
+    let ProjectFile::Read(project) = loaded.project else {
+        return Ok(loaded);
     };
+    let entries = config::parse(&project.text, env)
+        .map_err(|error| Failure::usage(format!("{}: {error}", project.file.display())))?;
     Ok(Loaded {
-        config,
-        path,
-        exists,
-        project,
-        global,
+        config: loaded.config.with_project(entries),
+        project: ProjectFile::Read(Project {
+            trust: Trust::Trusted,
+            ..project
+        }),
+        ..loaded
     })
 }
 
@@ -217,26 +206,31 @@ pub async fn load(context: &Context<'_>, named: Option<&str>) -> Result<Loaded, 
         || load_config(&context.paths, context.env, !context.named_config),
     )?;
     report_files(context, &loaded);
-    let asks = context.interactive
-        && named
-            .and_then(|name| loaded.stop(name))
-            .is_some_and(|stop| matches!(stop, project::Stop::Untrusted { .. }));
-    let Some(project) = loaded.project.project().filter(|_| asks) else {
+    let Some(project) = named.and_then(|name| loaded.blocked_by(name)) else {
         return Ok(loaded);
     };
+    if !context.interactive || project.trust == Trust::Ignored {
+        return Ok(loaded);
+    }
     context
         .ui
         .diagnostic(&format!("{}\n", super::render::project_question(project)));
-    match super::ask::confirm(context, "Trust? [y/N] ").await? {
-        Some(true) => {
-            super::trust::trust(&context.paths, project)?;
-            loaded.with_trust(Trust::Trusted, context.env)
-        }
-        Some(false) => {
-            super::trust::ignore(&context.paths, project)?;
-            loaded.with_trust(Trust::Ignored, context.env)
-        }
-        None => Ok(loaded),
+    let change = match super::ask::confirm(context, "Trust? [y/N] ").await? {
+        Some(true) => Change::Trust,
+        Some(false) => Change::Ignore,
+        None => return Ok(loaded),
+    };
+    let trust = project_file::change(&context.paths, project, change)?;
+    let loaded = Loaded {
+        project: match loaded.project {
+            ProjectFile::Read(project) => ProjectFile::Read(Project { trust, ..project }),
+            other => other,
+        },
+        ..loaded
+    };
+    match trust {
+        Trust::Trusted => trusted(loaded, context.env),
+        _ => Ok(loaded),
     }
 }
 
@@ -276,100 +270,6 @@ fn report_files(context: &Context<'_>, loaded: &Loaded) {
     }
 }
 
-/// One row of `server list` and `ncp trust`: an entry with its file.
-pub struct Row {
-    pub name: String,
-    /// The transport and the target, or the error of an invalid entry.
-    pub entry: Result<(&'static str, String), String>,
-    pub file: PathBuf,
-    /// `None` for an entry of the global file.
-    pub trust: Option<Trust>,
-}
-
-impl Row {
-    /// The object of `server list`: `{"name", "transport", "target"}` or
-    /// `{"name", "error"}`, with `scope`, `file`, and `trust` for a
-    /// project entry.
-    #[must_use]
-    pub fn json(&self) -> serde_json::Value {
-        let mut row = match &self.entry {
-            Ok((transport, target)) => {
-                serde_json::json!({"name": self.name, "transport": transport, "target": target})
-            }
-            Err(error) => serde_json::json!({"name": self.name, "error": error}),
-        };
-        row["scope"] = serde_json::json!(if self.trust.is_some() {
-            "project"
-        } else {
-            "global"
-        });
-        row["file"] = serde_json::json!(self.file);
-        if let Some(trust) = self.trust {
-            row["trust"] = serde_json::json!(trust.word());
-        }
-        row
-    }
-}
-
-/// The rows of the entries of a project file.
-#[must_use]
-pub fn project_rows(project: &Project) -> Vec<Row> {
-    project
-        .entries
-        .iter()
-        .map(|entry| Row {
-            name: entry.name.clone(),
-            entry: entry
-                .shape
-                .as_ref()
-                .map(|shape| (shape.transport, super::render::target_text(&shape.target)))
-                .map_err(ToString::to_string),
-            file: project.file.clone(),
-            trust: Some(project.trust),
-        })
-        .collect()
-}
-
-/// The rows of `server list`: the entries that run, then the entries of a
-/// project file that is not trusted, with their state. Nothing else
-/// happens for them (design rule 8).
-#[must_use]
-pub fn list_rows(loaded: &Loaded) -> Vec<Row> {
-    let place = |name: &str| match loaded.project_of(name) {
-        Some(project) => (project.file.clone(), Some(Trust::Trusted)),
-        None => (loaded.path.clone(), None),
-    };
-    let servers = loaded.config.servers().map(|server| {
-        let name = server.name.to_string();
-        let (file, trust) = place(&name);
-        Row {
-            entry: Ok((
-                super::render::transport_name(server),
-                super::render::target(server),
-            )),
-            name,
-            file,
-            trust,
-        }
-    });
-    let invalid = loaded.config.invalid().map(|(name, error)| {
-        let (file, trust) = place(name);
-        Row {
-            name: name.to_string(),
-            entry: Err(error.to_string()),
-            file,
-            trust,
-        }
-    });
-    let waiting = loaded
-        .project
-        .project()
-        .filter(|project| project.trust != Trust::Trusted)
-        .map(project_rows)
-        .unwrap_or_default();
-    servers.chain(invalid).chain(waiting).collect()
-}
-
 /// A word that joins a server name and a tool name, for example
 /// `github.search`. A server name cannot contain `.`, `:` or `/`, so the
 /// first of them splits the word.
@@ -395,8 +295,8 @@ pub fn joined_failure(word: &str, fix: &str) -> Failure {
 ///
 /// Returns a usage failure for an unknown server or an invalid entry.
 pub fn select<'a>(loaded: &'a Loaded, name: &str, ui: Ui) -> Result<&'a Server, Failure> {
-    if let (Some(stop), Some(project)) = (loaded.stop(name), loaded.project.project()) {
-        return Err(stop_failure(name, project, stop));
+    if let Some(project) = loaded.blocked_by(name) {
+        return Err(blocked(name, project, loaded.config.has(name)));
     }
     let server = loaded.config.server(name).map_err(|error| match error {
         LookupError::NotFound(_) => {
@@ -438,31 +338,27 @@ pub fn select<'a>(loaded: &'a Loaded, name: &str, ui: Ui) -> Result<&'a Server, 
 
 /// The failure of a name that the gate stops, with the entries of the
 /// file, so that the user or an agent can check them before `ncp trust`.
-#[must_use]
-pub fn stop_failure(name: &str, project: &Project, stop: project::Stop) -> Failure {
+fn blocked(name: &str, project: &Project, in_global: bool) -> Failure {
     let file = project.file.display();
-    match stop {
-        project::Stop::Untrusted { changed, in_global } => {
-            let state = if changed {
-                "which changed since you trusted it"
-            } else {
-                "which is not trusted"
-            };
-            let failure = Failure::usage(format!(
-                "{name} is in {file}, {state}:\n{}",
-                super::render::project_entries(&project.entries).trim_end()
-            ))
-            .server(name)
-            .hint("ncp trust");
-            if in_global {
-                failure.hint("ncp trust --ignore")
-            } else {
-                failure
-            }
+    let state = match project.trust {
+        Trust::Ignored => {
+            return Failure::usage(format!("{name} is in {file}, which you ignored"))
+                .server(name)
+                .hint("ncp trust");
         }
-        project::Stop::Ignored => Failure::usage(format!("{name} is in {file}, which you ignored"))
-            .server(name)
-            .hint("ncp trust"),
+        Trust::Untrusted { changed: true } => "which changed since you trusted it",
+        _ => "which is not trusted",
+    };
+    let failure = Failure::usage(format!(
+        "{name} is in {file}, {state}:\n{}",
+        super::render::project_entries(&project.entries).trim_end()
+    ))
+    .server(name)
+    .hint("ncp trust");
+    if in_global {
+        failure.hint("ncp trust --ignore")
+    } else {
+        failure
     }
 }
 
