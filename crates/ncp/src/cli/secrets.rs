@@ -1110,10 +1110,10 @@ async fn strict_config(
         _ => None,
     };
     let invalid = waiting.and_then(|project| {
-        project
-            .entries
-            .iter()
-            .find_map(|entry| entry.shape.as_ref().err().map(|error| (&entry.name, error)))
+        project.entries.iter().find_map(|entry| match &entry.shape {
+            Err(error) => Some((&entry.name, error)),
+            Ok(shape) => shape.problem.as_ref().map(|problem| (&entry.name, problem)),
+        })
     });
     if let Some((server, error)) = invalid {
         return Err(unknown(format!("server {server}: {error}")).hint("ncp trust"));

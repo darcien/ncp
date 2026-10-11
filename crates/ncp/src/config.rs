@@ -529,10 +529,7 @@ fn unexpanded(name: &str, value: &Value) -> Result<Unexpanded, EntryError> {
     let object = value.as_object().ok_or(EntryError::NotObject)?;
     let kind = kind_of(object)?;
     let target = configured_target(object, kind);
-    // A URL with `${NAME}` is a valid URL only after the expansion.
-    let problem = transport(object, kind, Expansion::Off).err().filter(|error| {
-        !matches!((error, &target), (EntryError::Url(_), Target::Remote { url }) if url.contains("${"))
-    });
+    let problem = transport(object, kind, Expansion::Off).err();
     let (env, sends) = match &target {
         Target::Stdio { .. } => (
             object
@@ -576,17 +573,45 @@ fn sends(object: &Map<String, Value>, url: &str) -> Vec<(String, String)> {
     headers.chain(secret).collect()
 }
 
-/// The host of a URL. With `${` in the URL, the authority as the file
-/// writes it: a parse would change the case of a variable name.
+/// The host that gets a value. With `${` in the authority, the host as
+/// the file writes it: a parse would change the case of a variable name.
 fn host_of(url: &str) -> String {
-    if url.contains("${") {
-        let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
-        return rest.split('/').next().unwrap_or(rest).to_string();
+    let authority = authority(url);
+    if authority.contains("${") {
+        return authority
+            .rsplit('@')
+            .next()
+            .unwrap_or(authority)
+            .to_string();
     }
     url::Url::parse(url)
         .ok()
         .and_then(|url| url.host_str().map(str::to_string))
-        .unwrap_or_else(|| url.to_string())
+        .unwrap_or_else(|| authority.to_string())
+}
+
+/// The text between `://` and the first `/`, `?`, `#` or `\`, as a URL
+/// parser ends the authority.
+fn authority(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    rest.split(['/', '?', '#', '\\']).next().unwrap_or(rest)
+}
+
+/// The URL that the checks with no expansion use. A `${NAME}` in the path
+/// or the query becomes a literal, so the rules of the URL still apply. A
+/// `${NAME}` in the scheme or the authority decides the scheme and the
+/// host: no rule of the URL applies before the expansion, and a fixed URL
+/// stands in, so that the checks of `headers` and `oauth` still run.
+fn url_to_check(url: &str) -> String {
+    let scheme = url.split_once("://").map_or("", |(scheme, _)| scheme);
+    if scheme.contains("${") || authority(url).contains("${") {
+        return "https://localhost/".to_string();
+    }
+    let literals: Env = expand::names(url)
+        .into_iter()
+        .map(|name| (name.to_string(), "x".to_string()))
+        .collect();
+    expand(url, &literals).unwrap_or_else(|_| url.to_string())
 }
 
 /// How the parse treats `${NAME}` in `command`, `args`, `cwd` and `url`.
@@ -746,7 +771,10 @@ fn remote(
     expansion: Expansion<'_>,
 ) -> Result<RemoteServer, EntryError> {
     let url = string(object, "url", expansion)?.ok_or(EntryError::Missing("url"))?;
-    let url = ServerUrl::parse(&url)?;
+    let url = match expansion {
+        Expansion::From(_) => ServerUrl::parse(&url)?,
+        Expansion::Off => ServerUrl::parse(&url_to_check(&url))?,
+    };
     let url_values = object
         .get("url")
         .and_then(Value::as_str)
@@ -1342,6 +1370,10 @@ mod tests {
             serde_json::json!({"type": "http", "url": "http://example.com/mcp"}),
             serde_json::json!({"type": "http", "url": "not a url"}),
             serde_json::json!({"type": "http", "url": "https://${HOST}/mcp"}),
+            serde_json::json!({"type": "http", "url": "http://evil.example/${P}"}),
+            serde_json::json!({"type": "http", "url": "https://u@evil.example/${P}"}),
+            serde_json::json!({"type": "http", "url": "https://${HOST}:${P}/mcp", "headers": {"X": 1}}),
+            serde_json::json!({"type": "http", "url": "https://${HOST}/mcp", "oauth": {"clientSecret": "${S}"}}),
             serde_json::json!({"type": "http", "url": "https://x.test/mcp",
                 "oauth": {"clientId": "c", "issuer": "https://a", "authorizationServer": "https://b"}}),
             serde_json::json!({"url": "https://x.test/mcp"}),
@@ -1353,6 +1385,8 @@ mod tests {
             let shown = unexpanded_entries(&text).unwrap().remove(0).shape;
             let env = Env::from([
                 ("HOST".to_string(), "x.test".to_string()),
+                ("P".to_string(), "443".to_string()),
+                ("S".to_string(), "s".to_string()),
                 ("SHELL_NAME".to_string(), "sh".to_string()),
             ]);
             let loaded = parse(&text, &env).unwrap();
@@ -1366,6 +1400,20 @@ mod tests {
                 (Err(error), Ok(_)) => panic!("{entry}: shown as {error}, but it runs"),
             }
         }
+    }
+
+    #[test]
+    fn the_host_of_a_value_ends_where_a_url_parser_ends_it() {
+        assert_eq!(
+            host_of("https://evil.example#@good.example/${P}"),
+            "evil.example"
+        );
+        assert_eq!(
+            host_of("https://evil.example?@good.example/${P}"),
+            "evil.example"
+        );
+        assert_eq!(host_of("https://u@${HOST}/x"), "${HOST}");
+        assert_eq!(host_of("https://Mcp.Example.com/mcp"), "mcp.example.com");
     }
 
     #[test]
