@@ -3,11 +3,13 @@
 //! `crate::project` and in docs/design/project-config.md.
 
 use std::{
-    fs::File,
+    fs::OpenOptions,
     io::{ErrorKind, Read as _},
-    os::unix::fs::MetadataExt as _,
+    os::unix::fs::{MetadataExt as _, OpenOptionsExt as _},
     path::{Path, PathBuf},
 };
+
+use nix::fcntl::OFlag;
 
 use serde_json::json;
 
@@ -93,11 +95,13 @@ pub fn find(paths: &Paths, env: &Env) -> ProjectFile {
 /// For a symlink, the check is on the target. Another user cannot make a
 /// file that the user owns (git CVE-2022-24765).
 fn read_owned(file: &Path) -> Result<String, String> {
-    // A check before the open: an open of a FIFO waits for a writer.
-    if !std::fs::metadata(file).is_ok_and(|metadata| metadata.is_file()) {
-        return Err("it is not a regular file".into());
-    }
-    let handle = File::open(file).map_err(|error| error.to_string())?;
+    // With no O_NONBLOCK, the open of a FIFO waits for a writer with no
+    // limit, also in shell completion. The check of the open file follows.
+    let handle = OpenOptions::new()
+        .read(true)
+        .custom_flags(OFlag::O_NONBLOCK.bits())
+        .open(file)
+        .map_err(|error| error.to_string())?;
     let metadata = handle.metadata().map_err(|error| error.to_string())?;
     if !metadata.is_file() {
         return Err("it is not a regular file".into());
@@ -227,12 +231,15 @@ pub fn command(context: &Context<'_>, args: &TrustArgs) -> Result<(), Failure> {
     context.ui.result(
         || render::project_file(&project),
         || {
+            let (servers, invalid): (Vec<session::Row>, Vec<session::Row>) =
+                session::project_rows(&project)
+                    .into_iter()
+                    .partition(|row| row.entry.is_ok());
             json!({
                 "file": project.file,
                 "trust": trust.word(),
-                "servers": project.entries.iter()
-                    .map(|entry| session::project_row(&project, entry))
-                    .collect::<Vec<_>>(),
+                "servers": servers.iter().map(session::Row::json).collect::<Vec<_>>(),
+                "invalid": invalid.iter().map(session::Row::json).collect::<Vec<_>>(),
             })
         },
     )

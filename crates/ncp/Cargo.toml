@@ -21,7 +21,7 @@ http = "1"
 # that reqwest takes.
 hyper-util = { version = "0.1", default-features = false, features = ["client-proxy", "client-proxy-system"] }
 # The CPU time for --timings. process-wrap already depends on it.
-nix = { version = "0.31", default-features = false, features = ["resource", "user"] }
+nix = { version = "0.31", default-features = false, features = ["fs", "resource", "user"] }
 jsonschema = { version = "0.58.6", default-features = false }
 process-wrap = { version = "10", default-features = false, features = ["tokio1", "process-group", "kill-on-drop"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "system-proxy"] }

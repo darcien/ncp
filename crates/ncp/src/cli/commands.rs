@@ -24,7 +24,6 @@ use crate::{
     client::{Answer, Connection, RequestError},
     config::Server,
     list_cache,
-    project::Trust,
 };
 
 pub async fn server(context: &Context<'_>, command: ServerCommand) -> Result<(), Failure> {
@@ -62,55 +61,14 @@ pub async fn tool(context: &Context<'_>, command: ToolCommand) -> Result<(), Fai
 
 async fn server_list(context: &Context<'_>) -> Result<(), Failure> {
     let loaded = session::load(context, None).await?;
-    let config = &loaded.config;
-    for warning in config.warnings() {
+    for warning in loaded.config.warnings() {
         context.ui.warning(
             warning.server.as_deref(),
             &session::unknown_key(&warning.key),
         );
     }
-    let scope = |name: &str| match loaded.project_of(name) {
-        Some(project) => json!({"scope": "project", "file": project.file, "trust": "trusted"}),
-        None => json!({"scope": "global", "file": loaded.path}),
-    };
-    let with_scope = |row: Value, name: &str| match (row, scope(name)) {
-        (Value::Object(mut row), Value::Object(scope)) => {
-            row.extend(scope);
-            Value::Object(row)
-        }
-        (row, _) => row,
-    };
-    // The entries of a project file that is not trusted show with their
-    // state, and nothing else happens for them (design rule 8).
-    let waiting = loaded
-        .project
-        .project()
-        .filter(|project| project.trust != Trust::Trusted);
-    let servers: Vec<Value> = config
-        .servers()
-        .map(|server| {
-            let name = server.name.as_str();
-            with_scope(
-                json!({
-                    "name": name,
-                    "transport": render::transport_name(server),
-                    "target": render::target(server),
-                }),
-                name,
-            )
-        })
-        .chain(waiting.into_iter().flat_map(|project| {
-            project
-                .entries
-                .iter()
-                .map(|entry| session::project_row(project, entry))
-        }))
-        .collect();
-    let invalid: Vec<Value> = config
-        .invalid()
-        .map(|(name, error)| with_scope(json!({"name": name, "error": error.to_string()}), name))
-        .collect();
-    if servers.is_empty() && invalid.is_empty() {
+    let rows = session::list_rows(&loaded);
+    if rows.is_empty() {
         let path = loaded.path.display();
         let message = if loaded.exists {
             format!("no server is configured in {path}")
@@ -119,9 +77,16 @@ async fn server_list(context: &Context<'_>) -> Result<(), Failure> {
         };
         context.ui.hint(None, &message);
     }
+    let (servers, invalid): (Vec<&session::Row>, Vec<&session::Row>) =
+        rows.iter().partition(|row| row.entry.is_ok());
     context.ui.result(
-        || render::server_list(loaded.project.project(), &servers, &invalid),
-        || json!({"servers": servers, "invalid": invalid}),
+        || render::server_list(loaded.project.project(), &rows),
+        || {
+            json!({
+                "servers": servers.iter().map(|row| row.json()).collect::<Vec<_>>(),
+                "invalid": invalid.iter().map(|row| row.json()).collect::<Vec<_>>(),
+            })
+        },
     )?;
     Ok(())
 }

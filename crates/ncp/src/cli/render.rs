@@ -9,9 +9,12 @@ use rmcp::model::{JsonObject, Tool};
 use serde_json::Value;
 
 use super::tool_args;
+use std::path::Path;
+
+use super::session::Row;
 use crate::{
     config::{Server, Target, Transport},
-    project::{Entry, EntryKind, Project, Trust},
+    project::{Entry, Project, Trust},
 };
 
 /// The transport name of an entry.
@@ -29,27 +32,18 @@ pub fn transport_name(server: &Server) -> &'static str {
 /// of a variable shows.
 #[must_use]
 pub fn target(server: &Server) -> String {
-    match &server.target {
-        Target::Stdio { command, args, .. } => command_line(command, args),
-        Target::Remote { url } => url.clone(),
-    }
+    target_text(&server.target)
 }
 
-fn command_line(command: &str, args: &[String]) -> String {
-    std::iter::once(command)
-        .chain(args.iter().map(String::as_str))
-        .map(shell_word)
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// The target of an entry of a project file, as `target` gives it.
 #[must_use]
-pub fn entry_target(kind: &EntryKind) -> String {
-    match kind {
-        EntryKind::Stdio { command, args, .. } => command_line(command, args),
-        EntryKind::Remote { url, .. } => url.clone(),
-        EntryKind::Invalid => String::new(),
+pub fn target_text(target: &Target) -> String {
+    match target {
+        Target::Stdio { command, args, .. } => std::iter::once(command)
+            .chain(args)
+            .map(|word| shell_word(word))
+            .collect::<Vec<_>>()
+            .join(" "),
+        Target::Remote { url } => url.clone(),
     }
 }
 
@@ -57,22 +51,35 @@ pub fn entry_target(kind: &EntryKind) -> String {
 /// before a trust: the full command with `cwd` and the names of the `env`
 /// variables, or the URL with each `${NAME}` and the host that gets it.
 /// Never a value of `env` or of a header: it can be a literal secret, and
-/// the output can go into the transcript of an agent. `table` escapes
-/// each cell, so that no escape sequence hides an argument.
+/// the output can go into the transcript of an agent. Each word that the
+/// file gives is a shell word, so that a word cannot look like two parts,
+/// and `table` escapes each cell.
 #[must_use]
 pub fn project_entries(entries: &[Entry]) -> String {
     let rows: Vec<Vec<String>> = entries
         .iter()
         .map(|entry| {
-            let details: Vec<String> = match &entry.kind {
-                EntryKind::Stdio { cwd, env, .. } => std::iter::once(entry_target(&entry.kind))
-                    .chain(cwd.iter().map(|cwd| format!("cwd: {cwd}")))
-                    .chain((!env.is_empty()).then(|| format!("env: {}", env.join(", "))))
+            let details: Vec<String> = match &entry.shape {
+                Ok(shape) => std::iter::once(target_text(&shape.target))
+                    .chain(match &shape.target {
+                        Target::Stdio { cwd, .. } => cwd
+                            .as_deref()
+                            .map(|cwd| format!("cwd: {}", shell_word(cwd))),
+                        Target::Remote { .. } => None,
+                    })
+                    .chain((!shape.env.is_empty()).then(|| {
+                        let names: Vec<String> =
+                            shape.env.iter().map(|name| shell_word(name)).collect();
+                        format!("env: {}", names.join(", "))
+                    }))
+                    .chain(
+                        shape
+                            .sends
+                            .iter()
+                            .map(|(name, host)| format!("{name} -> {}", shell_word(host))),
+                    )
                     .collect(),
-                EntryKind::Remote { url, sends, .. } => std::iter::once(url.clone())
-                    .chain(sends.iter().map(|(name, host)| format!("{name} -> {host}")))
-                    .collect(),
-                EntryKind::Invalid => vec!["not a valid entry".into()],
+                Err(error) => vec![format!("not valid: {error}")],
             };
             vec![entry.name.clone(), details.join("   ")]
         })
@@ -81,6 +88,11 @@ pub fn project_entries(entries: &[Entry]) -> String {
         let _ = writeln!(text, "  {line}");
         text
     })
+}
+
+/// A path on one line: a folder name can hold a new line.
+fn path_text(path: &Path) -> String {
+    super::ui::printable(&super::ui::one_line(&path.display().to_string())).into_owned()
 }
 
 /// The text before the question of the trust.
@@ -92,7 +104,7 @@ pub fn project_question(project: &Project) -> String {
     };
     format!(
         "{} {state}. It has these servers:\n{}",
-        super::ui::printable(&project.file.display().to_string()),
+        path_text(&project.file),
         project_entries(&project.entries)
     )
 }
@@ -100,42 +112,27 @@ pub fn project_question(project: &Project) -> String {
 /// The text of `server list`: the project file with its state, then one
 /// row for each entry. A project entry has a mark with its state.
 #[must_use]
-pub fn server_list(project: Option<&Project>, servers: &[Value], invalid: &[Value]) -> String {
-    let text = |row: &Value, key: &str| {
-        row.get(key)
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string()
-    };
-    let mark = |row: &Value| match (text(row, "scope").as_str(), text(row, "trust").as_str()) {
-        ("project", "trusted") => "project".to_string(),
-        ("project", state) => format!("project, {state}"),
-        _ => String::new(),
-    };
-    let rows: Vec<Vec<String>> = servers
+pub fn server_list(project: Option<&Project>, rows: &[Row]) -> String {
+    let rows: Vec<Vec<String>> = rows
         .iter()
         .map(|row| {
-            vec![
-                text(row, "name"),
-                text(row, "transport"),
-                text(row, "target"),
-                mark(row),
-            ]
+            let (transport, target) = match &row.entry {
+                Ok((transport, target)) => ((*transport).to_string(), target.clone()),
+                Err(error) => ("invalid".to_string(), error.clone()),
+            };
+            let mark = match row.trust {
+                None => String::new(),
+                Some(Trust::Trusted) => "project".to_string(),
+                Some(trust) => format!("project, {}", trust.word()),
+            };
+            vec![row.name.clone(), transport, target, mark]
         })
-        .chain(invalid.iter().map(|row| {
-            vec![
-                text(row, "name"),
-                "invalid".into(),
-                text(row, "error"),
-                mark(row),
-            ]
-        }))
         .collect();
     let head = project
         .map(|project| {
             format!(
                 "Project file: {} ({})\n",
-                super::ui::printable(&project.file.display().to_string()),
+                path_text(&project.file),
                 project.trust.word()
             )
         })
@@ -148,7 +145,7 @@ pub fn server_list(project: Option<&Project>, servers: &[Value], invalid: &[Valu
 pub fn project_file(project: &Project) -> String {
     format!(
         "{} ({})\n{}",
-        super::ui::printable(&project.file.display().to_string()),
+        path_text(&project.file),
         project.trust.word(),
         project_entries(&project.entries)
     )

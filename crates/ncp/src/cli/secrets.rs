@@ -1097,6 +1097,12 @@ async fn strict_config(
             "server {server}: {error}; ncp cannot know which items it uses"
         )));
     }
+    if let super::trust::ProjectFile::Unusable { file, reason } = &loaded.project {
+        return Err(Failure::usage(format!(
+            "ncp does not use {}: {reason}; ncp cannot know which items it uses",
+            file.display()
+        )));
+    }
     if let Some(failure) = untrusted_use(&loaded, name, None) {
         return Err(Failure {
             message: format!("{}; ncp cannot know which items it uses", failure.message),
@@ -1115,7 +1121,11 @@ fn untrusted_use(
 ) -> Option<Failure> {
     let project = loaded.project.project()?;
     let entry = project.entries.iter().find(|entry| {
-        only.is_none_or(|word| word == entry.name) && entry.variables.contains(name.as_str())
+        only.is_none_or(|word| word == entry.name)
+            && entry
+                .shape
+                .as_ref()
+                .is_ok_and(|shape| shape.variables.contains(name.as_str()))
     })?;
     let state = match project.trust {
         crate::project::Trust::Trusted => return None,

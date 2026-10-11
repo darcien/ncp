@@ -276,17 +276,98 @@ fn report_files(context: &Context<'_>, loaded: &Loaded) {
     }
 }
 
-/// The object of a project entry in `server list` and `ncp trust`.
+/// One row of `server list` and `ncp trust`: an entry with its file.
+pub struct Row {
+    pub name: String,
+    /// The transport and the target, or the error of an invalid entry.
+    pub entry: Result<(&'static str, String), String>,
+    pub file: PathBuf,
+    /// `None` for an entry of the global file.
+    pub trust: Option<Trust>,
+}
+
+impl Row {
+    /// The object of `server list`: `{"name", "transport", "target"}` or
+    /// `{"name", "error"}`, with `scope`, `file`, and `trust` for a
+    /// project entry.
+    #[must_use]
+    pub fn json(&self) -> serde_json::Value {
+        let mut row = match &self.entry {
+            Ok((transport, target)) => {
+                serde_json::json!({"name": self.name, "transport": transport, "target": target})
+            }
+            Err(error) => serde_json::json!({"name": self.name, "error": error}),
+        };
+        row["scope"] = serde_json::json!(if self.trust.is_some() {
+            "project"
+        } else {
+            "global"
+        });
+        row["file"] = serde_json::json!(self.file);
+        if let Some(trust) = self.trust {
+            row["trust"] = serde_json::json!(trust.word());
+        }
+        row
+    }
+}
+
+/// The rows of the entries of a project file.
 #[must_use]
-pub fn project_row(project: &Project, entry: &project::Entry) -> serde_json::Value {
-    serde_json::json!({
-        "name": entry.name,
-        "transport": entry.kind.transport(),
-        "target": super::render::entry_target(&entry.kind),
-        "scope": "project",
-        "file": project.file,
-        "trust": project.trust.word(),
-    })
+pub fn project_rows(project: &Project) -> Vec<Row> {
+    project
+        .entries
+        .iter()
+        .map(|entry| Row {
+            name: entry.name.clone(),
+            entry: entry
+                .shape
+                .as_ref()
+                .map(|shape| (shape.transport, super::render::target_text(&shape.target)))
+                .map_err(ToString::to_string),
+            file: project.file.clone(),
+            trust: Some(project.trust),
+        })
+        .collect()
+}
+
+/// The rows of `server list`: the entries that run, then the entries of a
+/// project file that is not trusted, with their state. Nothing else
+/// happens for them (design rule 8).
+#[must_use]
+pub fn list_rows(loaded: &Loaded) -> Vec<Row> {
+    let place = |name: &str| match loaded.project_of(name) {
+        Some(project) => (project.file.clone(), Some(Trust::Trusted)),
+        None => (loaded.path.clone(), None),
+    };
+    let servers = loaded.config.servers().map(|server| {
+        let name = server.name.to_string();
+        let (file, trust) = place(&name);
+        Row {
+            entry: Ok((
+                super::render::transport_name(server),
+                super::render::target(server),
+            )),
+            name,
+            file,
+            trust,
+        }
+    });
+    let invalid = loaded.config.invalid().map(|(name, error)| {
+        let (file, trust) = place(name);
+        Row {
+            name: name.to_string(),
+            entry: Err(error.to_string()),
+            file,
+            trust,
+        }
+    });
+    let waiting = loaded
+        .project
+        .project()
+        .filter(|project| project.trust != Trust::Trusted)
+        .map(project_rows)
+        .unwrap_or_default();
+    servers.chain(invalid).chain(waiting).collect()
 }
 
 /// A word that joins a server name and a tool name, for example
@@ -369,8 +450,9 @@ pub fn stop_failure(name: &str, project: &Project, stop: project::Stop) -> Failu
             };
             let failure = Failure::usage(format!(
                 "{name} is in {file}, {state}:\n{}",
-                super::render::project_entries(&project.entries)
+                super::render::project_entries(&project.entries).trim_end()
             ))
+            .server(name)
             .hint("ncp trust");
             if in_global {
                 failure.hint("ncp trust --ignore")
@@ -378,9 +460,9 @@ pub fn stop_failure(name: &str, project: &Project, stop: project::Stop) -> Failu
                 failure
             }
         }
-        project::Stop::Ignored => {
-            Failure::usage(format!("{name} is in {file}, which you ignored")).hint("ncp trust")
-        }
+        project::Stop::Ignored => Failure::usage(format!("{name} is in {file}, which you ignored"))
+            .server(name)
+            .hint("ncp trust"),
     }
 }
 

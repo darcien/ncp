@@ -7,7 +7,6 @@
 //! the entries to show before a trust. The I/O is in `cli::trust`.
 
 use std::{
-    collections::BTreeSet,
     fmt::Write as _,
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
@@ -16,7 +15,7 @@ use std::{
 use serde_json::{Map, Value};
 use sha2::{Digest as _, Sha256};
 
-use crate::expand;
+use crate::config::{self, EntryError, Unexpanded};
 
 /// The name of the project file. Claude Code and VS Code read it.
 pub const FILE_NAME: &str = ".mcp.json";
@@ -133,46 +132,13 @@ impl Project {
     }
 }
 
-/// One entry of a project file, read from the JSON value with no
-/// expansion, for the user to check before the trust.
+/// One entry of a project file, with no expansion, for the user to check
+/// before the trust. The loader reads it with the same rules, so the entry
+/// that shows is the entry that runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     pub name: String,
-    pub kind: EntryKind,
-    /// The names of `${NAME}` in the values that can come from a store.
-    pub variables: BTreeSet<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EntryKind {
-    Stdio {
-        command: String,
-        args: Vec<String>,
-        cwd: Option<String>,
-        /// The names of the `env` variables. Never their values: a value
-        /// can be a literal secret.
-        env: Vec<String>,
-    },
-    Remote {
-        transport: &'static str,
-        url: String,
-        /// Each `${NAME}` of `headers` and `oauth`, with the host that gets
-        /// its value.
-        sends: Vec<(String, String)>,
-    },
-    /// Not an entry that `ncp` can start.
-    Invalid,
-}
-
-impl EntryKind {
-    #[must_use]
-    pub fn transport(&self) -> &'static str {
-        match self {
-            Self::Stdio { .. } => "stdio",
-            Self::Remote { transport, .. } => transport,
-            Self::Invalid => "invalid",
-        }
-    }
+    pub shape: Result<Unexpanded, EntryError>,
 }
 
 /// The entries of the `mcpServers` map.
@@ -180,97 +146,11 @@ impl EntryKind {
 pub fn entries(servers: &Map<String, Value>) -> Vec<Entry> {
     servers
         .iter()
-        .map(|(name, value)| entry(name, value))
+        .map(|(name, value)| Entry {
+            name: name.clone(),
+            shape: config::unexpanded(name, value),
+        })
         .collect()
-}
-
-fn entry(name: &str, value: &Value) -> Entry {
-    let Some(object) = value.as_object() else {
-        return Entry {
-            name: name.to_string(),
-            kind: EntryKind::Invalid,
-            variables: BTreeSet::new(),
-        };
-    };
-    let text = |key: &str| object.get(key).and_then(Value::as_str).map(str::to_string);
-    let kind = match (text("type").as_deref(), text("url"), text("command")) {
-        (Some(transport @ ("http" | "sse")), Some(url), _) => {
-            let host = url::Url::parse(&url)
-                .ok()
-                .and_then(|url| url.host_str().map(str::to_string))
-                .unwrap_or_else(|| url.clone());
-            let issuer_host = object
-                .get("oauth")
-                .and_then(|oauth| {
-                    oauth
-                        .get("issuer")
-                        .or_else(|| oauth.get("authorizationServer"))
-                })
-                .and_then(|issuer| issuer.as_str().or_else(|| issuer.get(0)?.as_str()))
-                .and_then(|issuer| url::Url::parse(issuer).ok()?.host_str().map(str::to_string))
-                .unwrap_or_else(|| host.clone());
-            let headers = names_in(object.get("headers"))
-                .into_iter()
-                .map(|name| (name, host.clone()));
-            let secret = names_in(
-                object
-                    .get("oauth")
-                    .and_then(|oauth| oauth.get("clientSecret")),
-            )
-            .into_iter()
-            .map(|name| (name, issuer_host.clone()));
-            EntryKind::Remote {
-                transport: if transport == "sse" { "sse" } else { "http" },
-                url,
-                sends: headers.chain(secret).collect(),
-            }
-        }
-        (Some("stdio") | None, None, Some(command)) => EntryKind::Stdio {
-            command,
-            args: object
-                .get("args")
-                .and_then(Value::as_array)
-                .map(|args| {
-                    args.iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_string)
-                        .collect()
-                })
-                .unwrap_or_default(),
-            cwd: text("cwd"),
-            env: object
-                .get("env")
-                .and_then(Value::as_object)
-                .map(|env| env.keys().cloned().collect())
-                .unwrap_or_default(),
-        },
-        _ => EntryKind::Invalid,
-    };
-    let variables = match &kind {
-        EntryKind::Stdio { .. } => names_in(object.get("env")),
-        EntryKind::Remote { sends, .. } => sends.iter().map(|(name, _)| name.clone()).collect(),
-        EntryKind::Invalid => BTreeSet::new(),
-    };
-    Entry {
-        name: name.to_string(),
-        kind,
-        variables,
-    }
-}
-
-/// The names of `${NAME}` in the string values of a JSON value.
-fn names_in(value: Option<&Value>) -> BTreeSet<String> {
-    match value {
-        Some(Value::String(text)) => expand::names(text)
-            .into_iter()
-            .map(str::to_string)
-            .collect(),
-        Some(Value::Object(map)) => map
-            .values()
-            .flat_map(|value| names_in(Some(value)))
-            .collect(),
-        _ => BTreeSet::new(),
-    }
 }
 
 /// Why the gate stops a server name.
@@ -391,41 +271,15 @@ mod tests {
     }
 
     #[test]
-    fn reads_entries_with_env_names_and_the_host_of_each_variable() {
+    fn reads_each_entry_with_the_rules_of_the_loader() {
         let entries = servers(&json!({
-            "fs": {"command": "npx", "args": ["-y", "pkg", "."], "cwd": "sub",
-                   "env": {"API_KEY": "literal", "TOKEN": "${TOKEN}"}},
-            "sentry": {"type": "http", "url": "https://mcp.sentry.dev/mcp",
-                       "headers": {"Authorization": "Bearer ${SENTRY_TOKEN}"},
-                       "oauth": {"clientId": "c", "clientSecret": "${SECRET}",
-                                 "issuer": "https://auth.example.com"}},
+            "fs": {"type": "stdio", "command": "sh", "args": ["-c", "x"], "url": "https://x"},
             "bad": {"type": "ws"},
-            "text": "x"
         }));
-        let kind = |name: &str| &entries.iter().find(|e| e.name == name).unwrap().kind;
-        assert_eq!(
-            *kind("fs"),
-            EntryKind::Stdio {
-                command: "npx".into(),
-                args: vec!["-y".into(), "pkg".into(), ".".into()],
-                cwd: Some("sub".into()),
-                env: vec!["API_KEY".into(), "TOKEN".into()],
-            }
-        );
-        assert_eq!(entries[1].variables, BTreeSet::from(["TOKEN".to_string()]));
-        assert_eq!(
-            *kind("sentry"),
-            EntryKind::Remote {
-                transport: "http",
-                url: "https://mcp.sentry.dev/mcp".into(),
-                sends: vec![
-                    ("SENTRY_TOKEN".into(), "mcp.sentry.dev".into()),
-                    ("SECRET".into(), "auth.example.com".into()),
-                ],
-            }
-        );
-        assert_eq!(*kind("bad"), EntryKind::Invalid);
-        assert_eq!(*kind("text"), EntryKind::Invalid);
+        assert_eq!(entries[0].name, "bad");
+        assert_eq!(entries[0].shape, Err(EntryError::UnknownType("ws".into())));
+        let fs = entries[1].shape.as_ref().unwrap();
+        assert_eq!(fs.transport, "stdio");
     }
 
     fn project(trust: Trust) -> Project {

@@ -424,3 +424,199 @@ async fn a_trusted_project_header_gets_its_value_from_the_environment_and_the_st
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
 }
+
+/// A local port that counts no request: a test checks that nothing
+/// connects to it.
+fn silent_port() -> (std::net::TcpListener, String) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!(
+        "http://127.0.0.1:{}/mcp",
+        listener.local_addr().unwrap().port()
+    );
+    (listener, url)
+}
+
+fn no_connection(listener: &std::net::TcpListener) -> bool {
+    matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+}
+
+#[test]
+fn an_untrusted_remote_entry_gets_no_request_from_any_command() {
+    let (listener, url) = silent_port();
+    let home = Home::new("p-silent")
+        .project(
+            "app",
+            &json!({"web": {"type": "http", "url": url,
+                "headers": {"X-Key": "${WEB_TOKEN}"}}}),
+        )
+        .set("WEB_TOKEN", "t0ken");
+    for args in [
+        &["tool", "list", "web"][..],
+        &["auth", "login", "web", "--no-browser"],
+        &["auth", "logout", "web"],
+        &["auth", "status", "web"],
+        &["server", "show", "web"],
+    ] {
+        let run = home.run(args);
+        assert_eq!(run.code(), 2, "{args:?}: {}", run.describe());
+    }
+    assert!(no_connection(&listener));
+}
+
+#[test]
+fn the_shown_entry_is_the_entry_that_runs() {
+    let home = Home::new("p-hidden").project(
+        "app",
+        &json!({"fs": {"type": "stdio", "command": "sh", "args": ["-c", "touch x"],
+            "url": "https://x.test/mcp"}}),
+    );
+    let run = home.run(&["tool", "list", "fs"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    let message = run.error()["message"].as_str().unwrap().to_string();
+    assert!(message.contains("fs  sh -c 'touch x'"), "{message}");
+    let out = home.run(&["trust", "--show"]).stdout();
+    assert_eq!(out["servers"][0]["target"], "sh -c 'touch x'");
+}
+
+#[test]
+fn an_invalid_entry_shows_its_error() {
+    let home = Home::new("p-invalid").project("app", &json!({"bad": {"type": "ws"}}));
+    let out = home.run(&["trust", "--show"]).stdout();
+    assert_eq!(out["servers"], json!([]));
+    assert_eq!(out["invalid"][0]["name"], "bad");
+    assert_eq!(out["invalid"][0]["trust"], "untrusted");
+    let list = home.run(&["server", "list"]).stdout();
+    assert_eq!(
+        list["invalid"][0]["error"],
+        "type \"ws\" is not \"stdio\", \"http\" or \"sse\""
+    );
+}
+
+#[test]
+fn a_word_of_the_file_cannot_look_like_two_parts_of_a_line() {
+    let home = Home::new("p-spoof").project(
+        "app",
+        &json!({"fs": {"command": "srv", "cwd": "x   env: SAFE",
+            "env": {"A   B -> safe.example": "v"}}}),
+    );
+    let run = home.run(&["trust", "--show", "--output-format", "text"]);
+    let text = String::from_utf8_lossy(&run.0.stdout).to_string();
+    assert!(text.contains("cwd: 'x   env: SAFE'"), "{text}");
+    assert!(text.contains("env: 'A   B -> safe.example'"), "{text}");
+}
+
+#[test]
+fn a_file_of_another_user_is_not_used_and_the_search_stops() {
+    let mut home = Home::new("p-owner").project("w", &json!({"fx": fixture()}));
+    std::fs::remove_dir_all(home.cwd.join(".git")).unwrap();
+    let app = home.cwd.join("app");
+    std::fs::create_dir_all(&app).unwrap();
+    // A regular file that root owns.
+    std::os::unix::fs::symlink("/etc/hosts", app.join(".mcp.json")).unwrap();
+    home.cwd = app;
+    let run = home.run(&["server", "list"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let warnings = messages(&run, "warning");
+    assert!(
+        warnings[0].ends_with("another user owns it"),
+        "{warnings:?}"
+    );
+    assert_eq!(run.stdout()["servers"], json!([]));
+}
+
+#[test]
+fn a_git_file_stops_the_search() {
+    let mut home = Home::new("p-gitfile").project("w", &json!({"fx": fixture()}));
+    let app = home.cwd.join("app");
+    std::fs::create_dir_all(&app).unwrap();
+    std::fs::write(app.join(".git"), "gitdir: /elsewhere\n").unwrap();
+    home.cwd = app;
+    assert_eq!(home.run(&["server", "list"]).stdout()["servers"], json!([]));
+}
+
+#[test]
+fn server_list_text_names_the_project_file_and_marks_its_entries() {
+    let home = Home::new("p-text");
+    home.configure(&json!({"g": fixture()}));
+    let home = home.project("app", &json!({"fx": fixture()}));
+    let run = home.run(&["server", "list", "--output-format", "text"]);
+    let text = String::from_utf8_lossy(&run.0.stdout).to_string();
+    let file = home.project_file();
+    assert!(
+        text.starts_with(&format!("Project file: {} (untrusted)\n", file.display())),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("fx ") && line.ends_with("project, untrusted")),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("g ") && line.ends_with(" modern")),
+        "{text}"
+    );
+}
+
+#[test]
+fn verbose_output_names_the_project_file_or_where_the_search_stopped() {
+    let home = Home::new("p-verbose").project("app", &json!({"fx": fixture()}));
+    let file = home.project_file();
+    let run = home.run(&["-v", "server", "list"]);
+    assert!(
+        messages(&run, "debug").contains(&format!("project file: {} (untrusted)", file.display())),
+        "{}",
+        run.describe()
+    );
+    let mut home = home;
+    home.cwd = home.root.clone();
+    let run = home.run(&["-v", "server", "list"]);
+    let root = std::fs::canonicalize(&home.root).unwrap();
+    assert!(
+        messages(&run, "debug").contains(&format!(
+            "no project file: the search stopped at {}",
+            root.display()
+        )),
+        "{}",
+        run.describe()
+    );
+}
+
+#[test]
+fn untrust_keeps_an_ignored_record() {
+    let home = Home::new("p-untrust").project("app", &json!({"fx": fixture()}));
+    assert_eq!(home.run(&["trust", "--ignore"]).code(), 0);
+    assert_eq!(
+        home.run(&["trust", "--untrust"]).stdout()["trust"],
+        "ignored"
+    );
+}
+
+#[test]
+fn delete_unused_stops_when_an_untrusted_entry_names_the_secret() {
+    let home = Home::new("p-unused").project(
+        "app",
+        &json!({"web": {"type": "http", "url": "https://mcp.example.com/mcp",
+            "headers": {"Authorization": "Bearer ${WEB_TOKEN}"}}}),
+    );
+    home.store_in_file("secret/https://mcp.example.com/WEB_TOKEN", "v");
+    let run = home.run(&["secret", "delete", "WEB_TOKEN", "--unused"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(
+        run.error()["message"]
+            .as_str()
+            .unwrap()
+            .ends_with("which is not trusted; ncp cannot know which items it uses"),
+        "{}",
+        run.describe()
+    );
+    let run = home.run(&["secret", "list"]);
+    assert!(
+        messages(&run, "hint")
+            .iter()
+            .any(|hint| hint.contains("a project in another folder can still use it")),
+        "{}",
+        run.describe()
+    );
+}

@@ -423,24 +423,11 @@ pub fn parse(text: &str, env: &Env) -> Result<Config, ConfigError> {
         .map(|(name, entry, _)| (name, entry))
         .collect();
     let mut variables = BTreeSet::new();
-    // Only the field of the transport expands: `headers` in a stdio entry
-    // is an unknown key.
     servers
         .values()
         .filter_map(Value::as_object)
-        .flat_map(|entry| {
-            let values: Vec<Option<&Value>> = match kind_of(entry) {
-                Ok(Kind::Stdio) => vec![entry.get("env")],
-                Ok(Kind::Http | Kind::Sse) => vec![
-                    entry.get("headers"),
-                    entry
-                        .get("oauth")
-                        .and_then(|oauth| oauth.get("clientSecret")),
-                ],
-                Err(_) => Vec::new(),
-            };
-            values.into_iter().flatten()
-        })
+        .filter_map(|entry| kind_of(entry).ok().map(|kind| store_values(entry, kind)))
+        .flatten()
         .for_each(|values| variables_in(values, &mut variables));
     Ok(Config {
         entries,
@@ -472,6 +459,108 @@ fn servers_of(root: &Map<String, Value>) -> Result<Option<&Map<String, Value>>, 
     root.get(SERVERS_KEY)
         .map(|value| value.as_object().ok_or(ConfigError::ServersNotObject))
         .transpose()
+}
+
+/// The values that can read a credential store: `env` of a stdio entry,
+/// `headers` and `oauth.clientSecret` of a remote entry. Only the field of
+/// the transport expands: `headers` in a stdio entry is an unknown key.
+fn store_values(entry: &Map<String, Value>, kind: Kind) -> Vec<&Value> {
+    let values = match kind {
+        Kind::Stdio => vec![entry.get("env")],
+        Kind::Http | Kind::Sse => vec![
+            entry.get("headers"),
+            entry
+                .get("oauth")
+                .and_then(|oauth| oauth.get("clientSecret")),
+        ],
+    };
+    values.into_iter().flatten().collect()
+}
+
+/// An entry as the file writes it, with no expansion, for a person to
+/// check before a trust. It uses the rules of `parse`, so the entry that
+/// shows is the entry that runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unexpanded {
+    pub transport: &'static str,
+    pub target: Target,
+    /// The names of the `env` variables of a stdio entry. Never their
+    /// values: a value can be a literal secret.
+    pub env: Vec<String>,
+    /// Each `${NAME}` of `headers` and `oauth.clientSecret` of a remote
+    /// entry, with the host that gets its value.
+    pub sends: Vec<(String, String)>,
+    /// The names that can come from a store.
+    pub variables: BTreeSet<String>,
+}
+
+/// # Errors
+///
+/// Returns the error of the entry when the loader cannot read it, also
+/// before the expansion: the name, the shape and the type.
+pub fn unexpanded(name: &str, value: &Value) -> Result<Unexpanded, EntryError> {
+    ServerName::parse(name)?;
+    let object = value.as_object().ok_or(EntryError::NotObject)?;
+    let kind = kind_of(object)?;
+    let target = configured_target(object, kind);
+    let names = |values: Vec<&Value>| {
+        let mut found = BTreeSet::new();
+        for value in values {
+            variables_in(value, &mut found);
+        }
+        found
+    };
+    let variables = names(store_values(object, kind));
+    let host = |url: &str| {
+        url::Url::parse(url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_string))
+            .unwrap_or_else(|| url.to_string())
+    };
+    let (env, sends) = match &target {
+        Target::Remote { url } => {
+            let oauth = object.get("oauth");
+            let issuer = oauth
+                .and_then(|oauth| {
+                    oauth
+                        .get("issuer")
+                        .or_else(|| oauth.get("authorizationServer"))
+                })
+                .and_then(|issuer| issuer.as_str().or_else(|| issuer.get(0)?.as_str()))
+                .map_or_else(|| host(url), host);
+            let headers = names(object.get("headers").into_iter().collect())
+                .into_iter()
+                .map(|name| (name, host(url)));
+            let secret = names(
+                oauth
+                    .and_then(|oauth| oauth.get("clientSecret"))
+                    .into_iter()
+                    .collect(),
+            )
+            .into_iter()
+            .map(|name| (name, issuer.clone()));
+            (Vec::new(), headers.chain(secret).collect())
+        }
+        Target::Stdio { .. } => (
+            object
+                .get("env")
+                .and_then(Value::as_object)
+                .map(|env| env.keys().cloned().collect())
+                .unwrap_or_default(),
+            Vec::new(),
+        ),
+    };
+    Ok(Unexpanded {
+        transport: match kind {
+            Kind::Stdio => "stdio",
+            Kind::Http => "http",
+            Kind::Sse => "sse",
+        },
+        target,
+        env,
+        sends,
+        variables,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -1167,6 +1256,39 @@ mod tests {
         };
         assert_eq!(command("gh"), "project");
         assert_eq!(command("g"), "g");
+    }
+
+    #[test]
+    fn the_unexpanded_entry_is_the_entry_that_runs() {
+        let entry = serde_json::json!({"type": "stdio", "command": "sh",
+            "args": ["-c", "x"], "url": "https://x.test"});
+        let shown = unexpanded("fs", &entry).unwrap();
+        assert_eq!(shown.transport, "stdio");
+        let config = load(&serde_json::json!({"mcpServers": {"fs": entry}}).to_string());
+        assert_eq!(shown.target, config.server("fs").unwrap().target);
+    }
+
+    #[test]
+    fn unexpanded_gives_each_variable_with_the_host_that_gets_it() {
+        let shown = unexpanded(
+            "web",
+            &serde_json::json!({"type": "http", "url": "https://mcp.example.com/mcp",
+                "headers": {"Authorization": "Bearer ${TOKEN}"},
+                "oauth": {"clientId": "c", "clientSecret": "${SECRET}",
+                          "issuer": "https://auth.example.com"}}),
+        )
+        .unwrap();
+        assert_eq!(
+            shown.sends,
+            [
+                ("TOKEN".to_string(), "mcp.example.com".to_string()),
+                ("SECRET".to_string(), "auth.example.com".to_string()),
+            ]
+        );
+        assert_eq!(
+            unexpanded("s", &serde_json::json!({"cwd": "."})),
+            Err(EntryError::NoTransport)
+        );
     }
 
     #[test]
