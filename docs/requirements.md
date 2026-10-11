@@ -81,13 +81,19 @@ extension.
 hostile process of the same user: such a process can read the same files and
 ask the same credential store.
 
+Accepted risks of project files (S5): an agent can run `ncp trust`, or
+answer the question in a pseudo-terminal, so the guard is the permission
+rules of the agent; after the trust, a project entry can send an
+environment variable to its host, and the shown entries name each
+`${NAME}` with its host; a network file system can give a false owner.
+
 | ID | Level | Requirement | Ref |
 |---|---|---|---|
 | S1 | MUST | Keep each secret that `ncp` stores in the OS credential store: Keychain on macOS, Secret Service on Linux. Secrets are access tokens, refresh tokens, client secrets and static tokens. A value that the user wrote in the configuration file stays there, because no reliable test can tell a secret from another value. | [auth] |
 | S2 | MUST | `ncp` writes no secret to a plain file by default. A `0600` file is permitted only after an explicit opt-in. With no credential store (for example Linux with no Secret Service), stop with an error that names this opt-in. | — |
 | S3 | MUST | No secret in process arguments or in logs. Verbose output hides each value that `ncp` knows is a secret: values from `${NAME}` and the credential stores, credential headers of HTTP, and the tokens and credentials of OAuth. A literal value in the configuration shows as it is, because no reliable test can tell a secret from another value. | [sec] |
 | S4 | MUST | stdio servers get credentials through environment variables. `ncp` reads these values from the credential store. | [auth] |
-| S5 | SHOULD | A configuration file in a project directory starts stdio commands only after the user trusts it. The rules are in docs/design/project-config.md; S5 becomes MUST when the user accepts that design. | — |
+| S5 | MUST | `ncp` reads one project `.mcp.json`, found from the current folder up to the git root (not in the home folder), only if the user owns it. Before the user trusts it, the file has no effect: no process starts, no request goes out, and no store is read for its entries. The trust is one record for each path with the hash of the bytes, as the paranoid mode of mise; each change asks again. A command that names a server of an untrusted file asks with a TTY, and stops with exit 2 and the entries with no TTY. No flag and no environment variable give trust. After the trust, a project entry wins over a global entry of the same name. The rules are in docs/design/project-config.md. | — |
 | S6 | MUST | If a daemon exists, it listens only on a Unix socket that only the user can open. No network listener. | — |
 | S7 | MUST | On macOS, use the login Keychain through `/usr/bin/security`. Reason: `ncp` has no paid Developer ID; an ad-hoc signed binary changes identity at each update, and the native Keychain API then asks again for each item, which an agent cannot answer. `ncp` gives each command to `security -i` on standard input, because a value in the process arguments breaks S3. One input line holds at most 4095 bytes, and some token sets are longer (for example from Entra ID). Thus a value that does not fit one line is kept in several items. A save that fails before its end keeps the old value. Put the credential store behind one internal interface, so that a change of storage model or signing method changes only that module. | — |
 | S8 | MUST | A credential store call that gives no answer in 60 s stops with an error. A locked store waits for its unlock prompt with no limit, and on a machine with no display nobody can answer the prompt. | — |

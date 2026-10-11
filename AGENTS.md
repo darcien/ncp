@@ -25,6 +25,9 @@ written in Rust on the official SDK `rmcp`.
   Add a new report instead.
 - Take prior art from the official MCP specification, SDKs and test parts,
   and from tools of established vendors (frontier AI labs and major editors).
+- For command-line behavior (names, flags, files, trust), use uv and mise
+  as the first references. Use another tool (for example direnv) only when
+  uv and mise have no answer, and say so.
 - Use a small project of one person only as an example.
 
 ## Secrets: no detection

@@ -31,7 +31,7 @@ the decisions and their reasons.
      reference: many tools keep secrets in a plain file; `ncp` does not.
   3. Good ergonomics: the first try works, an error gives the exact fix,
      nothing hangs.
-  4. Common practice of well-known tools, uv first.
+  4. Common practice of well-known tools: uv and mise first.
   5. The simplest design.
 - The network commands use the verbs of the MCP methods (`list`, `call`,
   `read`, `get`).
@@ -60,12 +60,13 @@ ncp [OPTIONS] auth status [<SERVER>]
 ncp [OPTIONS] secret set <NAME> [--server <SERVER>] [--credential-store <native|file>]
 ncp [OPTIONS] secret list
 ncp [OPTIONS] secret delete <NAME> [--server <SERVER> | --unused | --all]
+ncp [OPTIONS] trust [--show | --untrust | --ignore]
 ncp generate-shell-completion <bash|zsh|fish>
 ```
 
 | Command | Network | Result |
 |---|---|---|
-| `server list` | No | Each configured server from the configuration file: name, transport, target. Invalid entries with their errors. It does not start a server and does not read the native store or the file, so it never shows a prompt. |
+| `server list` | No | Each server of the global file and of the project file (section 2.5): name, transport, target, scope, file, and the trust state of a project entry. Invalid entries with their errors. It does not start a server and does not read the native store or the file, so it never shows a prompt. |
 | `server show` | Yes | What the server says about itself in its handshake (`server/discover` or `initialize`): `serverInfo`, protocol version, capabilities and `instructions`, with the configuration target. No other request. |
 | `tool list` | Yes | The tools of the server. Text: one line for each tool, with the name, the title or the first line of the description, and a mark for the read-only or destructive hint. The mark says "hint": the spec tells clients to treat annotations from a server as untrusted. JSON: the full MCP `Tool` objects. When the server has `instructions`, a hint on stderr names `server show`. |
 | `tool show` | Yes | One tool for people to read: title, description, arguments (name, type, required, description, allowed values, default), output, the annotation hints with the spec defaults (B64), and an example call. JSON: the MCP `Tool` object. |
@@ -76,6 +77,7 @@ ncp generate-shell-completion <bash|zsh|fish>
 | `secret set` | No | Reads one value from stdin and keeps it under the name and its destination (section 2.4, B72). On a TTY the question shows the destination, and the input is not shown. The value never goes in an argument (S3). |
 | `secret list` | No | One row for each name and destination, with the place (native store, file, or both) and the servers that use it. Rows that no `${NAME}` in the configuration uses are marked. Never a value. |
 | `secret delete` | No | Deletes the item of one destination, the unused items, or all items of the name, from all places (B72). It says which destinations and places. |
+| `trust` | No | Trusts the project file of the current folder, and shows its entries, as `mise trust`. `--show` shows them and changes nothing; `--untrust` removes the trust; `--ignore` refuses the file (section 2.5). |
 | `generate-shell-completion` | No | The completion script for the shell. Server names come from the configuration. Tool names come only from a cache, or are not completed. Completion never starts a server. |
 
 `ncp --help` shows the normal order of work: `server list`, `server show`,
@@ -220,6 +222,25 @@ LINEAR_KEY --server linear --credential-store file`.
 - OAuth tokens and client credentials are separate items for each server.
   A refresh writes the tokens back to the place that they came from.
 
+### 2.5 Project file
+
+`ncp` also reads a project `.mcp.json` (requirement S5). The rules are in
+[project-config.md](project-config.md); this section gives the short form.
+
+- Search: from the current folder up to the git root. Not `~/.mcp.json`.
+  The user must own the file.
+- Scopes: global (`~/.config/ncp/mcp.json`) and project. For the same name,
+  the trusted project entry wins.
+- Trust: as the paranoid mode of mise. One record for each path with the
+  hash of the bytes. Each change asks again. `ncp trust` trusts, as `mise
+  trust`.
+- Gate: a command that names a server of an untrusted file asks "Trust?
+  [y/N]" with a TTY, and stops with exit 2 and the entries with no TTY.
+  Other commands work as before.
+- `${NAME}` in a trusted project entry expands as in the global file.
+- `server add` and `server remove` write the project file; `--global`
+  writes the global file (milestone 19).
+
 ## 3. Exit codes (I3)
 
 | Code | Class | When |
@@ -273,7 +294,8 @@ Rules:
 | `prompt get` | MCP `GetPromptResult`, or MCP `InputRequiredResult` (code 5) |
 
 ```json
-{"name": "github", "transport": "http", "target": "https://api.example.com/mcp"}
+{"name": "github", "transport": "http", "target": "https://api.example.com/mcp",
+ "scope": "project", "file": "/work/app/.mcp.json", "trust": "trusted"}
 ```
 
 Error object on stderr:
@@ -344,9 +366,11 @@ path in the requirements already does this.
 
 | File | Path | Content | Mode |
 |---|---|---|---|
-| Configuration | `$XDG_CONFIG_HOME/ncp/mcp.json` (`~/.config/ncp/mcp.json`) | `mcpServers` | user choice |
+| Global file | `$XDG_CONFIG_HOME/ncp/mcp.json` (`~/.config/ncp/mcp.json`) | `mcpServers` | user choice |
+| Project file (S5) | `.mcp.json` of the current folder or a parent, up to the git root | `mcpServers` | user choice |
 | Protocol version cache | `$XDG_CACHE_HOME/ncp/protocol-versions.json` | Protocol version for each server and target | 0600 |
 | List cache (P12) | `$XDG_CACHE_HOME/ncp/lists/<server>.json` | Tool lists with `ttlMs` | 0600 |
+| Trust records (S5) | `$XDG_STATE_HOME/ncp/trusted-configs/<hash of path>` and `ignored-configs/<hash of path>` | The hash of the trusted bytes; an ignored record is empty | 0600, in a 0700 directory |
 | Opt-in credential file (C2) | `$XDG_STATE_HOME/ncp/credentials.json` (`~/.local/state/ncp/credentials.json`) | Secrets and OAuth tokens | 0600, in a 0700 directory |
 | Daemon socket (F4, later) | `$XDG_RUNTIME_DIR/ncp/daemon.sock`, else `$TMPDIR/ncp-<uid>/daemon.sock` | — | 0600, in a 0700 directory (S6) |
 
@@ -436,7 +460,7 @@ user reviews them.
 | B53 | After a login, `ncp` removes the tokens item of the other place, with a limit of 5 s; a failure gives a warning. The search for tokens reads the native store and then the file, as for `${NAME}`: a native store that cannot answer does not stop the search, and its error (exit 4, with the reason) is the result only when the file has no tokens. The OAuth steps of a login have the limit of `--timeout`, with exit 3 at the limit; the steps after a `401` (discovery, refresh) have the connect limit of 30 s, after the store read with its own limit. Ctrl-C gives 130. The listener answers each connection in its own task with a limit of 5 s; a redirect with another state gets `400`, and the wait goes on. Discovery that finds no metadata is an error. | Design 2.4: calls read the native store first, so an old copy there would hide new tokens in the file, and a locked keyring must not hide tokens in the file or look like a missing login. Section 3: a timeout is exit 3. C7: nothing waits forever. Any local program or web page can send a request to the listener. The fallback endpoints of rmcp are for 2025-03-26 only. |
 | B54 | When the answer to `server/discover` is a result that is not a discover result (for example an empty result), `ncp` treats the server as legacy and sends `initialize`, as for a JSON-RPC error. | Good ergonomics: the official conformance server answers an unknown method so, and the server works with `initialize`. A modern server gives a discover result. |
 | B55 | Lock files: `$XDG_STATE_HOME/ncp/credentials.lock` for each change of the credential file, and `$XDG_STATE_HOME/ncp/oauth-<server>.lock` for each refresh of the tokens of a server, in the native store or the file. They are empty, mode 0600. A refresh, the save of a login and a logout hold the lock of the server; a login or a logout that cannot get it in 45 s goes on with a warning. A refresh waits at most 45 s for the lock. With the lock, it reads the tokens again, because another process can have refreshed them. A refresh that does not get the lock in 45 s fails with exit 3. When the lock file cannot be made (for example a read-only home), a refresh of tokens in the native store goes on with no lock. | Two processes that refresh at the same time use one refresh token twice; with rotation the second refresh fails, and the user must log in again. Agents start calls in parallel. The file lock of `std` needs no new dependency. |
-| B56 | `-q` and `-v` together are a usage error; `-qq` is the same as `-q`, as uv accepts it. `--output-format json` on a TTY gives pretty JSON (section 4). `-q` keeps the server log of a stdio server and the result. `--config-file` takes a path that is relative to the working directory, and the file must exist (exit 2). `--output-format` changes only the format, not the TTY checks (for example the hidden input of `secret set`). | A quiet run with diagnostics has no meaning. The server log is the only view of a server failure. A typing error in a named path must not look like an empty configuration. |
+| B56 | `-q` and `-v` together are a usage error; `-qq` is the same as `-q`. In uv, `-qq` also hides stdout; `ncp` keeps stdout, because the result is the output. `--output-format json` on a TTY gives pretty JSON (section 4). `-q` keeps the server log of a stdio server and the result. `--config-file` takes a path that is relative to the working directory, and the file must exist (exit 2). `--output-format` changes only the format, not the TTY checks (for example the hidden input of `secret set`). | A quiet run with diagnostics has no meaning. The server log is the only view of a server failure. A typing error in a named path must not look like an empty configuration. |
 | B57 | Removed on 2026-10-10: `ncp` has no `key:=json` and no `key=@path`. JSON arguments come with `{...}` or `-`. The text of a file comes from the shell: `key="$(cat FILE)"`. | Not in the spec, and a second form for each job. A value that starts with `@`, for example an npm scope or a user name, must stay text and never read a file. |
 | B58 | `resource read` follows I1: JSON (`ReadResourceResult`) in a pipe, text on a TTY. On a TTY, text gets the escapes of B15, and a blob shows as one summary line. With `--output-format text` in a pipe, it writes the one content as it is: the text, or the bytes of the blob. A resource with more than one content then is a usage error with the hint `--output-format json`, and `ncp` decodes before it writes, so that stdout stays empty after an error. A server with no `resources` or `prompts` capability gives an empty list and a hint. A server with no `resources/templates/list` gives no templates. "Invalid params" and "resource not found" are usage errors with the hint `ncp resource list SERVER` or `ncp prompt list SERVER`. Prompt arguments are `key=value`: the spec gives them as text. `input_required` gives exit 5, as for `tool call`. A list whose server gives a page cursor again stops with exit 3. | I1 is a MUST. The raw form lets an image go into a file. Binary data on a terminal can change the terminal. Several contents have no raw form: their borders and types would be lost. A repeated cursor would make the list endless. |
 | B59 | clap writes the static part of each completion script (commands, options, value choices). A server name comes from `ncp __complete-servers` at completion time, and only a name that passes the name rule goes out, because a shell expands each word again: a word that is not in the grammar, so that the scripts do not offer it. It reads only the configuration file, writes one name on each line, and writes nothing (exit 0) when the configuration cannot be read. The scripts run it at the server argument of each command. A tool name comes from `ncp __complete-tools SERVER`, which reads the list cache of the server, also an old one, when the list is of the configured entry (same target and digest), and gives only names of the characters `A-Z a-z 0-9 _ - .`: a tool name comes from a server, and a shell expands the words again. With no cache, no tool name completes. The hidden words read the default configuration file: `--config-file` on the command line does not change the names, because each of the three scripts would need to parse it. | The dynamic engine of clap_complete needs unstable features of two crates. The hidden word starts no server and opens no store, so a tab is fast and shows no prompt. Tool names need a running server or a cache. |

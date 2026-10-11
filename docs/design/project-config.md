@@ -1,22 +1,18 @@
 # Design: project configuration files
 
-Status: proposal, revision 4 (2026-10-11). Not accepted. Build:
-[plan.md](../plan.md) milestone 18 (gate).
+Status: accepted by the user on 2026-10-11, revision 4. Build:
+[plan.md](../plan.md) milestone 18.
 
-Revision 4 records the user decisions A to E and G, and the review of
-the commands (H). It uses the terms
-and the commands of `mise trust`, and keeps a refusal for the project
-root, as mise does
-([mise-trust-merge.md](../research/mise-trust-merge.md)).
+Revision 4 records the user decisions A to G and the review of the
+commands. The reference for each rule is mise first, then uv
+([mise-trust-merge.md](../research/mise-trust-merge.md)). Other tools are
+named only for facts about `.mcp.json`, or where mise and uv have no
+answer.
 
-Revision 3 uses the cited prior art in
+Revision 3 used the cited prior art in
 [project-trust-prior-art.md](../research/project-trust-prior-art.md) (PTA)
-and a discussion of three reviewers: a regular user, an adversarial
-reviewer and a simplicity reviewer. Section 3 gives the rules with the
-recommended option for each open decision. Section 7 lists each decision,
-its options, the tools that use each option, and the positions of the
-reviewers, so that the user can choose another option for one point and
-keep the rest.
+and three reviewers. Section 3 gives the rules. Section 7 records each
+decision with its options and prior art.
 
 Context: requirement S5, the threat model in
 [requirements.md](../requirements.md) §3.3, [cli.md](cli.md) C1a, §2.4 and
@@ -61,15 +57,18 @@ commit can change it. These paths are in the threat model (§3.3):
 Out of scope, as in §3.3: a hostile process of the same user, and the code
 that a trusted command runs. The scripts that the command loads (for
 example `server.js`) are not part of the trust; Cursor and Claude Code
-have the same limit. A project environment loader (direnv, mise) that sets
+have the same limit. A project environment loader (for example mise `[env]`) that sets
 `XDG_CONFIG_HOME` or `XDG_STATE_HOME` needs its own trust, and it can
 already run any code as the user, so `ncp` accepts this risk.
 
 Accepted risks:
 - An agent can run `ncp trust`, and an agent in a pseudo-terminal (for
   example tmux) can answer the question. `ncp` cannot tell a person from
-  an agent. The guard is the permission rules of the agent: the user can
-  deny `ncp trust` there (decision D).
+  an agent. The guard is the permission rules of the agent (decision D).
+  That guard is weak: a deny rule for `ncp trust` does not match `ncp -q
+  trust`, and `--config-file .mcp.json` runs a file with no trust
+  question. `ncp` is not the security boundary for an agent that can run
+  commands.
 - After the trust, a project entry can send an environment variable to a
   host of the project (T3). The shown entries give each `${NAME}` with
   its host, as the only guard (decision C).
@@ -194,13 +193,18 @@ Accepted risks:
      the current folder:
      - `ncp trust` trusts the file at once, shows its entries, and removes
        an ignored record. It asks no question and needs no TTY, as `mise
-       trust` and `direnv allow`. The user typed the command, so the user
-       means it. A question would not stop an agent (section 2).
+       trust`. The user typed the command, so the user means it. A
+       question would not stop an agent (section 2). A second `ncp trust`
+       exits 0.
      - `ncp trust --show` shows the entries and the state, and changes
        nothing. An agent uses it to show the entries to the user before
        it runs `ncp trust`.
      - `ncp trust --untrust` removes the trusted record (rule 4).
      - `ncp trust --ignore` writes the ignored record.
+     - `--show`, `--untrust` and `--ignore` are one group: only one of
+       them, as in mise. A file that fails the owner check or does not
+       parse gives exit 2 and writes no record. With no project file, or
+       with `--config-file`, the command stops with exit 2.
    - The shown entries: the path of the file, then one line for each
      server, with the escapes of B15 (T8):
      - a stdio entry: the full command and each argument, as the MCP
@@ -225,7 +229,12 @@ Accepted risks:
    - There is no flag and no environment variable that trusts for one
      run. A run that needs the project servers with no person, for example
      in CI, gives the file with `--config-file`. The user then names the
-     file, and its entries follow the rules of a global file.
+     file, and its entries follow the rules of a global file. The help of
+     `--config-file` says that `ncp` runs the servers of that file with no
+     trust question. No hint names `--config-file`.
+   - An error about a `${NAME}` or a server that only an untrusted or
+     ignored project entry names (for example at `secret set NAME`) names
+     the file and its state, with the hint `ncp trust`.
 
 6. **Expansion.** After the trust, a project entry expands `${NAME}` in
    the same fields and from the same sources as a global entry (Decision
@@ -298,18 +307,18 @@ Accepted risks:
 - `-v` names the project file that `ncp` read, or the folder where the
   search stopped.
 - `ncp trust` and its options write `{"file", "trust", "servers"}`, with
-  the values of `"trust"` above. `"servers"` holds
-  the shown entries of rule 5. With no project file, the command stops
-  with exit 2.
+  the values of `"trust"` above. Each item of `"servers"` has the object
+  shape of `server list`. The text is the shown entries of rule 5.
 - The question goes to stderr, as the other questions (B63).
 
 ## 5. Changes in other documents
 
-- [requirements.md](../requirements.md): S5 becomes MUST with the rules of
-  section 3 in short form. §3.3 gets the accepted risks of section 2.
-- [cli.md](cli.md): §1 gets `ncp trust`; §4 gets `scope` and `file` in
-  `server list`; a new section for the project file; new B-rows for the
-  small rules.
+- [requirements.md](../requirements.md): S5 is MUST with the rules of
+  section 3 in short form, and §3.3 has the accepted risks of section 2
+  (done 2026-10-11).
+- [cli.md](cli.md): `ncp trust` in §2, `scope`, `file` and `trust` in
+  `server list` (§4), the trust records in §6, and section 2.5 for the
+  project file (done 2026-10-11).
 - [plan.md](../plan.md) milestones 18 and 19, and the proposal for
   `server add`: linked to this design on 2026-10-11.
 
@@ -394,7 +403,7 @@ Question: where does `ncp` look for `.mcp.json`?
 |---|---|---|
 | Current folder only | VS Code, Gemini, Goose | Simplicity |
 | **Up to the git root, stop at home and root; owner checks of the file and its folder** | Codex and OpenCode stop at the git root; Claude Code keys trust on it; git checks owners | User, adversarial |
-| Up to `/` | direnv, Cargo | — |
+| Up to `/` | mise (all files from `/` down), Cargo | — |
 
 Reason: a user works in subfolders of a repository. The owner checks
 stop the `/tmp/.mcp.json` case (git CVE-2022-24765) for little code.
@@ -492,17 +501,17 @@ tool uses it.
 
 | Option | Prior art (PTA) | Reviewer |
 |---|---|---|
-| `ncp project approve`, which asks only on a TTY (revision 3) | `direnv allow`, `mise trust` | User |
+| `ncp project approve`, which asks only on a TTY (revision 3) | `mise trust` (with no question) | User |
 | A flag for one run, not saved | Gemini `--skip-trust`, VS Code `--disable-workspace-trust` | Adversarial |
 | `--config-file .mcp.json` only | — | Simplicity |
-| **`ncp trust`, with no question and no TTY; `--show`, `--untrust`, `--ignore`** | `mise trust` and its options; `direnv allow` | User (2026-10-11) |
+| **`ncp trust`, with no question and no TTY; `--show`, `--untrust`, `--ignore`** | `mise trust` and its options | User (2026-10-11) |
 
 Reason:
 - The need of a TTY protects little. An agent can make a TTY with tmux
   or `script`. An agent that can run `ncp trust` can also run the
   command of the server directly. The guard is the permission rules of
   the agent, and the user controls them.
-- `mise trust` and `direnv allow` need no TTY, and agents run them.
+- `mise trust` needs no TTY, and agents run it.
 - A flag such as `--yes` or a hash of the bytes adds nothing. An agent
   can add either one. `ncp trust` reads the file one time, so it shows
   and trusts the same bytes, with no race.
@@ -564,7 +573,7 @@ Facts:
 | A new worktree or a new clone at another path | no question | asks one time | asks one time |
 
 Options:
-- **Path + bytes, no inheritance (direnv rule).** Chosen. Only option
+- **Path + bytes, no inheritance (mise paranoid mode).** Chosen. Only option
   that closes T1 and T2. The question names the project root, so a new
   path is a new decision. Cost: one trust for each new folder.
 - Bytes only. Fewer questions. Opens T1 for repositories that share a
