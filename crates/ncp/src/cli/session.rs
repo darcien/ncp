@@ -730,6 +730,8 @@ fn connect_failure(
     };
     let failure = if exit == Exit::Auth {
         failure.hint(login_hint(server))
+    } else if is_not_found(error) {
+        failure.hint("check the path of the URL in the entry: the server has no MCP endpoint there, and many servers use /mcp")
     } else {
         failure
     };
@@ -738,6 +740,13 @@ fn connect_failure(
         Transport::Http(remote) => through_proxy(env, &remote.url, failure),
         _ => failure,
     }
+}
+
+/// True for an answer `404` to the handshake: a URL with a wrong path,
+/// for example with no `/mcp`. rmcp keeps only the text of the status, as
+/// `HTTP 404`, so the check reads the text of the pinned version.
+fn is_not_found(error: &ConnectError) -> bool {
+    matches!(error, ConnectError::Handshake { .. }) && error.to_string().contains("HTTP 404")
 }
 
 /// The text for a certificate of an unknown issuer. rmcp keeps no cause of

@@ -536,3 +536,41 @@ fn remove_deletes_only_the_tokens_bound_to_the_entry() {
     assert_eq!(run.stdout()["credentialStores"], json!([]));
     assert_eq!(home.file_accounts(), ["oauth/other/tokens"]);
 }
+
+/// A local HTTP server that answers each request with `404`, as a server
+/// does for a path with no MCP endpoint.
+fn not_found_server() -> String {
+    use std::io::{Read as _, Write as _};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().filter_map(Result::ok) {
+            let mut buffer = [0; 8192];
+            let _ = stream.read(&mut buffer);
+            let _ = stream.write_all(
+                b"HTTP/1.1 404 Not Found\r\ncontent-length: 9\r\nconnection: close\r\n\r\nNot Found",
+            );
+        }
+    });
+    url
+}
+
+#[test]
+fn a_url_with_a_wrong_path_gives_a_hint_at_the_first_connect() {
+    let url = not_found_server();
+    let home = Home::new("a-wrong-path");
+    assert_eq!(
+        home.run(&["server", "add", "web", &url, "--global"]).code(),
+        0
+    );
+    let run = home.run(&["server", "show", "web"]);
+    assert_eq!(run.code(), 3, "{}", run.describe());
+    assert!(
+        run.error()["hint"]
+            .as_str()
+            .unwrap()
+            .starts_with("check the path of the URL"),
+        "{}",
+        run.describe()
+    );
+}
