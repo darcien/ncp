@@ -47,8 +47,8 @@ pub fn value_destination(server: &Server) -> Result<Destination, OriginError> {
 }
 
 /// The destination of a client secret: the origin of `oauth.issuer`. The
-/// issuer is literal text in the file, and B68 checks the issuer of the
-/// metadata against it before each send.
+/// issuer is literal text in the file, and `ncp` checks the issuer of the
+/// metadata against it before each send (design B68).
 ///
 /// # Errors
 ///

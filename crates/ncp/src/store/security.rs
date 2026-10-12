@@ -266,7 +266,6 @@ impl SecurityStore {
         }
     }
 
-    /// The stored text of one item.
     fn find(&self, account: &str, deadline: Instant) -> Result<Option<String>, StoreError> {
         let output = self.run(
             &["find-generic-password", "-s", SERVICE, "-a", account, "-w"],

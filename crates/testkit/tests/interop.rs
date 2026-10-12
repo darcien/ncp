@@ -5,7 +5,7 @@
 //! default. Run them with `mise run interop` after `mise run
 //! interop:install`. They need no network.
 
-// The whole file is test code, where the agent rules permit unwrap.
+// Test code can use unwrap: a panic is a test failure.
 #![allow(clippy::unwrap_used)]
 
 mod common;

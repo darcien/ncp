@@ -229,11 +229,11 @@ pub fn configured(env: &Env, observer: &Observer) -> Result<reqwest::ClientBuild
 }
 
 /// Replaces the system roots with the roots in the file that
-/// `SSL_CERT_FILE` names, on each OS, as uv does. On Linux
-/// the system store reads the variable in place of the system roots, so a
-/// merge would give a different rule on each OS. A file that `ncp` cannot
-/// use is an error, because a silent fallback gives a TLS error that does
-/// not name the cause.
+/// `SSL_CERT_FILE` names, on each OS, as uv does. On Linux, the system
+/// store reads the variable in place of the system roots, so a merge would
+/// give a different rule on each OS. A file that `ncp` cannot use is an
+/// error, because a silent fallback gives a TLS error that does not name
+/// the cause.
 fn with_cert_file(
     builder: reqwest::ClientBuilder,
     env: &Env,
@@ -241,8 +241,8 @@ fn with_cert_file(
     let Some(path) = env.get(CERT_FILE) else {
         return Ok(builder);
     };
-    // On Linux the system store reads the variable too, and an empty value
-    // there loads no root at all. The same error on each host is clearer.
+    // On Linux, an empty value loads no root at all. The same error on each
+    // host is clearer.
     if path.is_empty() {
         return Err(HttpError::CertFile {
             path: String::new(),
@@ -293,7 +293,6 @@ pub type Observed = ObservedHttp<reqwest::Client>;
 /// refreshes it after a `401` (rmcp `AuthClient`).
 pub type Authorized = AuthClient<Observed>;
 
-/// The HTTP client of the transport, with the observer.
 #[must_use]
 pub fn observed(http: &reqwest::Client, observer: &Observer) -> Observed {
     ObservedHttp {

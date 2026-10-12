@@ -47,7 +47,6 @@ impl CachedTools {
         fresh.then_some(self)
     }
 
-    /// The age of the list.
     #[must_use]
     pub fn age(&self, now_ms: u64) -> Duration {
         Duration::from_millis(now_ms.saturating_sub(self.fetched_at_ms))
@@ -111,7 +110,6 @@ pub fn remove_all(cache_dir: &Path) {
     let _ = std::fs::remove_dir_all(cache_dir.join("lists"));
 }
 
-/// The file of the tools of a server.
 #[must_use]
 pub fn path(cache_dir: &Path, server: &ServerName) -> PathBuf {
     cache_dir
@@ -144,7 +142,6 @@ pub fn remove(path: &Path) {
     let _ = std::fs::remove_file(path);
 }
 
-/// Milliseconds since the Unix epoch.
 #[must_use]
 pub fn now_ms() -> u64 {
     std::time::SystemTime::now()

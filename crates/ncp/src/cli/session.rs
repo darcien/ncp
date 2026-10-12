@@ -64,7 +64,6 @@ pub struct Context<'a> {
     pub open_browser: super::auth::OpenBrowser,
     /// Present with `--timings`.
     pub timings: Option<Arc<Timings>>,
-    /// What `ncp` does with its caches.
     pub cache: CacheUse,
     /// A person can answer questions: stdin and stderr are a TTY.
     pub interactive: bool,
@@ -437,9 +436,9 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
     Ok(connection)
 }
 
-/// The stored login. The store read has its own limit of 60 s, so
-/// it comes first. The OAuth steps after it (discovery, a refresh) have
-/// the limit of the connect and Ctrl-C (design C7).
+/// The store read has its own limit of 60 s, so it comes first. The OAuth
+/// steps after it (discovery, a refresh) have the limit of the connect and
+/// Ctrl-C (design C7).
 async fn stored_login(
     context: &Context<'_>,
     login: &super::auth::StoredLogin<'_>,
@@ -514,9 +513,9 @@ pub async fn open_with_login(
 }
 
 /// The `WWW-Authenticate` challenge of the server, from a connect and a
-/// `tools/list` with no token. `auth login` uses it for discovery and for the scopes, as the
-/// spec describes (MCP 2025-11-25, basic/authorization, "Authorization
-/// Server Discovery"). `None` when the server needs no login or gives no
+/// `tools/list` with no token. `auth login` uses it for discovery and for
+/// the scopes (MCP 2025-11-25, basic/authorization, "Authorization Server
+/// Discovery"). `None` when the server needs no login or gives no
 /// challenge.
 ///
 /// # Errors
@@ -639,8 +638,8 @@ impl Prepared {
         }
     }
 
-    /// Saves the protocol version when it changed. A cache that cannot be
-    /// written gives a warning: `ncp` works the same with no cache.
+    /// A cache that cannot be written gives only a warning, because `ncp`
+    /// works the same with no cache.
     fn save_version(self, context: &Context<'_>, server: &Server, version: &ProtocolVersion) {
         if !context.cache.writes() || self.cached.as_ref() == Some(version) {
             return;
@@ -867,7 +866,6 @@ fn with_secret_hints(failure: Failure, server: &Server, stored: &[SecretName]) -
     Failure { hints, ..failure }
 }
 
-/// The command that logs in to the server.
 fn login_hint(server: &Server) -> String {
     format!(
         "ncp auth login {}",
@@ -899,7 +897,6 @@ fn token_store_failure(server: &Server, text: &str) -> Failure {
         .hint(format!("{} --credential-store file", login_hint(server)))
 }
 
-/// The failure of a request after the connect.
 #[must_use]
 fn server_error(method: &str, data: &rmcp::ErrorData) -> Failure {
     Failure::protocol(format!(

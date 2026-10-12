@@ -286,7 +286,6 @@ fn tools() -> Vec<Tool> {
     ]
 }
 
-/// The cursor of a list request, when the client gives one.
 fn cursor(request: Option<&PaginatedRequestParams>) -> Option<&str> {
     request.and_then(|params| params.cursor.as_deref())
 }
@@ -687,7 +686,7 @@ struct OAuthAccess {
     auth: auth_server::AuthState,
     step_up: Option<StepUp>,
     /// The handshake and the stream requests need no token; the other
-    /// requests do. Some servers work so.
+    /// requests do. Some real servers work this way.
     open_handshake: bool,
 }
 
@@ -857,7 +856,6 @@ fn challenge(status: http::StatusCode, value: &str) -> FixtureResponse {
     response
 }
 
-/// True when the JSON-RPC body calls the tool.
 fn calls_tool(body: &[u8], tool: &str) -> bool {
     serde_json::from_slice::<serde_json::Value>(body)
         .is_ok_and(|message| message["method"] == "tools/call" && message["params"]["name"] == tool)
@@ -1057,7 +1055,6 @@ async fn read_head(reader: &mut (impl tokio::io::AsyncBufRead + Unpin)) -> Optio
     }
 }
 
-/// The loopback address of a `CONNECT` request line, or `None`.
 fn loopback_target(first: &str) -> Option<std::net::SocketAddr> {
     let authority = first.strip_prefix("CONNECT ")?.split_whitespace().next()?;
     authority

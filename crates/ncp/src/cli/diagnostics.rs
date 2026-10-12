@@ -112,7 +112,6 @@ fn hide_url_in(text: &str, url: &str, shown: &str) -> String {
     }
 }
 
-/// Adds the time of the event to the timings.
 fn record(timings: &Timings, event: &Event<'_>) {
     match event {
         Event::Response { elapsed, .. } => {

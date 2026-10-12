@@ -1,15 +1,16 @@
 //! The client core: connect to a server, find its protocol version, list
 //! and call tools.
 //!
-//! Version detection: `ncp` probes with `server/discover` in its own timeout. On
-//! an error of a server with no `server/discover`, or a timeout, it connects again on a new transport with
-//! `initialize`. rmcp `Auto` mode is not used: when a slow server answers
-//! the probe late, the late answer arrives on the same transport and the
+//! Version detection: `ncp` probes with `server/discover` in its own
+//! timeout. When the server does not know `server/discover`, or the probe
+//! times out, `ncp` connects again on a new transport with `initialize`.
+//! `ncp` does not use the rmcp `Auto` mode: when a slow server answers the
+//! probe late, the late answer arrives on the same transport and the
 //! handshake fails (see docs/research/early-tests.md).
 //!
-//! Time limits: the spec says that a client SHOULD set a timeout for each
-//! request (MCP 2025-11-25, basic/lifecycle, "Timeouts"). The whole connect
-//! has one limit, and each later request has its own limit. An agent must
+//! Time limits: a client SHOULD set a timeout for each request (MCP
+//! 2025-11-25, basic/lifecycle, "Timeouts"). The whole connect has one
+//! limit, and each later request has its own limit, because an agent must
 //! not wait forever.
 
 pub mod http;
@@ -49,7 +50,7 @@ use crate::{
 };
 
 /// The time that `server/discover` gets before the fallback to
-/// `initialize`. It is the rmcp value.
+/// `initialize`. It is the value of rmcp.
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The limit of the whole connect: the server start, the probe, and
@@ -63,7 +64,6 @@ pub const REQUEST_LIMIT: Duration = Duration::from_secs(300);
 /// that does not read them must not keep `ncp` from its exit.
 const CANCEL_LIMIT: Duration = Duration::from_secs(2);
 
-/// All inputs to connect to one server.
 pub struct Launch<'a> {
     pub server: &'a Server,
     pub cached_version: Option<&'a ProtocolVersion>,
@@ -71,25 +71,20 @@ pub struct Launch<'a> {
     pub base_env: &'a Env,
     /// The `env` or `headers` values of the entry, after expansion.
     pub values: &'a Values,
-    /// The HTTP client. An http server needs it; a stdio server does not.
     pub http: Option<&'a reqwest::Client>,
     /// Normally [`PROBE_TIMEOUT`].
     pub probe_timeout: Duration,
     /// Normally [`CONNECT_LIMIT`].
     pub connect_limit: Duration,
-    /// Where the stderr of a stdio server goes.
     pub server_log: &'a stdio::ServerLog,
-    /// Fires on Ctrl-C. The connect then stops with no cancel request.
+    /// On Ctrl-C, the connect stops with no cancel request.
     pub cancel: &'a CancellationToken,
-    /// Gets the messages and the times of the connection.
     pub observer: &'a observe::Observer,
-    /// The OAuth client with the stored tokens, for an http server that
-    /// needs a login.
+    /// Only for an http server that needs a login.
     pub authorized: Option<&'a http::Authorized>,
-    /// Gets the progress notifications of the requests.
     pub progress: &'a ProgressSink,
-    /// Answers an elicitation of the server: a person at a TTY. With no
-    /// elicitor, `ncp` says that it cannot answer one.
+    /// A person at a TTY. With no elicitor, `ncp` tells the server that it
+    /// cannot answer an elicitation.
     pub elicitor: Option<&'a Elicitor>,
 }
 
@@ -164,7 +159,6 @@ pub enum RequestError {
 }
 
 impl ConnectError {
-    /// The error of the store of the OAuth tokens.
     #[must_use]
     pub fn token_store_error(&self) -> Option<String> {
         match self {
@@ -221,7 +215,6 @@ impl RequestError {
         }
     }
 
-    /// The error of the store of the OAuth tokens.
     #[must_use]
     pub fn token_store_error(&self) -> Option<String> {
         match self {
@@ -251,7 +244,8 @@ impl RequestError {
 
 type Service = RunningService<RoleClient, Handler>;
 
-/// One progress notification of a request (MCP basic/utilities/progress).
+/// One progress notification of a request (MCP 2025-11-25,
+/// basic/utilities/progress).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Progress {
     pub progress: f64,
@@ -259,8 +253,7 @@ pub struct Progress {
     pub message: Option<String>,
 }
 
-/// The function that gets the progress of each request. rmcp adds a
-/// progress token to each request.
+/// rmcp adds a progress token to each request.
 #[derive(Clone, Default)]
 pub struct ProgressSink(Option<Arc<ProgressFunction>>);
 
@@ -304,7 +297,8 @@ struct Handler {
     elicitor: Option<Elicitor>,
     /// True while a request waits for its answer. `ncp` sends one request
     /// at a time, so a notification out of that time is for no active
-    /// request (the spec: a client SHOULD track active progress tokens).
+    /// request. A client SHOULD track active progress tokens (MCP
+    /// 2025-11-25, basic/utilities/progress).
     active: Arc<AtomicBool>,
     /// True after `ncp` refused a question of a server, because it has no
     /// one to ask.
@@ -386,13 +380,11 @@ pub struct Connection {
     service: Service,
     version: ProtocolVersion,
     process: Option<stdio::Process>,
-    /// True when the connection sends the OAuth token of a login.
     authorized: bool,
-    /// Set when `ncp` refused a question of the server.
     refused: Arc<AtomicBool>,
 }
 
-/// Connects to the server, and finds its protocol version.
+/// Connects to the server and finds its protocol version.
 ///
 /// # Errors
 ///
@@ -405,8 +397,10 @@ pub async fn connect(launch: &Launch<'_>) -> Result<Connection, ConnectError> {
         Startup::Discover(version) => probe(launch, version, deadline).await,
         Startup::Initialize(version) => {
             match initialize(launch, version, Phase::Initialize, deadline).await {
-                // The server can use `server/discover` now: probe again. Over HTTP the
-                // rejection of `initialize` is not always a JSON-RPC error.
+                // The cached version is old if the server now knows
+                // `server/discover`. Over HTTP, the rejection of
+                // `initialize` is not always a JSON-RPC error, so each
+                // handshake failure probes again.
                 Err(ConnectError::Handshake { .. }) => {
                     probe(launch, ProtocolVersion::first_with_discover(), deadline).await
                 }
@@ -474,11 +468,9 @@ async fn initialize(
     .await
 }
 
-/// Starts a new transport and runs one handshake on it, until the deadline.
-///
-/// After the deadline a stdio server gets the stop steps, and no cancel
-/// request: the spec says that a client MUST NOT cancel `initialize`
-/// (MCP 2025-11-25, basic/utilities/cancellation).
+/// After the deadline, a stdio server gets the stop steps and no cancel
+/// request, because a client MUST NOT cancel `initialize` (MCP 2025-11-25,
+/// basic/utilities/cancellation).
 async fn handshake(
     launch: &Launch<'_>,
     lifecycle: ClientLifecycleMode,
@@ -500,8 +492,6 @@ async fn handshake(
             let (process, stdout, stdin) =
                 stdio::spawn(server, &env, launch.server_log).map_err(|source| {
                     ConnectError::Spawn {
-                        // The command as the file writes it: an expanded
-                        // value must not show.
                         command: configured_command(launch.server),
                         cwd: match &launch.server.target {
                             Target::Stdio { cwd, .. } => cwd.clone(),
@@ -589,7 +579,7 @@ async fn handshake(
     })
 }
 
-/// The command as the file writes it: an expanded value must not show.
+/// The command as the file has it, because an expanded value must not show.
 fn configured_command(server: &Server) -> String {
     match &server.target {
         Target::Stdio { command, .. } => command.clone(),
@@ -597,7 +587,6 @@ fn configured_command(server: &Server) -> String {
     }
 }
 
-/// How a handshake ended.
 enum Ended<T> {
     Done(T),
     TimedOut,
@@ -613,7 +602,6 @@ impl<T> Ended<T> {
     }
 }
 
-/// Runs the handshake until it ends, the deadline passes, or Ctrl-C.
 async fn race<T>(
     handshake: impl Future<Output = T>,
     deadline: Instant,
@@ -627,8 +615,8 @@ async fn race<T>(
     }
 }
 
-/// The client information. A client with a person at a TTY says that it
-/// can answer elicitation in form and URL mode; else a server must not ask.
+/// Only a client with a person at a TTY declares elicitation in form and
+/// URL mode, because a server must not ask a client with no one to answer.
 fn client_info(elicitation: bool) -> ClientConfig {
     let mut capabilities = ClientCapabilities::default();
     if elicitation {
@@ -901,8 +889,8 @@ impl Connection {
         }
     }
 
-    /// All pages of a list. Each page is one request with its own limits
-    /// (the spec: the time limit applies to each request).
+    /// Each page is one request with its own limits, because the spec
+    /// applies the time limit to each request.
     async fn pages<T>(
         &self,
         limits: RequestLimits<'_>,
@@ -962,8 +950,8 @@ impl Connection {
         }
     }
 
-    /// Sends one request. When the cancel token fires or the time limit
-    /// passes, sends `notifications/cancelled` for the request.
+    /// On Ctrl-C or at the time limit, sends `notifications/cancelled` for
+    /// the request.
     async fn request(
         &self,
         request: ClientRequest,

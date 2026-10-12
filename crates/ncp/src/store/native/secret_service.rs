@@ -20,14 +20,13 @@ pub struct NativeStore {
 
 impl NativeStore {
     /// Opens the Secret Service. This connects to the session bus, so it
-    /// blocks.
+    /// blocks. The calls run in this process, so the limit of the caller is
+    /// enough: nothing stays after the exit of `ncp`.
     ///
     /// # Errors
     ///
     /// Returns an error when there is no usable Secret Service, for example
     /// with no session bus.
-    /// The calls run in this process, so the limit of the caller is enough:
-    /// nothing stays after the exit of `ncp`.
     pub fn open(_limit: std::time::Duration) -> Result<Self, StoreError> {
         platform_store()
             .map(|store| Self { store })

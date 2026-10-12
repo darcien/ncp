@@ -66,7 +66,6 @@ impl TokenStore {
         }
     }
 
-    /// The adapter that gives the time of each call to the store.
     #[must_use]
     pub fn with_timer(self, timer: Option<StoreTimer>) -> Self {
         Self { timer, ..self }

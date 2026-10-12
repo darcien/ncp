@@ -1,7 +1,7 @@
 //! The `ncp` command line, built in the test kit. Cargo gives the tests of
 //! a package only the paths of the binaries of that package. This binary
-//! runs the same code as `ncp`, with two changes, so that a test never uses
-//! the real Keychain, the real Secret Service, or a real browser:
+//! runs the same code as `ncp`, with these changes, so that a test never
+//! uses the real Keychain, the real Secret Service, or a real browser:
 //!
 //! - The native store is the fake `security` program at the path in
 //!   `NCP_TEST_SECURITY_PROGRAM`, or no store when that variable is not set.

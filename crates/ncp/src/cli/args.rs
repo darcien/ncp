@@ -51,9 +51,9 @@ pub struct GlobalOptions {
     )]
     pub timeout: u64,
     /// Show diagnostics on stderr: where each value comes from (never the
-    /// value), the proxy route, the cached protocol version. -vv also shows the JSON-RPC
-    /// messages and the HTTP requests. The credentials of the connection
-    /// are hidden; the messages show as they are.
+    /// value), the proxy route, the cached protocol version. -vv also shows
+    /// the JSON-RPC messages and the HTTP requests. The credentials of the
+    /// connection are hidden; the messages show as they are.
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
     pub verbose: u8,
     /// Show the time of each step on stderr: CPU, configuration,
@@ -63,11 +63,12 @@ pub struct GlobalOptions {
     /// Show no hints and no warnings on stderr. Errors stay.
     #[arg(short, long, global = true, conflicts_with = "verbose", action = clap::ArgAction::Count)]
     pub quiet: u8,
-    /// Read and write no cache: no cached protocol version and no cached tool list.
+    /// Read and write no cache: no cached protocol version and no cached
+    /// tool list.
     #[arg(long, global = true)]
     pub no_cache: bool,
-    /// Read no cache, but write it: find the protocol version and get the tool list
-    /// again. --no-cache wins over it, as in uv.
+    /// Read no cache, but write it: find the protocol version and get the
+    /// tool list again. --no-cache wins over it, as in uv.
     #[arg(long, global = true)]
     pub refresh: bool,
     /// The output format. Default: text on a TTY, else JSON.

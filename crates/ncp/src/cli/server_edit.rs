@@ -477,8 +477,6 @@ fn trust_written(context: &Context<'_>, target: &Target, text: &str) {
     }
 }
 
-/// The result of `server add`: the file, the stored values of the entry,
-/// and the steps that are left.
 async fn report_added(
     context: &Context<'_>,
     target: &Target,

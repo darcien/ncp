@@ -3,7 +3,7 @@
 //! Each test runs the binary with a clean environment and its own `HOME`
 //! and XDG directories. stdout is a pipe, so the output is JSON.
 
-// The whole file is test code, where the agent rules permit unwrap.
+// Test code can use unwrap: a panic is a test failure.
 #![allow(clippy::unwrap_used)]
 
 use std::{

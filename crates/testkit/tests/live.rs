@@ -3,7 +3,7 @@
 //! They change the state of the machine, so they are ignored by default.
 //! See `docs/live-tests.md`.
 
-// The whole file is test code, where the agent rules permit unwrap.
+// Test code can use unwrap: a panic is a test failure.
 #![allow(clippy::unwrap_used)]
 #![cfg(target_os = "macos")]
 

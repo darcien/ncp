@@ -129,7 +129,7 @@ fn list_rows(loaded: &Loaded) -> Vec<render::Row> {
     servers.chain(invalid).chain(waiting).collect()
 }
 
-/// Selects the server named by `word`. A joined word gives the fix.
+/// A joined word gives the fix.
 fn select<'a>(
     context: &Context<'_>,
     loaded: &'a Loaded,
@@ -150,10 +150,10 @@ fn show_fix(server: &str, tool: &str) -> String {
     )
 }
 
-/// Runs `work` on a new connection, and always closes the connection. A
-/// server can let a connect with no token in and answer `401` to a
-/// request; then `work` runs once more on a connection with the stored
-/// login. The server did not do the first request.
+/// Always closes the connection. A server can let a connect with no token
+/// in and answer `401` to a request. Then `work` runs once more on a
+/// connection with the stored login. This is safe, because the server did
+/// not do the first request.
 async fn with_connection<T>(
     context: &Context<'_>,
     server: &Server,
@@ -251,7 +251,6 @@ async fn list(
     }
 }
 
-/// True when the handshake of the server has `instructions`.
 fn has_instructions(connection: &Connection) -> bool {
     connection
         .server_info()
@@ -299,7 +298,6 @@ fn cached_tools(context: &Context<'_>, server: &Server) -> Option<Vec<Tool>> {
     cached_list(context, server).map(|cached| cached.tools)
 }
 
-/// The cached list of the server when it is fresh.
 fn cached_list(context: &Context<'_>, server: &Server) -> Option<list_cache::CachedTools> {
     if !context.cache.reads() {
         return None;
@@ -534,7 +532,6 @@ fn mirrors_parameters(server: &Server, connection: &Connection) -> bool {
         && connection.protocol_version().uses_discover()
 }
 
-/// True when the server says in its handshake that it has the feature.
 fn offers(
     connection: &Connection,
     feature: impl Fn(&rmcp::model::ServerCapabilities) -> bool,

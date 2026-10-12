@@ -6,7 +6,7 @@
 //! run skips them, because the Secret Service of the host must not be used.
 
 #![cfg(target_os = "linux")]
-// The whole file is test code, where the agent rules permit unwrap.
+// Test code can use unwrap: a panic is a test failure.
 #![allow(clippy::unwrap_used)]
 
 use std::time::{Duration, Instant};

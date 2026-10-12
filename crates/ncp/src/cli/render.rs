@@ -18,7 +18,6 @@ use crate::{
     project::{Project, Trust},
 };
 
-/// The transport name of an entry.
 #[must_use]
 pub fn transport_name(server: &Server) -> &'static str {
     match server.transport {
@@ -390,7 +389,6 @@ fn annotation_lines(tool: &Tool) -> String {
     text + &line("open-world", annotations.open_world_hint, true)
 }
 
-/// One tool for people to read.
 #[must_use]
 pub fn tool_show(server: &str, tool: &Tool) -> String {
     let mut text = format!("Tool: {}\n", tool.name);
@@ -583,7 +581,6 @@ fn content_line(block: &Value) -> String {
     }
 }
 
-/// The first line of a text field, or empty.
 fn first_line(value: &Value, key: &str) -> String {
     value
         .get(key)

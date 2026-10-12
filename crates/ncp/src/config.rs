@@ -41,8 +41,8 @@ pub struct Server {
     /// The values after `${NAME}` expansion.
     pub transport: Transport,
     /// The target as the file writes it, before expansion. Output and the
-    /// protocol version cache use it, so an expanded value never goes to a file or to
-    /// the screen.
+    /// protocol version cache use it, so an expanded value never goes to a
+    /// file or to the screen.
     pub target: Target,
 }
 

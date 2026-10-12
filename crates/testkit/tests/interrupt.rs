@@ -4,7 +4,7 @@
 //! foreground process group. The stdio server is in its own process group,
 //! so `ncp` must stop it.
 
-// The whole file is test code, where the agent rules permit unwrap.
+// Test code can use unwrap: a panic is a test failure.
 #![allow(clippy::unwrap_used)]
 
 use std::{

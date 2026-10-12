@@ -1,7 +1,7 @@
 //! Tests of `ncp server add` and `ncp server remove`: the entry, the
 //! target file and its trust, the write, the secret, and the tokens.
 
-// The whole file is test code, where the agent rules permit unwrap.
+// Test code can use unwrap: a panic is a test failure.
 #![allow(clippy::unwrap_used)]
 
 mod common;

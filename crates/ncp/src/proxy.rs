@@ -100,7 +100,6 @@ fn no_proxy_is_set(env: &Env) -> bool {
         .is_some_and(|value| !value.is_empty())
 }
 
-/// The route of a request to the URL.
 #[must_use]
 pub fn route(env: &Env, target: &url::Url) -> Route {
     route_with(env, target, Matcher::from_system, Matcher::from_env)

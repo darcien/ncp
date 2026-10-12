@@ -110,8 +110,8 @@ impl fmt::Display for ProtocolVersion {
 /// How to start a connection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Startup {
-    /// Send `server/discover` in our own timeout. Fall back to `initialize`
-    /// on a new transport.
+    /// Send `server/discover` with a timeout of `ncp`. Fall back to
+    /// `initialize` on a new transport.
     Probe,
     /// Send `server/discover` with this version first.
     Discover(ProtocolVersion),

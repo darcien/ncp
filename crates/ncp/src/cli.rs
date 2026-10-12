@@ -221,11 +221,10 @@ fn named_config_file(path: &std::path::Path) -> Result<std::path::PathBuf, Failu
     }
 }
 
-/// A token that fires on Ctrl-C. Each stdio server runs in its own process
-/// group, so the SIGINT of the terminal does not reach it, and `ncp` can
-/// send the cancel request and stop the server itself (the spec,
-/// basic/utilities/cancellation). A store program stays in the group of
-/// `ncp`, so Ctrl-C stops it too.
+/// Each stdio server runs in its own process group, so the SIGINT of the
+/// terminal does not reach it. Then `ncp` can send the cancel request and
+/// stop the server itself (MCP 2025-11-25, basic/utilities/cancellation).
+/// A store program stays in the group of `ncp`, so Ctrl-C stops it too.
 fn interrupt_token() -> CancellationToken {
     let token = CancellationToken::new();
     // The handler is in place when this function returns, before the first

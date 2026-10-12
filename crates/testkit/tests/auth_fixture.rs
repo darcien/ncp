@@ -1,7 +1,7 @@
 //! Tests of the local authorization server fixture and the OAuth mode of
 //! the HTTP fixture, with plain HTTP requests.
 
-// The whole file is test code, where the agent rules permit unwrap.
+// Test code can use unwrap: a panic is a test failure.
 #![allow(clippy::unwrap_used)]
 
 use std::collections::HashMap;

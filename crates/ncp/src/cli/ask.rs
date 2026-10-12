@@ -200,7 +200,6 @@ impl Asker {
         Ok(())
     }
 
-    /// Asks the person, and gives the action.
     async fn ask(&self, params: &Value) -> Result<Action, Stop> {
         let server = &self.server;
         let request = match elicit::parse(params) {
@@ -387,7 +386,6 @@ pub async fn confirm(context: &Context<'_>, question: &str) -> Result<Option<boo
     }
 }
 
-/// The failure of a question that got no answer.
 fn unanswered(stop: Stop, context: &Context<'_>, server: &str) -> Failure {
     match stop {
         Stop::Interrupted => session::interrupted().server(server),

@@ -4,7 +4,7 @@
 //! A stdio entry writes a marker file when it starts, so that a test can
 //! check that no process started before the trust.
 
-// The whole file is test code, where the agent rules permit unwrap.
+// Test code can use unwrap: a panic is a test failure.
 #![allow(clippy::unwrap_used)]
 
 mod common;

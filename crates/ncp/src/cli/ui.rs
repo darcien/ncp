@@ -77,7 +77,7 @@ impl Ui {
         match self.format {
             Format::Text => write_stdout(&printable(&text())),
             // JSON on a TTY comes only from `--output-format json`; a
-            // person reads it, so it is pretty (section 4).
+            // person reads it, so it is pretty (design section 4).
             Format::Json if std::io::stdout().is_terminal() => {
                 write_stdout(&format!("{}\n", escape_raw_controls(pretty_json(&json()))))
             }
@@ -139,8 +139,9 @@ impl Ui {
         let server = server.to_string();
         let last = std::sync::Mutex::new(None::<std::time::Instant>);
         crate::client::ProgressSink::new(move |progress| {
-            // At most a few lines a second (the spec: rate limiting), but
-            // always the last step.
+            // At most a few lines a second (MCP 2025-11-25,
+            // basic/utilities/progress: rate limiting), but always the last
+            // step.
             let now = std::time::Instant::now();
             let done = progress
                 .total

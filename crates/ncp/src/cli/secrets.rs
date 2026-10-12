@@ -36,8 +36,8 @@ use crate::{
     store::{self, CredentialStore, FileStore, StoreError},
 };
 
-/// Opens the native store of the platform. Each run of a store program has
-/// the limit. Tests give a fake.
+/// Tests replace the native store with a fake. The limit applies to each
+/// run of a store program.
 pub type OpenNative = fn(Duration) -> Result<Arc<dyn CredentialStore>, StoreError>;
 
 /// The production native store: the login Keychain or the Secret Service.
@@ -51,8 +51,8 @@ pub fn open_native(limit: Duration) -> Result<Arc<dyn CredentialStore>, StoreErr
 
 pub(super) type Opened = Result<Arc<dyn CredentialStore>, StoreError>;
 
-/// Opens the native store on a blocking thread. A store program stops
-/// before the limit of the call, so no program stays after `ncp`.
+/// A store program stops before the limit of the call, so no program stays
+/// after `ncp`.
 pub(super) async fn native(context: &Context<'_>) -> Opened {
     open_within(context, store::CALL_LIMIT).await
 }
@@ -110,13 +110,6 @@ pub(super) struct Resolved {
     pub stored: Vec<SecretName>,
 }
 
-/// The expanded `env` or `headers` values of the server.
-///
-/// # Errors
-///
-/// Returns a usage failure for a name that no place has for the
-/// destination of the entry, and an authorization failure when the native
-/// store cannot answer and the file does not have the item.
 pub(super) async fn resolve(context: &Context<'_>, server: &Server) -> Result<Resolved, Failure> {
     let destination = binding::value_destination(server);
     let (values, stored) = values_of(context, server, server.value_names(), destination).await?;
@@ -126,13 +119,8 @@ pub(super) async fn resolve(context: &Context<'_>, server: &Server) -> Result<Re
     Ok(Resolved { values, stored })
 }
 
-/// The expanded `oauth.clientSecret`, or `None` for a client with no
-/// secret. A stored value comes only from the item of the origin of
+/// A stored value comes only from the item of the origin of
 /// `oauth.issuer`. No error shows the value.
-///
-/// # Errors
-///
-/// Returns the failure of [`resolve`] for a name of the template.
 pub(super) async fn client_secret(
     context: &Context<'_>,
     server: &Server,
@@ -156,9 +144,6 @@ pub(super) async fn client_secret(
         })
 }
 
-/// The environment with the value of each name that it does not have,
-/// from the items of the destination in the stores, and the names that
-/// came from a store.
 async fn values_of(
     context: &Context<'_>,
     server: &Server,
@@ -213,8 +198,6 @@ fn not_literal(names: &[&str], error: &OriginError) -> Failure {
     ))
 }
 
-/// The values of the names from the items of the destination, with the
-/// place of each one.
 async fn read_stored(
     context: &Context<'_>,
     server: &Server,
@@ -282,8 +265,8 @@ async fn find(
     Err(miss(server, name, destination, native.as_ref().err()))
 }
 
-/// The stop when no place has the item of the destination. The
-/// message names only the current destination: `ncp` reads no other item.
+/// The message names only the current destination, because `ncp` reads no
+/// other item.
 fn miss(
     server: &Server,
     name: &SecretName,
@@ -611,8 +594,8 @@ async fn warn_about_copies(
         ),
     };
     context.ui.warning(None, &message);
-    // The design gives this command: it removes the copies of this
-    // destination, and then the user stores the value again in one place.
+    // The command removes the copies of this destination. Then the user
+    // stores the value again in one place.
     context.ui.hint(
         None,
         &format!(
@@ -811,7 +794,6 @@ fn warn_unlisted(context: &Context<'_>, failed: &[(CredentialPlace, StoreError)]
     }
 }
 
-/// The places of each stored item, from the keys of the two places.
 fn items_by_place(
     native: Vec<(SecretName, Destination)>,
     file: Vec<(SecretName, Destination)>,
@@ -903,17 +885,12 @@ fn secret_rows(
         .collect()
 }
 
-/// `server add --secret NAME`: reads the value and stores it for the
-/// destination of the new entry (docs/design/server-add.md rules 11 and
-/// 13). Before the read, `ncp` finds the stores that have the item, so
-/// that a store that cannot answer stops before the user types. After the
-/// read, another value is an error: other entries of the origin use it.
-/// The same value passes, so that a retry after a failure works.
-///
-/// # Errors
-///
-/// Returns a usage failure for another stored value, exit 4 for a store
-/// that cannot answer, and the failures of the read.
+/// `server add --secret NAME` (docs/design/server-add.md rules 11 and 13).
+/// Before the read, `ncp` finds the stores that have the item, so that a
+/// store that cannot answer stops before the user types. After the read,
+/// a different stored value is an error, because other entries of the
+/// origin use it. The same value passes, so that a retry after a failure
+/// works.
 pub(super) async fn store_for_add(
     context: &Context<'_>,
     name: &SecretName,
@@ -978,10 +955,8 @@ pub(super) async fn places(context: &Context<'_>) -> [(CredentialPlace, Opened);
     ]
 }
 
-/// The rows of `secret list` for each `${NAME}` of the new entry: the
-/// destination, the stores that have it, and the servers that use it. A
-/// reused value shows, so that the user sees that it now also goes to
-/// this entry.
+/// The rows of `secret list` for each `${NAME}` of the new entry. A reused
+/// value shows, so that the user sees that it now also goes to this entry.
 pub(super) async fn rows_of_entry(
     context: &Context<'_>,
     entry: &Server,
@@ -1223,9 +1198,9 @@ async fn chosen(
     }
 }
 
-/// The configuration for `--unused`: an invalid entry can name the secret,
-/// so `ncp` cannot know that an item is unused.
-/// An entry of a project file that is not trusted can name it too.
+/// An invalid entry, or an entry of a project file that is not trusted,
+/// can name the secret. Then `ncp` cannot know that an item is unused, so
+/// `--unused` stops.
 async fn strict_config(
     context: &Context<'_>,
     name: &SecretName,
