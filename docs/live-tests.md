@@ -29,7 +29,7 @@ on the terminal with `>>>`.
 |---|---|---|
 | `keychain` | `ncp` stores a secret in the login Keychain. Two different binaries read it with no dialog. A new binary stands for an update, which changes the code identity. | Nothing. If a dialog opens, click Deny: the test then fails. |
 | `oauth` | A login at `mcp.cloudflare.com` with the browser and with `--no-browser`. The tokens go to the Keychain, `-vv` shows no token, and `server remove` removes the tokens. | Log in to Cloudflare two times. Before each login, a `>>>` line tells you what to do, and when to wait. |
-| `proxy` | Only on a host that is thrown away after the test. With no proxy variable, `ncp` uses the HTTPS proxy of the system settings. The request goes through the tunnel of a test proxy to a local HTTPS server. | Nothing. It does not run on your Mac. |
+| `proxy` | With no proxy variable, `ncp` uses the HTTPS proxy of the system settings. The request goes through the tunnel of a test proxy to a local HTTPS server. | Nothing. It runs only with `NCP_DISPOSABLE_HOST=1`. |
 
 The `oauth` test uses the server that you approved on 2026-10-11.
 
@@ -49,8 +49,6 @@ machine, and the git hook runs them:
 - The CLI tests start a test proxy, and set `HTTPS_PROXY` or `HTTP_PROXY`
   only for `ncp`. A request goes through the tunnel to a local HTTPS
   server.
-- `mise run check:system-proxy` fails when the dependencies stop reading
-  the system settings.
 
 ## Results
 

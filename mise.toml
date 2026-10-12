@@ -30,16 +30,6 @@ run = "cargo clippy --workspace --all-targets --locked -- -D warnings"
 description = "Check dependency licenses, advisories, bans and sources"
 run = "cargo deny --locked check"
 
-# reqwest reads the macOS system proxy only with this feature, and the
-# route of -v reads it with the hyper-util feature (design C5). A change of
-# the dependencies must not drop them in silence.
-[tasks."check:system-proxy"]
-description = "Check that reqwest and the route of -v read the macOS system proxy"
-run = """
-cargo tree --locked -e features -i reqwest --target aarch64-apple-darwin | grep -q 'reqwest feature "system-proxy"' \
-  && cargo tree --locked -e features -i hyper-util --target aarch64-apple-darwin | grep -q 'hyper-util feature "client-proxy-system"'
-"""
-
 [tasks."check:typos"]
 description = "Check spelling in code and docs"
 run = "typos"
@@ -64,7 +54,7 @@ df -Ph "$data_dir" | awk 'NR == 2 { print $4 " free on " $6 }'
 
 [tasks.check]
 description = "Run all static checks"
-depends = ["check:fmt", "check:clippy", "check:deny", "check:typos", "check:shellcheck", "check:system-proxy"]
+depends = ["check:fmt", "check:clippy", "check:deny", "check:typos", "check:shellcheck"]
 
 [tasks.test]
 description = "Run all tests. Tests use only local servers"

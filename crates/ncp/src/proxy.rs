@@ -3,8 +3,8 @@
 //! reqwest reads the proxy variables and the manual HTTP and HTTPS proxy
 //! of the macOS system settings, in the order of uv (design C5). This
 //! module finds the same route with the same matcher, so that `-v` and the
-//! errors can show it, with its source. There is no exception for loopback hosts:
-//! `NO_PROXY` is the only exception list.
+//! errors can show it, with its source. There is no exception for loopback
+//! hosts: `NO_PROXY` is the only exception list.
 
 use std::fmt;
 
@@ -167,8 +167,9 @@ mod tests {
     }
 
     /// The matcher of reqwest with an HTTPS proxy in the system settings, or
-    /// none. As in hyper-util, the settings give the proxy of a scheme with
-    /// no value in its variable, before `ALL_PROXY`.
+    /// none. It copies `Matcher::from_system` of hyper-util: the settings
+    /// give the proxy of a scheme with no value in its variable, before
+    /// `ALL_PROXY`. The tests thus check the label, not the order of reqwest.
     fn matcher(env: &Env, system_https: &str) -> Matcher {
         let https = Some(value(env, &HTTPS))
             .filter(|https| !https.is_empty())
@@ -184,7 +185,7 @@ mod tests {
     /// The route with no proxy in the system settings, so that the
     /// settings of the host do not change the result.
     fn route(env: &Env, target: &url::Url) -> Route {
-        route_with(env, target, || matcher(env, ""), || matcher(env, ""))
+        route_with_system(env, target, "")
     }
 
     fn route_with_system(env: &Env, target: &url::Url, system_https: &str) -> Route {

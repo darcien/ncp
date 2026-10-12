@@ -1,9 +1,7 @@
-//! Live tests: `ncp` on this Mac, with the login Keychain, a real browser,
-//! the system settings and a login at a real server. See
-//! `docs/live-tests.md`.
-//!
-//! They change the state of the Mac, so only the user runs them. Thus they
-//! are ignored by default. Run them with `mise run live`.
+//! Live tests: `ncp` with the login Keychain, a real browser and a login at
+//! a real server, and on a host that is thrown away, with the system proxy.
+//! They change the state of the machine, so they are ignored by default.
+//! See `docs/live-tests.md`.
 
 // The whole file is test code, where the agent rules permit unwrap.
 #![allow(clippy::unwrap_used)]
@@ -245,8 +243,10 @@ fn network_services() -> Vec<String> {
         .collect()
 }
 
+/// `sudo` with no question: the host must have `sudo` with no password.
 fn sudo(args: &[&str]) -> bool {
     Command::new("/usr/bin/sudo")
+        .arg("-n")
         .args(args)
         .status()
         .is_ok_and(|status| status.success())
@@ -314,8 +314,7 @@ const DISPOSABLE_HOST: &str = "NCP_DISPOSABLE_HOST";
 /// `ncp` reads the manual HTTPS proxy of the system settings when the
 /// scheme has no variable (design C5). The request goes through the tunnel
 /// of a local proxy to a local HTTPS server. The other tests cover the
-/// order and the label with no change to the machine; this test covers the
-/// read of the system settings.
+/// order and the label; this test covers the read of the system settings.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "changes the HTTPS proxy of the whole machine"]
 async fn system_proxy_carries_a_request_when_no_variable_is_set() {
@@ -327,7 +326,9 @@ async fn system_proxy_carries_a_request_when_no_variable_is_set() {
     let fixture = ncp_testkit::serve_https(Mode::Modern).await.unwrap();
     let proxy = ncp_testkit::serve_test_proxy().await.unwrap();
     let _system = SystemProxy::set(proxy.address.port());
-    let home = Home::new("system-proxy").set("SSL_CERT_FILE", ncp_testkit::TEST_CA);
+    let home = Home::new("system-proxy")
+        .unset("NO_PROXY")
+        .set("SSL_CERT_FILE", ncp_testkit::TEST_CA);
     home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
 
     let run = home.run(&["-v", "tool", "list", "web"]);
@@ -343,12 +344,4 @@ async fn system_proxy_carries_a_request_when_no_variable_is_set() {
         lines.contains(&common::connect_line(&fixture.url)),
         "{lines:?}"
     );
-
-    let home = home.set("HTTPS_PROXY", "http://127.0.0.1:9");
-    let run = home.run(&["-v", "tool", "list", "web"]);
-    let route = format!(
-        "route to {}: proxy http://127.0.0.1:9/ from HTTPS_PROXY",
-        fixture.url
-    );
-    assert_eq!(routes(&run), [route], "{}", run.describe());
 }

@@ -1266,6 +1266,7 @@ fn verbose_output_names_the_source_of_each_value_and_never_the_value() {
 async fn verbose_output_names_the_proxy_route_and_a_stored_value_source() {
     let fixture = serve_http_with(Mode::Modern, Some("t0ken")).await.unwrap();
     let home = Home::new("verbose-route")
+        .unset("NO_PROXY")
         .set("HTTP_PROXY", "http://proxy.invalid:3128")
         .set("NO_PROXY", "127.0.0.1");
     home.configure(&json!({"web": {"type": "http", "url": fixture.url,
