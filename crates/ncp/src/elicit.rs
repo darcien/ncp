@@ -40,7 +40,6 @@ pub fn pages(data: Option<&Value>) -> Vec<Result<Page, String>> {
         .unwrap_or_default()
 }
 
-/// What a server asks.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Request {
     /// Values for a flat form of primitive fields.
@@ -50,7 +49,6 @@ pub enum Request {
     Url { message: String, url: String },
 }
 
-/// One field of a form.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Field {
     pub name: String,
@@ -197,7 +195,6 @@ pub struct Choice {
 /// The answer of the user to the whole request.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
-    /// The values of a form.
     Accept(Map<String, Value>),
     /// The user opened the URL: an accept with no content.
     Opened,

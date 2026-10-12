@@ -101,7 +101,6 @@ impl TokenStore {
         }
     }
 
-    /// The adapter that binds the tokens of a login to their server.
     #[must_use]
     pub fn with_binding(self, binding: items::TokenBinding) -> Self {
         Self {
@@ -110,7 +109,6 @@ impl TokenStore {
         }
     }
 
-    /// The adapter that keeps the scopes that a login requests.
     #[must_use]
     pub fn with_requested_scopes(self, scopes: &[String]) -> Self {
         let mut fields = self.scope_fields.into_inner();

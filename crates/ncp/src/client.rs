@@ -713,26 +713,23 @@ impl Connection {
         &self.version
     }
 
-    /// True when the connection sends the OAuth token of a login.
     #[must_use]
     pub fn is_authorized(&self) -> bool {
         self.authorized
     }
 
-    /// True when the server asked a question that `ncp` refused, because
-    /// it has no one to ask.
+    /// `ncp` refuses a question of a server when it has no one to ask.
     #[must_use]
     pub fn refused_a_question(&self) -> bool {
         self.refused.load(Ordering::SeqCst)
     }
 
-    /// What the server said about itself in the handshake.
     #[must_use]
     pub fn server_info(&self) -> Option<std::sync::Arc<ServerPeerInfo>> {
         self.service.peer_info()
     }
 
-    /// Lists all tools. Each page is one request with its own limits.
+    /// Each page is one request with its own limits.
     ///
     /// # Errors
     ///
@@ -742,8 +739,6 @@ impl Connection {
         Ok(self.list_tools_fresh_for(limits).await?.0)
     }
 
-    /// Lists all tools, with the cache hints of the pages.
-    ///
     /// # Errors
     ///
     /// Returns an error when a `tools/list` request fails.
@@ -765,8 +760,6 @@ impl Connection {
         .await
     }
 
-    /// Lists all resources.
-    ///
     /// # Errors
     ///
     /// Returns an error when a `resources/list` request fails.
@@ -788,8 +781,6 @@ impl Connection {
         .map(|(items, _)| items)
     }
 
-    /// Lists all resource templates.
-    ///
     /// # Errors
     ///
     /// Returns an error when a `resources/templates/list` request fails.
@@ -815,8 +806,6 @@ impl Connection {
         .map(|(items, _)| items)
     }
 
-    /// Lists all prompts.
-    ///
     /// # Errors
     ///
     /// Returns an error when a `prompts/list` request fails.
@@ -838,8 +827,8 @@ impl Connection {
         .map(|(items, _)| items)
     }
 
-    /// Reads one resource. An `input_required` result goes back to the
-    /// caller, as for a tool call.
+    /// An `input_required` result goes back to the caller, as for a tool
+    /// call.
     ///
     /// # Errors
     ///
@@ -863,8 +852,6 @@ impl Connection {
         }
     }
 
-    /// Gets one prompt with its arguments.
-    ///
     /// # Errors
     ///
     /// Returns an error when the request fails.
@@ -918,8 +905,6 @@ impl Connection {
         }
     }
 
-    /// Calls a tool.
-    ///
     /// The result is the first response, with no follow-up rounds: an
     /// `input_required` result goes back to the caller.
     ///
@@ -989,9 +974,9 @@ impl Connection {
         self.process.as_ref().and_then(stdio::Process::id)
     }
 
-    /// Closes the connection. A stdio server gets the stop steps of the spec.
-    /// The close of the session has a time limit, so that a server that
-    /// does not answer cannot keep `ncp` from its exit.
+    /// A stdio server gets the stop steps of the spec. The close of the
+    /// session has a time limit, so that a server that does not answer
+    /// cannot keep `ncp` from its exit.
     pub async fn close(self) {
         let _ = tokio::time::timeout(CANCEL_LIMIT, self.service.cancel()).await;
         if let Some(process) = self.process {

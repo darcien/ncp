@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 
 use crate::expand::Env;
 
-/// The files of `ncp`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paths {
     pub config_file: PathBuf,

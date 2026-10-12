@@ -19,8 +19,6 @@ use crate::{expand::Env, paths::Paths};
 
 const BIN: &str = "ncp";
 
-/// Writes the completion script for the shell.
-///
 /// # Errors
 ///
 /// Returns a failure when stdout cannot be written.

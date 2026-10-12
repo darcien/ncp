@@ -53,7 +53,6 @@ impl Timings {
         }
     }
 
-    /// The timings line for the end of the run.
     #[must_use]
     pub fn report(&self, format: Format) -> String {
         let record = self.record.lock().map(|r| r.clone()).unwrap_or_default();

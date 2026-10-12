@@ -22,9 +22,7 @@ pub enum Resolved {
 /// The arguments as the user wrote them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
-    /// The pairs, in order.
     Pairs(Vec<Pair>),
-    /// One JSON object.
     Object(JsonObject),
     /// `-`: read one JSON object from stdin.
     Stdin,
@@ -48,8 +46,6 @@ pub enum ArgumentError {
     NotObject(String),
 }
 
-/// Reads the argument words.
-///
 /// # Errors
 ///
 /// Returns an error for a word that is not an argument form, a repeated

@@ -461,7 +461,6 @@ fn type_text(schema: &JsonObject, property: &Value) -> String {
     }
 }
 
-/// A call with each required argument.
 #[must_use]
 pub fn example_call(server: &str, tool: &Tool) -> String {
     example_call_with(server, tool, &[])

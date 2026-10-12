@@ -11,7 +11,7 @@ use std::{
     path::Path,
 };
 
-/// Writes the file. Makes the missing parent directories with mode `0700`.
+/// Makes the missing parent directories with mode `0700`.
 ///
 /// # Errors
 ///

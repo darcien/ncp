@@ -189,7 +189,6 @@ impl AuthState {
         format!("{}{}", self.origin, self.lock().settings.issuer_path)
     }
 
-    /// The scopes that the server supports.
     #[must_use]
     pub fn scopes_supported(&self) -> Vec<String> {
         self.lock().settings.scopes_supported.clone()
@@ -248,7 +247,6 @@ impl AuthServer {
         self.state.lock().record.clone()
     }
 
-    /// Changes the behavior of the server.
     pub fn settings(&self, change: impl FnOnce(&mut AuthSettings)) {
         change(&mut self.state.lock().settings);
     }
@@ -265,8 +263,6 @@ impl AuthServer {
     }
 }
 
-/// Starts an authorization server.
-///
 /// # Errors
 ///
 /// Returns an error when no loopback port is free.

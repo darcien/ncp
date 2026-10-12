@@ -605,7 +605,6 @@ async fn warn_about_copies(
     );
 }
 
-/// Why `secret set` got no value.
 enum Unread {
     Interrupted,
     TimedOut,

@@ -55,7 +55,6 @@ pub struct Platform {
     pub before_rename: fn(&std::path::Path),
 }
 
-/// Runs `ncp` and gives its exit code.
 #[must_use]
 pub fn main() -> ExitCode {
     main_with(Platform {
@@ -66,7 +65,6 @@ pub fn main() -> ExitCode {
     })
 }
 
-/// Runs `ncp` with another platform.
 #[must_use]
 pub fn main_with(platform: Platform) -> ExitCode {
     let started = Instant::now();

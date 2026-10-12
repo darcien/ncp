@@ -54,7 +54,6 @@ pub fn search(start: &Path, home: Option<&Path>, has: impl Fn(&Path, &str) -> bo
     Search::Stopped(last.to_path_buf())
 }
 
-/// The trust state of a project file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trust {
     Trusted,

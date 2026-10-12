@@ -10,7 +10,6 @@ use std::fmt;
 const HOST: &str = "127.0.0.1";
 const PATH: &str = "/callback";
 
-/// The redirect URI for a port.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RedirectUri {
     port: u16,

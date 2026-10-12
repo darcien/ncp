@@ -48,7 +48,6 @@ pub fn child_env(base: &Env, env: &BTreeMap<String, Expanded>) -> BTreeMap<Strin
         .collect()
 }
 
-/// Where the stderr of a server goes.
 #[derive(Clone)]
 pub enum ServerLog {
     /// To the stderr of `ncp`, with no change.
@@ -70,12 +69,9 @@ impl std::fmt::Debug for ServerLog {
 
 pub struct Process {
     child: Box<dyn ChildWrapper>,
-    /// The reader of the stderr of the server.
     log_task: Option<tokio::task::JoinHandle<()>>,
 }
 
-/// Starts the server. Returns the process and its stdout and stdin.
-///
 /// # Errors
 ///
 /// Returns an error when the process cannot start.

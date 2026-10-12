@@ -71,7 +71,6 @@ impl Target {
     }
 }
 
-/// What a write did to the file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Outcome {
     /// The file has the same entry already (rule 3).
@@ -383,7 +382,6 @@ async fn change(
     })
 }
 
-/// Why the replace of the file stopped.
 enum Stop {
     Io(std::io::Error),
     Failure(Failure),

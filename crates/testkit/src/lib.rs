@@ -601,8 +601,6 @@ impl Drop for HttpFixture {
     }
 }
 
-/// Starts a Streamable HTTP fixture.
-///
 /// # Errors
 ///
 /// Returns an error when no loopback port is free.
@@ -673,7 +671,6 @@ pub async fn serve_http_with_oauth_after_handshake(
     serve(mode, access, None).await
 }
 
-/// The access rule of the HTTP fixture.
 #[derive(Clone)]
 enum Access {
     Open,

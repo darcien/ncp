@@ -32,7 +32,6 @@ pub fn interactive() -> bool {
     std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
 }
 
-/// Why a question got no answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Stop {
     /// The end of stdin: the person cannot answer.

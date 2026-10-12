@@ -62,7 +62,6 @@ pub enum Event<'a> {
         message: &'a Value,
     },
     Http(&'a HttpExchange),
-    /// The answer to a request arrived.
     Response {
         method: &'a str,
         elapsed: Duration,
@@ -76,7 +75,6 @@ pub enum Event<'a> {
     Connect {
         elapsed: Duration,
     },
-    /// The start of a stdio server process.
     ServerStart {
         elapsed: Duration,
     },

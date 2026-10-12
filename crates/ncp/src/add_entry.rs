@@ -25,7 +25,6 @@ pub enum Form {
     Stdio { command: String, args: Vec<String> },
 }
 
-/// The arguments of `server add`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
     pub form: Form,

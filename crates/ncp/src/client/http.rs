@@ -114,7 +114,6 @@ pub struct Notes {
     pub unknown_issuer: bool,
 }
 
-/// The notes of one client.
 #[derive(Debug, Clone, Default)]
 pub struct ConnectNotes(Arc<Mutex<Notes>>);
 
@@ -286,7 +285,6 @@ fn header(
     Ok((header_name, header_value))
 }
 
-/// The HTTP client of the transport: reqwest with the observer.
 pub type Observed = ObservedHttp<reqwest::Client>;
 
 /// The HTTP client that sends the OAuth access token of the server, and

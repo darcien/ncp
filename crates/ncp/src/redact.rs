@@ -12,7 +12,6 @@ use std::fmt::Write as _;
 
 use serde_json::Value;
 
-/// The text of a hidden value.
 pub const HIDDEN: &str = "****";
 
 /// Header fields that RFC 9110 defines as credentials: `Authorization`

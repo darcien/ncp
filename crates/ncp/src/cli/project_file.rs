@@ -20,7 +20,6 @@ use crate::{
     project::{self, Project, Search, Trust},
 };
 
-/// What the search found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectFile {
     /// `--config-file` names the file, so there is no search.
@@ -117,7 +116,6 @@ fn read_owned(file: &Path) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|_| "it is not UTF-8".into())
 }
 
-/// The trust state from the records of the path.
 #[must_use]
 pub fn trust_state(paths: &Paths, file: &Path, digest: &str) -> Trust {
     let trusted = std::fs::read_to_string(record(&paths.trusted_configs, file)).ok();

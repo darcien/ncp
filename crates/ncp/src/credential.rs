@@ -106,7 +106,6 @@ impl fmt::Display for Destination {
     }
 }
 
-/// The key of one item in a store.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CredentialKey {
     /// A named value for `${NAME}`. The key has no form with only a name,

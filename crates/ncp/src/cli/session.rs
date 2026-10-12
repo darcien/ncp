@@ -75,7 +75,6 @@ pub struct Context<'a> {
 }
 
 impl Context<'_> {
-    /// Runs the step, and adds its time to the timings.
     pub fn timed<T>(
         &self,
         step: impl FnOnce(&mut super::timings::Record, Duration),

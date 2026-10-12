@@ -104,8 +104,6 @@ impl Server {
             .collect()
     }
 
-    /// Expands the `env` or `headers` values with `values`.
-    ///
     /// # Errors
     ///
     /// Returns an error that names the field when a name has no value.
@@ -186,7 +184,6 @@ pub struct RemoteServer {
     pub url_values: Vec<String>,
 }
 
-/// A client that the user registered with an authorization server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreRegisteredClient {
     pub client_id: String,
@@ -203,7 +200,6 @@ pub enum ClientKind {
 }
 
 impl PreRegisteredClient {
-    /// The issuer that the user registered the client with.
     #[must_use]
     pub fn issuer(&self) -> Option<&str> {
         match &self.kind {
@@ -263,7 +259,6 @@ pub enum ConfigError {
     ServersNotObject,
 }
 
-/// An error in one server entry.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EntryError {
     #[error(transparent)]
@@ -319,8 +314,7 @@ pub struct Config {
 impl Config {
     /// # Errors
     ///
-    /// Returns an error when no server of that name exists, or when its entry
-    /// is invalid.
+    /// Returns an error for an unknown name or an invalid entry.
     pub fn server(&self, name: &str) -> Result<&Server, LookupError> {
         match self.entries.get(name) {
             None => Err(LookupError::NotFound(name.to_string())),
@@ -391,8 +385,6 @@ fn variables_in(value: &Value, found: &mut BTreeSet<String>) {
     }
 }
 
-/// Parses the configuration text. `env` gives the values for `${VAR}`.
-///
 /// # Errors
 ///
 /// Returns an error when the text is not JSON, or does not have the
@@ -447,8 +439,6 @@ pub fn raw_servers(text: &str) -> Result<Map<String, Value>, ConfigError> {
     Ok(servers_of(&parse_root(text)?)?.cloned().unwrap_or_default())
 }
 
-/// The top-level object of the text.
-///
 /// # Errors
 ///
 /// Returns an error when the text is not JSONC or not an object.

@@ -65,7 +65,6 @@ const USER_CANCELED: i32 = 128;
 /// exit of `ncp`, or write an item late.
 pub const PROGRAM_LIMIT: Duration = Duration::from_secs(55);
 
-/// A credential store that runs the `security` program.
 #[derive(Debug, Clone)]
 pub struct SecurityStore {
     program: PathBuf,
@@ -240,7 +239,6 @@ impl CredentialStore for SecurityStore {
 /// The part of the limit that the head of a save keeps for itself.
 const HEAD_RESERVE: u32 = 10;
 
-/// The result of one read of a value.
 enum Loaded {
     Found(Secret),
     Absent,
@@ -348,7 +346,6 @@ impl SecurityStore {
     }
 }
 
-/// What one item holds.
 #[derive(Debug, PartialEq, Eq)]
 enum Item {
     /// The whole stored value.
