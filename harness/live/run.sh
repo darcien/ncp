@@ -21,8 +21,9 @@ mkdir -p .scratch/live
 record=".scratch/live/$(date +%Y-%m-%d-%H%M%S).log"
 
 # The proxy test changes the proxy of the whole machine, so it runs only on
-# a host that is thrown away after the test, for example a CI runner.
-if [ "${NCP_DISPOSABLE_HOST:-}" != 1 ]; then
+# a host that is thrown away after the test, for example a CI runner. A
+# FILTER that selects it runs it, and the test then stops with the reason.
+if [ $# -eq 0 ] && [ "${NCP_DISPOSABLE_HOST:-}" != 1 ]; then
 	echo "run.sh: the proxy test runs only with NCP_DISPOSABLE_HOST=1" >&2
 	set -- "$@" --skip system_proxy
 fi

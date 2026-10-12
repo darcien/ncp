@@ -36,7 +36,9 @@ impl fmt::Display for Source {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
     Direct,
-    /// A proxy variable names a proxy, but `NO_PROXY` matches the host.
+    /// A proxy variable names a proxy, but `NO_PROXY` matches the host. When
+    /// only the system settings name a proxy, the route shows as `Direct`:
+    /// the matcher does not tell which proxy `NO_PROXY` stopped.
     DirectByNoProxy,
     /// The proxy URL has no user information: a password shows as `****`.
     Proxy {
@@ -73,12 +75,23 @@ impl fmt::Display for Route {
 }
 
 /// The first variable of the list that is set, also when it is empty, as
-/// reqwest reads them. A value that is not a URI names no proxy.
+/// reqwest reads them. A value that reqwest does not take as a proxy, for
+/// example `ftp://p:1`, names no proxy.
 fn first_set<'a>(env: &'a Env, names: &[&'static str]) -> Option<(&'static str, &'a str)> {
     names
         .iter()
         .find_map(|name| env.get(*name).map(|value| (*name, value.as_str())))
-        .filter(|(_, value)| !value.is_empty() && value.parse::<http::Uri>().is_ok())
+        .filter(|(_, value)| names_a_proxy(value))
+}
+
+/// True when the matcher of reqwest takes the value as a proxy.
+fn names_a_proxy(value: &str) -> bool {
+    let probe = http::Uri::from_static("http://probe.invalid/");
+    Matcher::builder()
+        .all(value.to_string())
+        .build()
+        .intercept(&probe)
+        .is_some()
 }
 
 fn no_proxy_is_set(env: &Env) -> bool {
@@ -96,8 +109,10 @@ pub fn route(env: &Env, target: &url::Url) -> Route {
 /// The route from the matcher of reqwest. The source is a variable when the
 /// matcher of the variables alone gives the same proxy. Else the proxy comes
 /// from the system settings: reqwest reads them for a scheme with no
-/// variable of its own, before `ALL_PROXY`. Both matchers read the process
-/// environment, which is the same environment in `ncp`.
+/// variable of its own, before `ALL_PROXY`. When the system settings give
+/// the same proxy as the variable, the variable shows as the source. Both
+/// matchers read the process environment, which is the same environment in
+/// `ncp`.
 fn route_with(
     env: &Env,
     target: &url::Url,
@@ -228,6 +243,23 @@ mod tests {
                 source: Source::Variable("HTTPS_PROXY")
             }
         );
+    }
+
+    #[test]
+    fn a_variable_that_reqwest_does_not_take_names_no_proxy() {
+        let vars = env(&[
+            ("HTTPS_PROXY", "ftp://p.test:1"),
+            ("ALL_PROXY", "http://all.test:1"),
+        ]);
+        assert!(matches!(
+            route(&vars, &url("https://a.example/")),
+            Route::Proxy {
+                source: Source::Variable("ALL_PROXY"),
+                ..
+            }
+        ));
+        let vars = env(&[("HTTPS_PROXY", "/x"), ("NO_PROXY", "other.test")]);
+        assert_eq!(route(&vars, &url("https://a.example/")), Route::Direct);
     }
 
     #[test]

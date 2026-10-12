@@ -44,8 +44,9 @@ variable, `mise run live` skips it.
 The other parts of the proxy rule have tests that change nothing on the
 machine, and the git hook runs them:
 
-- The unit tests of `crates/ncp/src/proxy.rs` give a fake system proxy to
-  the matcher. They check the order of uv and the source that `-v` shows.
+- The unit tests of `crates/ncp/src/proxy.rs` give the matcher a fake
+  system proxy that copies hyper-util. They check the source that `-v`
+  shows.
 - The CLI tests start a test proxy, and set `HTTPS_PROXY` or `HTTP_PROXY`
   only for `ncp`. A request goes through the tunnel to a local HTTPS
   server.
