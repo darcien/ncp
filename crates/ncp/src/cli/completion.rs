@@ -76,7 +76,8 @@ const BASH_TOOLS: &str = concat!(
 );
 
 /// The commands with a server name as their first argument.
-const SERVER_COMMANDS: [(&str, &str); 11] = [
+const SERVER_COMMANDS: [(&str, &str); 12] = [
+    ("server", "remove"),
     ("server", "show"),
     ("tool", "list"),
     ("tool", "show"),

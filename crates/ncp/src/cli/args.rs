@@ -9,6 +9,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 const AFTER_HELP: &str = "\
 The normal order of work:
+  ncp server add <SERVER> <URL>
   ncp server list
   ncp server show <SERVER>
   ncp tool list <SERVER>
@@ -249,6 +250,53 @@ pub enum SecretCommand {
     },
 }
 
+const ADD_HELP: &str = "\
+Examples:
+  ncp server add docs https://docs.example.com/mcp
+  ncp server add github --env GITHUB_TOKEN --secret GITHUB_TOKEN -- github-mcp-server stdio
+
+A secret in one command: ncp asks for the value (hidden on a TTY), or
+reads it from a pipe, stores it, and the file keeps ${LINEAR_KEY}:
+  ncp server add linear https://mcp.linear.app/mcp \\
+    --header 'Authorization: Bearer ${LINEAR_KEY}' --secret LINEAR_KEY
+The same in two commands:
+  ncp server add linear https://mcp.linear.app/mcp \\
+    --header 'Authorization: Bearer ${LINEAR_KEY}'
+  ncp secret set LINEAR_KEY
+
+The single quotes keep ${NAME} from the shell. A stored value goes only to
+its origin, and the entries with the same origin share it. --env NAME
+writes ${NAME}; --env NAME=VALUE writes VALUE into the file as it is.";
+
+/// The arguments of `server add`: a URL, or a command after `--`.
+#[derive(Debug, Args)]
+pub struct AddArgs {
+    /// The server name: letters, digits, - and _
+    pub server: String,
+    /// The URL of an http server
+    pub url: Option<String>,
+    /// Add the entry to the global file
+    #[arg(long)]
+    pub global: bool,
+    /// A header of an http server. An Authorization header must be
+    /// '<scheme> ${NAME}' or '${NAME}'.
+    #[arg(long = "header", value_name = "'NAME: VALUE'")]
+    pub headers: Vec<String>,
+    /// An environment variable of a stdio server: NAME writes ${NAME}, and
+    /// NAME=VALUE writes VALUE as it is
+    #[arg(long = "env", value_name = "NAME[=VALUE]")]
+    pub env: Vec<String>,
+    /// Read the value of ${NAME} and store it for the origin of the entry
+    #[arg(long, value_name = "NAME")]
+    pub secret: Option<String>,
+    /// The place for the value of --secret. Default: native.
+    #[arg(long, value_enum, requires = "secret")]
+    pub credential_store: Option<CredentialPlace>,
+    /// The command of a stdio server and its arguments
+    #[arg(last = true, value_name = "COMMAND")]
+    pub command: Vec<String>,
+}
+
 /// The place for a new value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum CredentialPlace {
@@ -260,7 +308,23 @@ pub enum CredentialPlace {
 
 #[derive(Debug, Subcommand)]
 pub enum ServerCommand {
-    /// List the servers in the configuration file. Starts no server.
+    /// Add a server to the project .mcp.json, or with --global to
+    /// ~/.config/ncp/mcp.json. ncp keeps every other byte of the file, and
+    /// does not contact the server.
+    #[command(after_help = ADD_HELP)]
+    Add(AddArgs),
+    /// Remove a server from the file that gives it, or with --global from
+    /// ~/.config/ncp/mcp.json, and its OAuth tokens. Stored ${NAME} values
+    /// stay: other entries of the same origin can use them.
+    Remove {
+        /// The server name from the configuration
+        server: String,
+        /// Remove the entry of the global file
+        #[arg(long)]
+        global: bool,
+    },
+    /// List the servers of the global file and of the project file. Starts
+    /// no server.
     List,
     /// Show what the server says about itself in its handshake, with its
     /// instructions.

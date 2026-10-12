@@ -70,6 +70,9 @@ pub struct Context<'a> {
     pub interactive: bool,
     /// `--config-file` names the file: no search for a project file.
     pub named_config: bool,
+    /// Runs before the rename of a changed configuration file. Tests give
+    /// a hook that changes the file, as another tool can.
+    pub before_rename: fn(&Path),
 }
 
 impl Context<'_> {
@@ -137,7 +140,7 @@ impl Loaded {
 }
 
 /// Reads the global file and searches for the project file. A missing
-/// global file gives an empty configuration: `ncp` never makes the file.
+/// global file gives an empty configuration: only `server add` makes it.
 /// With `search` false (`--config-file`), there is no project file. Only a
 /// trusted project file joins the view, and its `${NAME}` values expand
 /// only then: before the trust, no value of the environment goes into it.

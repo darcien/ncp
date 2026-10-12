@@ -20,7 +20,7 @@ use crate::{
 const SERVERS_KEY: &str = "mcpServers";
 /// Comments and trailing commas only. The other options of the parser are
 /// JSON5 forms.
-const JSONC: jsonc_parser::ParseOptions = jsonc_parser::ParseOptions {
+pub(crate) const JSONC: jsonc_parser::ParseOptions = jsonc_parser::ParseOptions {
     allow_comments: true,
     allow_trailing_commas: true,
     allow_loose_object_property_names: false,
@@ -253,7 +253,7 @@ impl std::fmt::Display for Warning {
 }
 
 /// An error in the file as a whole. No server can load.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigError {
     #[error("configuration is not valid JSONC: {0}")]
     Syntax(String),
@@ -436,7 +436,23 @@ pub fn parse(text: &str, env: &Env) -> Result<Config, ConfigError> {
     })
 }
 
-fn parse_root(text: &str) -> Result<Map<String, Value>, ConfigError> {
+/// The `mcpServers` map of the text as it is, with no check of the
+/// entries. A missing map is empty.
+///
+/// # Errors
+///
+/// Returns an error when the text is not JSONC, or does not have the
+/// `mcpServers` shape.
+pub fn raw_servers(text: &str) -> Result<Map<String, Value>, ConfigError> {
+    Ok(servers_of(&parse_root(text)?)?.cloned().unwrap_or_default())
+}
+
+/// The top-level object of the text.
+///
+/// # Errors
+///
+/// Returns an error when the text is not JSONC or not an object.
+pub fn parse_root(text: &str) -> Result<Map<String, Value>, ConfigError> {
     match jsonc_parser::parse_to_serde_value(text, &JSONC) {
         Ok(Value::Object(root)) => Ok(root),
         Ok(_) => Err(ConfigError::NotObject),
@@ -522,6 +538,39 @@ pub fn unexpanded_entries(text: &str) -> Result<Vec<UnexpandedEntry>, ConfigErro
                 .collect()
         })
         .unwrap_or_default())
+}
+
+/// A new entry passes the checks of the loader that need no expansion.
+/// The environment at the add must not decide if the entry is valid.
+///
+/// # Errors
+///
+/// Returns the first error of the checks.
+pub fn check_entry(name: &str, value: &Value) -> Result<Unexpanded, EntryError> {
+    let shown = unexpanded(name, value)?;
+    match shown.problem {
+        Some(problem) => Err(problem),
+        None => Ok(shown),
+    }
+}
+
+/// The server of an entry with no expansion, for the destination of a
+/// stored value. The caller checks that no `${NAME}` is in the origin.
+///
+/// # Errors
+///
+/// Returns the error of the entry.
+pub fn unexpanded_server(name: &str, value: &Value) -> Result<Server, EntryError> {
+    parse_entry(name, value, Expansion::Off).0
+}
+
+/// One entry with the expansion of the loader.
+///
+/// # Errors
+///
+/// Returns the error of the entry.
+pub fn parse_one(name: &str, value: &Value, env: &Env) -> Result<Server, EntryError> {
+    parse_entry(name, value, Expansion::From(env)).0
 }
 
 fn unexpanded(name: &str, value: &Value) -> Result<Unexpanded, EntryError> {

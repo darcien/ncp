@@ -103,6 +103,17 @@ impl Home {
             .unwrap();
     }
 
+    /// The accounts of the items in the credential file.
+    pub fn file_accounts(&self) -> Vec<String> {
+        use ncp::store::CredentialStore as _;
+        ncp::store::FileStore::new(self.root.join("state/ncp/credentials.json"))
+            .keys()
+            .unwrap()
+            .iter()
+            .map(ncp::credential::CredentialKey::account)
+            .collect()
+    }
+
     pub fn set(mut self, name: &str, value: &str) -> Self {
         self.env.push((name.into(), value.into()));
         self

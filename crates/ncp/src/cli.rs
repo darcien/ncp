@@ -12,6 +12,7 @@ mod project_file;
 mod render;
 mod schema_check;
 pub mod secrets;
+mod server_edit;
 mod session;
 mod timings;
 mod tool_args;
@@ -50,6 +51,8 @@ pub struct Platform {
     pub open_browser: auth::OpenBrowser,
     /// True when a person can answer questions on a TTY.
     pub interactive: fn() -> bool,
+    /// Runs before the rename of a changed configuration file.
+    pub before_rename: fn(&std::path::Path),
 }
 
 /// Runs `ncp` and gives its exit code.
@@ -59,6 +62,7 @@ pub fn main() -> ExitCode {
         open_native: secrets::open_native,
         open_browser: auth::open_browser,
         interactive: ask::interactive,
+        before_rename: |_| {},
     })
 }
 
@@ -173,6 +177,7 @@ async fn run(
             timings,
             interactive: (platform.interactive)(),
             named_config: cli.options.config_file.is_some(),
+            before_rename: platform.before_rename,
             cache: match (cli.options.no_cache, cli.options.refresh) {
                 (true, _) => session::CacheUse::Off,
                 (false, true) => session::CacheUse::WriteOnly,

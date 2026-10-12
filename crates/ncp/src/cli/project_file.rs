@@ -154,8 +154,26 @@ pub fn change(paths: &Paths, project: &Project, change: Change) -> Result<Trust,
         Change::Ignore => private_file::write(&ignored, b""),
         Change::Untrust => remove(&trusted),
     }
-    .map_err(|error| Failure::protocol(format!("cannot write the trust record: {error}")))?;
+    .map_err(|error| record_failure(&error))?;
     Ok(trust_state(paths, &project.file, &project.digest))
+}
+
+/// Trusts the bytes that `ncp` wrote to the project file: the user saw the
+/// old bytes and gave the new entry (project-config rule 9).
+///
+/// # Errors
+///
+/// Returns a failure when the record cannot be written.
+pub fn trust_written(paths: &Paths, file: &Path, text: &str) -> Result<(), Failure> {
+    private_file::write(
+        &record(&paths.trusted_configs, file),
+        project::digest(text.as_bytes()).as_bytes(),
+    )
+    .map_err(|error| record_failure(&error))
+}
+
+fn record_failure(error: &std::io::Error) -> Failure {
+    Failure::protocol(format!("cannot write the trust record: {error}"))
 }
 
 fn remove(path: &Path) -> std::io::Result<()> {

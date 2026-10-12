@@ -39,8 +39,8 @@ tower-layer = "0.3"
 tower-service = "0.3"
 url = "2.5.8"
 # JSONC: comments and trailing commas in the configuration files, as VS Code
-# and Zed read them.
-jsonc-parser = { version = "=0.33.2", default-features = false, features = ["serde"] }
+# and Zed read them. The cst feature edits a file and keeps its other bytes.
+jsonc-parser = { version = "=0.33.2", default-features = false, features = ["cst", "serde"] }
 
 # The hash of a trusted project file. oauth2 of rmcp already depends on it.
 sha2 = "0.10"

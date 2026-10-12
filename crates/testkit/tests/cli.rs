@@ -2357,7 +2357,7 @@ fn completion_scripts_name_ncp_and_read_server_names_at_completion_time() {
             _ => script.matches("ncp __complete-servers").count(),
         };
         assert_eq!(
-            places, 11,
+            places, 12,
             "{shell}: one place for each command with a server"
         );
     }

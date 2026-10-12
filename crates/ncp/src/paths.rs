@@ -16,6 +16,8 @@ pub struct Paths {
     /// The trust records of project files: one file for each path.
     pub trusted_configs: PathBuf,
     pub ignored_configs: PathBuf,
+    /// The lock of the writes of `server add` and `server remove`.
+    pub config_lock: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -50,6 +52,7 @@ impl Paths {
             credential_file: state_dir.join("credentials.json"),
             trusted_configs: state_dir.join("trusted-configs"),
             ignored_configs: state_dir.join("ignored-configs"),
+            config_lock: state_dir.join("config.lock"),
         })
     }
 }

@@ -11,6 +11,8 @@
 //!   browser is available.
 //! - With `NCP_TEST_TTY=1`, a person answers questions on stdin, as on a
 //!   TTY.
+//! - With `NCP_TEST_CHANGE_BEFORE_RENAME=1`, the configuration file
+//!   changes just before `ncp` renames its new copy over it.
 
 use std::{
     io::{BufRead, BufReader, Write},
@@ -77,10 +79,21 @@ fn fake_tty() -> bool {
     std::env::var_os("NCP_TEST_TTY").is_some()
 }
 
+/// With `NCP_TEST_CHANGE_BEFORE_RENAME=1`, another tool changes the
+/// configuration file just before `ncp` renames its new copy over it.
+fn change_before_rename(path: &std::path::Path) {
+    if std::env::var_os("NCP_TEST_CHANGE_BEFORE_RENAME").is_some()
+        && let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(path)
+    {
+        let _ = file.write_all(b" ");
+    }
+}
+
 fn main() -> std::process::ExitCode {
     ncp::cli::main_with(Platform {
         open_native: fake_native,
         open_browser: fake_browser,
         interactive: fake_tty,
+        before_rename: change_before_rename,
     })
 }

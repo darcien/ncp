@@ -100,7 +100,7 @@ pub(super) async fn call<T: Send + 'static>(
     interruptible(context, blocking).await
 }
 
-fn secret_name(name: &str) -> Result<SecretName, Failure> {
+pub(super) fn secret_name(name: &str) -> Result<SecretName, Failure> {
     SecretName::parse(name).map_err(|error| Failure::usage(error.to_string()))
 }
 
@@ -526,7 +526,8 @@ async fn set(
     }
     let users = users_text(&target.uses);
     let prompt = format!("Value of {name} for {destination} ({users}): ");
-    let value = read_value(context, name.as_str(), &prompt).await?;
+    let pipe = format!("ncp secret set {name} < FILE");
+    let value = read_value(context, name.as_str(), &prompt, &pipe).await?;
     let saved = key.clone();
     call(context, &store, move |store| store.save(&saved, &value))
         .await
@@ -634,16 +635,19 @@ enum Unread {
 /// would echo the value. Each read has the limit of `--timeout`. One new
 /// line at the end is not part of the value, because `echo` and a pasted
 /// line add it.
-async fn read_value(context: &Context<'_>, name: &str, prompt: &str) -> Result<Secret, Failure> {
+async fn read_value(
+    context: &Context<'_>,
+    name: &str,
+    prompt: &str,
+    pipe: &str,
+) -> Result<Secret, Failure> {
     let text = if ask::interactive() {
         read_hidden_line(context, prompt).await
     } else if std::io::stdin().is_terminal() {
         return Err(Failure::usage(format!(
             "cannot ask for the value of {name}: stderr is not a terminal"
         ))
-        .hint(format!(
-            "give the value on stdin: ncp secret set {name} < FILE"
-        )));
+        .hint(format!("give the value on stdin: {pipe}")));
     } else {
         read_piped(context).await
     };
@@ -870,6 +874,123 @@ fn secret_rows(
                 destination,
                 places,
             }
+        })
+        .collect()
+}
+
+/// `server add --secret NAME`: reads the value and stores it for the
+/// destination of the new entry (docs/design/server-add.md rules 11 and
+/// 13). Before the read, `ncp` finds the stores that have the item, so
+/// that a store that cannot answer stops before the user types. After the
+/// read, another value is an error: other entries of the origin use it.
+/// The same value passes, so that a retry after a failure works.
+///
+/// # Errors
+///
+/// Returns a usage failure for another stored value, exit 4 for a store
+/// that cannot answer, and the failures of the read.
+pub(super) async fn store_for_add(
+    context: &Context<'_>,
+    name: &SecretName,
+    server: &Server,
+    place: CredentialPlace,
+) -> Result<(), Failure> {
+    let destination =
+        binding::value_destination(server).map_err(|error| Failure::usage(error.to_string()))?;
+    let key = CredentialKey::Secret {
+        destination: destination.clone(),
+        name: name.clone(),
+    };
+    let word = render::shell_word(server.name.as_str());
+    let native = native(context).await;
+    let chosen = match (place, &native) {
+        (CredentialPlace::Native, Ok(store)) => store.clone(),
+        (CredentialPlace::Native, Err(error)) => {
+            return Err(store_failure(error).hint("give --credential-store file"));
+        }
+        (CredentialPlace::File, _) => file(context),
+    };
+    let mut stored = Vec::new();
+    for (other, opened) in [
+        (CredentialPlace::Native, native),
+        (CredentialPlace::File, Ok(file(context))),
+    ] {
+        let store = match opened {
+            Ok(store) => store,
+            Err(StoreError::Unavailable(_)) => continue,
+            Err(error) => return Err(store_failure(&error)),
+        };
+        let wanted = key.clone();
+        match call(context, &store, move |store| store.load(&wanted)).await {
+            Ok(Some(value)) => stored.push((other, value)),
+            Ok(None) => {}
+            Err(StoreError::Interrupted) => return Err(session::interrupted()),
+            Err(error) => return Err(store_failure(&error)),
+        }
+    }
+    let prompt = format!("Value of {name} for {destination}: ");
+    let pipe = format!("ncp server add {word} ... --secret {name} < FILE");
+    let value = read_value(context, name.as_str(), &prompt, &pipe).await?;
+    if let Some((other, _)) = stored.iter().find(|(_, old)| *old != value) {
+        return Err(Failure::usage(format!(
+            "{name} is already stored for {destination} in {}; other entries with this origin use it",
+            place_text(*other)
+        ))
+        .hint(format!("ncp secret set {name} --server {word}")));
+    }
+    if stored.iter().any(|(other, _)| *other == place) {
+        return Ok(());
+    }
+    call(context, &chosen, move |store| store.save(&key, &value))
+        .await
+        .map_err(|error| store_failure(&error).hint("give --credential-store file"))?;
+    crate::list_cache::remove_all(&context.paths.cache_dir);
+    Ok(())
+}
+
+/// The rows of `secret list` for each `${NAME}` of the new entry: the
+/// destination, the stores that have it, and the servers that use it. A
+/// reused value shows, so that the user sees that it now also goes to
+/// this entry.
+pub(super) async fn rows_of_entry(
+    context: &Context<'_>,
+    entry: &Server,
+    servers: &[&Server],
+) -> Vec<serde_json::Value> {
+    // An entry with no `${NAME}` needs no list of the stores, which can
+    // show a prompt of the native store.
+    let Ok(destination) = binding::value_destination(entry) else {
+        return Vec::new();
+    };
+    if entry.value_names().is_empty() {
+        return Vec::new();
+    }
+    let stored = match stored_items(context, &native(context).await).await {
+        Ok(stored) => {
+            warn_unlisted(context, &stored.failed);
+            stored.items
+        }
+        Err(_) => BTreeMap::new(),
+    };
+    entry
+        .value_names()
+        .into_iter()
+        .filter_map(|name| SecretName::parse(name).ok())
+        .map(|name| {
+            let places = stored
+                .get(&(name.clone(), destination.clone()))
+                .cloned()
+                .unwrap_or_default();
+            let uses: Vec<Use<'_>> = binding::uses(servers.iter().copied(), name.as_str())
+                .into_iter()
+                .filter(|item| item.destination.as_ref() == Ok(&destination))
+                .collect();
+            json!({
+                "name": name.as_str(),
+                "destination": destination_json(&destination),
+                "credentialStores": places,
+                "servers": server_names(&uses),
+            })
         })
         .collect()
 }

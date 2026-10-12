@@ -1,9 +1,11 @@
 //! `ncp`: a command-line MCP client for one user.
 
+pub mod add_entry;
 pub mod binding;
 pub mod cli;
 pub mod client;
 pub mod config;
+pub mod config_edit;
 pub mod credential;
 pub mod elicit;
 pub mod expand;

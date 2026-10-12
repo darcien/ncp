@@ -29,6 +29,10 @@ use crate::{
 
 pub async fn server(context: &Context<'_>, command: ServerCommand) -> Result<(), Failure> {
     match command {
+        ServerCommand::Add(args) => super::server_edit::add(context, args).await,
+        ServerCommand::Remove { server, global } => {
+            super::server_edit::remove(context, &server, global).await
+        }
         ServerCommand::List => server_list(context).await,
         ServerCommand::Show { server } => server_show(context, &server).await,
     }
