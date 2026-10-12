@@ -37,9 +37,17 @@ Do this one time in the terminal, in the root of the repository. The XDG
 folders go to `.scratch/manual/home`, so the tests do not change your own
 configuration. The Keychain is the real login Keychain.
 
+mise also uses the XDG folders: for its trust records and its global
+configuration. The `MISE_*_DIR` lines keep the mise folders where they
+are, else mise does not trust `mise.toml` in a new shell, and the tools
+of mise (for example Node) are not on `PATH`.
+
 ```sh
 cargo build --release --locked -p ncp
 export PATH="$PWD/target/release:$PATH"
+export MISE_CONFIG_DIR="$HOME/.config/mise"
+export MISE_STATE_DIR="$HOME/.local/state/mise"
+export MISE_CACHE_DIR="$HOME/Library/Caches/mise"
 export NCP_MANUAL="$PWD/.scratch/manual"
 export XDG_CONFIG_HOME="$NCP_MANUAL/home/config"
 export XDG_STATE_HOME="$NCP_MANUAL/home/state"
