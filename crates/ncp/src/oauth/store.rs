@@ -37,6 +37,9 @@ pub struct TokenStore {
     /// The scopes of a `403` since the last login (design B52). rmcp does
     /// not know the field, so a refresh writes it back from here.
     required_scopes: Mutex<Option<Value>>,
+    /// The scopes that the login requested (design B79). A refresh writes
+    /// them back from here, as the scopes of a `403`.
+    requested_scopes: Mutex<Option<Value>>,
     /// The server that the tokens are for. A save writes it with the tokens.
     binding: Option<items::TokenBinding>,
     /// The lock file that one refresh at a time holds, across processes.
@@ -60,6 +63,7 @@ impl TokenStore {
             store,
             copy: Mutex::new(Cached::Unread),
             required_scopes: Mutex::new(None),
+            requested_scopes: Mutex::new(None),
             binding: None,
             refresh_lock: None,
             timer: None,
@@ -97,6 +101,7 @@ impl TokenStore {
         Self {
             copy: Mutex::new(Cached::Read(Box::new(Some(item.tokens)))),
             required_scopes: Mutex::new(item.required_scopes),
+            requested_scopes: Mutex::new(item.requested_scopes),
             binding: item.binding,
             ..self
         }
@@ -107,6 +112,15 @@ impl TokenStore {
     pub fn with_binding(self, binding: items::TokenBinding) -> Self {
         Self {
             binding: Some(binding),
+            ..self
+        }
+    }
+
+    /// The adapter that keeps the scopes that a login requests.
+    #[must_use]
+    pub fn with_requested_scopes(self, scopes: &[String]) -> Self {
+        Self {
+            requested_scopes: Mutex::new(Some(Value::from(scopes))),
             ..self
         }
     }
@@ -126,6 +140,7 @@ impl TokenStore {
 pub struct TokensItem {
     pub tokens: StoredCredentials,
     pub required_scopes: Option<Value>,
+    pub requested_scopes: Option<Value>,
     /// `None` when the item has no binding or a binding that is not valid.
     pub binding: Option<items::TokenBinding>,
 }
@@ -142,6 +157,7 @@ pub fn parse_item(secret: &Secret) -> Result<TokensItem, items::ItemError> {
     };
     let json: Value = serde_json::from_str(secret.expose()).map_err(error)?;
     let required_scopes = json.get(items::REQUIRED_SCOPES).cloned();
+    let requested_scopes = json.get(items::REQUESTED_SCOPES).cloned();
     let binding = json
         .get(items::BINDING)
         .and_then(|binding| serde_json::from_value(binding.clone()).ok());
@@ -149,6 +165,7 @@ pub fn parse_item(secret: &Secret) -> Result<TokensItem, items::ItemError> {
     Ok(TokensItem {
         tokens,
         required_scopes,
+        requested_scopes,
         binding,
     })
 }
@@ -239,11 +256,16 @@ impl RmcpStore for TokenStore {
             items::check_binding(item.binding.as_ref(), expected)
                 .map_err(|mismatch| binding_error(&mismatch))?;
         }
-        let (tokens, required_scopes) = match item {
-            Some(item) => (Some(item.tokens), item.required_scopes),
-            None => (None, None),
+        let (tokens, required_scopes, requested_scopes) = match item {
+            Some(item) => (
+                Some(item.tokens),
+                item.required_scopes,
+                item.requested_scopes,
+            ),
+            None => (None, None, None),
         };
         *self.required_scopes.lock().await = required_scopes;
+        *self.requested_scopes.lock().await = requested_scopes;
         *copy = Cached::Read(Box::new(tokens.clone()));
         Ok(tokens)
     }
@@ -254,6 +276,9 @@ impl RmcpStore for TokenStore {
             serde_json::to_value(&credentials).map_err(|error| failed(error.to_string()))?;
         if let Some(scopes) = self.required_scopes.lock().await.clone() {
             json[items::REQUIRED_SCOPES] = scopes;
+        }
+        if let Some(scopes) = self.requested_scopes.lock().await.clone() {
+            json[items::REQUESTED_SCOPES] = scopes;
         }
         if let Some(binding) = &self.binding {
             json[items::BINDING] =
@@ -305,6 +330,7 @@ impl RmcpStore for TokenStore {
         deleted.map_err(|error| store_error(&error))?;
         *self.copy.lock().await = Cached::Read(Box::new(None));
         *self.required_scopes.lock().await = None;
+        *self.requested_scopes.lock().await = None;
         Ok(())
     }
 }
@@ -472,6 +498,7 @@ mod tests {
         let adapter = TokenStore::new(server(), backing.clone()).with_item(TokensItem {
             tokens: tokens("c2"),
             required_scopes: None,
+            requested_scopes: None,
             binding: None,
         });
         assert_eq!(adapter.load().await.unwrap().unwrap().client_id, "c2");

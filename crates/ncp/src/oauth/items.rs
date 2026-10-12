@@ -19,6 +19,10 @@ use crate::credential::Secret;
 /// ignores it.
 pub const REQUIRED_SCOPES: &str = "ncp_required_scopes";
 
+/// The field of the tokens item that keeps the scopes that the login
+/// requested, for the union of a step-up (design B79). rmcp ignores it.
+pub const REQUESTED_SCOPES: &str = "ncp_requested_scopes";
+
 /// The field of the tokens item that keeps the binding of the tokens
 /// (design B70). rmcp ignores it.
 pub const BINDING: &str = "ncp_binding";

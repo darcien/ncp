@@ -1823,6 +1823,7 @@ async fn the_scopes_of_a_403_stay_with_tokens_in_the_native_store() {
 async fn step_up_keeps_the_scopes(name: &str, native: bool) {
     let auth = ncp_testkit::auth_server::serve_auth(AuthSettings {
         scopes_supported: vec!["a".into()],
+        granted_extra: vec!["x".into()],
         ..AuthSettings::default()
     })
     .await
@@ -1853,10 +1854,27 @@ async fn step_up_keeps_the_scopes(name: &str, native: bool) {
     let run = home.run(login);
     assert_eq!(run.code(), 0, "{}", run.describe());
     let scope = auth.record().authorize_scope.unwrap();
-    let scopes: Vec<&str> = scope.split_whitespace().collect();
-    assert!(scopes.contains(&"a") && scopes.contains(&"b"), "{scope}");
+    // The last request and the scope of the 403, not the granted extra.
+    assert_eq!(scope, "a b");
     let run = home.run(&call);
     assert_eq!(run.code(), 0, "{}", run.describe());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_login_asks_for_the_same_scopes_and_not_for_the_granted_extra() {
+    let (auth, fixture) = oauth_fixture(AuthSettings {
+        scopes_supported: vec!["a".into()],
+        granted_extra: vec!["x".into(), "y".into()],
+        ..AuthSettings::default()
+    })
+    .await;
+    let home = oauth_home("second-login", &fixture.url);
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    let first = auth.record().authorize_scope.unwrap();
+    let run = home.run(&LOGIN_TO_FILE);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(first, "a");
+    assert_eq!(auth.record().authorize_scope.unwrap(), first);
 }
 
 #[tokio::test(flavor = "multi_thread")]

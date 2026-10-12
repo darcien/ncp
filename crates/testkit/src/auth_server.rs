@@ -71,6 +71,9 @@ pub struct AuthSettings {
     /// path makes a new issuer on the same server.
     pub issuer_path: String,
     pub scopes_supported: Vec<String>,
+    /// Scopes that the user grants on top of the request, as a consent
+    /// page with a choice of permissions can.
+    pub granted_extra: Vec<String>,
     /// The metadata field `service_documentation`.
     pub service_documentation: Option<String>,
 }
@@ -86,6 +89,7 @@ impl Default for AuthSettings {
             registration: Registration::Public,
             issuer_path: String::new(),
             scopes_supported: vec!["a".into(), "b".into()],
+            granted_extra: Vec::new(),
             service_documentation: None,
         }
     }
@@ -464,7 +468,11 @@ fn authorize(state: &AuthState, query: &HashMap<String, String>) -> Response {
             client_id: client_id.into(),
             redirect_uri: redirect_uri.into(),
             challenge: get("code_challenge").into(),
-            scope: get("scope").into(),
+            scope: get("scope")
+                .split_whitespace()
+                .chain(guard.settings.granted_extra.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(" "),
         };
         guard.codes.insert(code.clone(), grant);
         with_iss(vec![("code", code), ("state", state_value.into())])

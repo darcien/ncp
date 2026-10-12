@@ -7,4 +7,5 @@
 pub mod callback;
 pub mod http;
 pub mod items;
+pub mod scopes;
 pub mod store;

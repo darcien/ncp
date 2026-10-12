@@ -30,6 +30,7 @@ use crate::{
         callback::{self, RedirectUri},
         http::OAuthHttp,
         items::{self, ClientItem},
+        scopes,
         store::{TokenStore, parse_item},
     },
     server::ServerName,
@@ -274,6 +275,8 @@ async fn login(
         check_issuer(name, client, &metadata)?;
     }
     manager.set_metadata(metadata.clone());
+    let initial = initial_scopes(&manager, challenge.as_deref(), remote, &metadata);
+    let scopes = login_scopes(context, server, (&store, place), initial).await;
     let binding = items::TokenBinding {
         resource: remote.url.without_query(),
         issuer: issuer.clone(),
@@ -281,7 +284,8 @@ async fn login(
     manager.set_credential_store(
         TokenStore::new(server.name.clone(), store.clone())
             .fresh()
-            .with_binding(binding),
+            .with_binding(binding)
+            .with_requested_scopes(&scopes),
     );
     let (listener, redirect) = listen().await?;
     let request = client_request(
@@ -289,9 +293,9 @@ async fn login(
         server,
         remote,
         &mut manager,
-        (&store, place),
+        &store,
         &metadata,
-        &redirect,
+        (&redirect, &scopes),
     )
     .await
     .map_err(|failure| failure.server(name))?;
@@ -614,7 +618,7 @@ async fn add_required_scopes(
         let mut tokens: Value = serde_json::from_str(secret.expose()).map_err(|error| {
             Failure::protocol(format!("the stored tokens are not JSON: {error}"))
         })?;
-        let required = union(&scope_list(&tokens[items::REQUIRED_SCOPES]), scopes);
+        let required = scopes::union(&scopes::list(&tokens[items::REQUIRED_SCOPES]), scopes);
         tokens[items::REQUIRED_SCOPES] = json!(required);
         let secret = items::to_secret("tokens", &tokens)
             .map_err(|error| Failure::protocol(error.to_string()))?;
@@ -751,39 +755,31 @@ impl TokenPlaces {
     }
 }
 
-fn scope_list(value: &Value) -> Vec<String> {
-    value
-        .as_array()
-        .map(|scopes| {
-            scopes
-                .iter()
-                .filter_map(|scope| scope.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default()
+/// The scopes of a new login with no step-up (design B79). The challenge of
+/// the probe with no token comes first; with no scope there, rmcp selects
+/// from the protected resource metadata.
+fn initial_scopes(
+    manager: &AuthorizationManager,
+    challenge: Option<&str>,
+    remote: &RemoteServer,
+    metadata: &AuthorizationMetadata,
+) -> Vec<String> {
+    match challenge.and_then(|challenge| scopes::challenged(challenge, &remote.url.without_query()))
+    {
+        Some(challenged) => {
+            scopes::with_offline_access(challenged, metadata.scopes_supported.as_deref())
+        }
+        None => manager.select_scopes(None, &[]),
+    }
 }
 
-/// The scopes of both lists, each one once, in the order of the lists.
-fn union(first: &[String], second: &[String]) -> Vec<String> {
-    first
-        .iter()
-        .chain(second)
-        .fold(Vec::new(), |mut all, scope| {
-            if !all.contains(scope) {
-                all.push(scope.clone());
-            }
-            all
-        })
-}
-
-/// The scopes for a new login: the scopes that rmcp selects, the scopes
-/// that the user has, and the scopes of a `403` answer since the last
-/// login. A step-up asks for the old and the new scopes.
+/// The scopes for a new login (design B79): the initial selection, or a
+/// step-up when the stored tokens keep the scopes of a `403` answer.
 async fn login_scopes(
     context: &Context<'_>,
     server: &Server,
     chosen: (&Arc<dyn CredentialStore>, CredentialPlace),
-    selected: &[String],
+    initial: Vec<String>,
 ) -> Vec<String> {
     let key = CredentialKey::OAuthTokens(server.name.clone());
     let (store, place) = chosen;
@@ -805,11 +801,11 @@ async fn login_scopes(
     let stored = found
         .and_then(|secret| serde_json::from_str::<Value>(secret.expose()).ok())
         .unwrap_or(Value::Null);
-    let held = union(
-        &scope_list(&stored["granted_scopes"]),
-        &scope_list(&stored[items::REQUIRED_SCOPES]),
-    );
-    union(selected, &held)
+    scopes::for_login(
+        initial,
+        &scopes::list(&stored[items::REQUESTED_SCOPES]),
+        &scopes::list(&stored[items::REQUIRED_SCOPES]),
+    )
 }
 
 /// The limit of the cleanup after a login. It is a cleanup, so it must
@@ -873,17 +869,15 @@ async fn client_request(
     server: &Server,
     remote: &RemoteServer,
     manager: &mut AuthorizationManager,
-    (store, place): (&Arc<dyn CredentialStore>, CredentialPlace),
+    store: &Arc<dyn CredentialStore>,
     metadata: &AuthorizationMetadata,
-    redirect: &RedirectUri,
+    (redirect, scopes): (&RedirectUri, &[String]),
 ) -> Result<AuthorizationRequest, Failure> {
     let name = server.name.as_str();
     let issuer = issuer_of(metadata);
-    let selected = manager.select_scopes(None, &[]);
-    let scopes = login_scopes(context, server, (store, place), &selected).await;
     let request = AuthorizationRequest::new(redirect.to_string())
         .with_client_name(CLIENT_NAME)
-        .with_scopes(scopes.clone());
+        .with_scopes(scopes.to_vec());
     if let Some(client) = &remote.oauth_client {
         let request = request.with_preregistered_client(client.client_id.clone());
         return Ok(
@@ -909,7 +903,7 @@ async fn client_request(
         if metadata.registration_endpoint.is_none() {
             return Err(no_registration(name, metadata));
         }
-        let item = register(manager, &issuer, redirect, &scopes).await?;
+        let item = register(manager, &issuer, redirect, scopes).await?;
         let secret = item
             .to_secret()
             .map_err(|error| Failure::protocol(error.to_string()))?;
