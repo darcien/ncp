@@ -944,10 +944,11 @@ async fn oauth_handle(
         .await
 }
 
-/// A proxy that records the first line of each request and answers each
-/// one with `502 Bad Gateway`. It stops when the value is dropped.
+/// A proxy that records the first line of each request. It stops when the
+/// value is dropped.
 pub struct FakeProxy {
     pub url: String,
+    pub port: u16,
     pub request_lines: Arc<std::sync::Mutex<Vec<String>>>,
     stop: CancellationToken,
 }
@@ -958,55 +959,111 @@ impl Drop for FakeProxy {
     }
 }
 
-/// Starts a fake proxy on a free loopback port.
+/// Starts a proxy on a free loopback port that answers each request with
+/// `502 Bad Gateway`.
 ///
 /// # Errors
 ///
 /// Returns an error when no loopback port is free.
 pub async fn serve_fake_proxy() -> std::io::Result<FakeProxy> {
-    serve_fake_proxy_on(0).await
+    serve_proxy(false).await
 }
 
-/// Starts a fake proxy on the loopback port, for example the port that the
-/// system settings name.
+/// Starts a proxy on a free loopback port that makes a tunnel for a
+/// `CONNECT` to a loopback address, as a real proxy does. Each other request
+/// gets `502 Bad Gateway`, so that a test never goes to the network.
 ///
 /// # Errors
 ///
-/// Returns an error when the port is not free.
-pub async fn serve_fake_proxy_on(port: u16) -> std::io::Result<FakeProxy> {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
-    let url = format!("http://{}", listener.local_addr()?);
+/// Returns an error when no loopback port is free.
+pub async fn serve_tunnel_proxy() -> std::io::Result<FakeProxy> {
+    serve_proxy(true).await
+}
+
+async fn serve_proxy(tunnel: bool) -> std::io::Result<FakeProxy> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
     let request_lines: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
     let stop = CancellationToken::new();
     let (lines, accept_stop) = (request_lines.clone(), stop.clone());
     tokio::spawn(async move {
         loop {
-            let mut stream = tokio::select! {
+            let stream = tokio::select! {
                 accepted = listener.accept() => match accepted {
                     Ok((stream, _)) => stream,
                     Err(_) => return,
                 },
                 () = accept_stop.cancelled() => return,
             };
-            let lines = lines.clone();
-            tokio::spawn(async move {
-                let mut first = String::new();
-                let mut reader = BufReader::new(&mut stream);
-                if reader.read_line(&mut first).await.is_ok() {
-                    if let Ok(mut lines) = lines.lock() {
-                        lines.push(first.trim_end().to_string());
-                    }
-                    let _ = stream
-                        .write_all(b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
-                        .await;
-                }
-            });
+            tokio::spawn(answer_proxy_request(stream, lines.clone(), tunnel));
         }
     });
     Ok(FakeProxy {
-        url,
+        url: format!("http://{address}"),
+        port: address.port(),
         request_lines,
         stop,
     })
+}
+
+/// Records the first line of the request, then makes the tunnel or answers
+/// `502`.
+async fn answer_proxy_request(
+    mut stream: tokio::net::TcpStream,
+    lines: Arc<std::sync::Mutex<Vec<String>>>,
+    tunnel: bool,
+) {
+    use tokio::io::AsyncWriteExt;
+    let Some(first) = read_head(&mut tokio::io::BufReader::new(&mut stream)).await else {
+        return;
+    };
+    if let Ok(mut lines) = lines.lock() {
+        lines.push(first.clone());
+    }
+    let upstream = match loopback_target(&first).filter(|_| tunnel) {
+        Some(target) => tokio::net::TcpStream::connect(target).await.ok(),
+        None => None,
+    };
+    match upstream {
+        Some(mut upstream) => {
+            let established = b"HTTP/1.1 200 Connection established\r\n\r\n";
+            if stream.write_all(established).await.is_ok() {
+                let _ = tokio::io::copy_bidirectional(&mut stream, &mut upstream).await;
+            }
+        }
+        None => {
+            let _ = stream
+                .write_all(
+                    b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                )
+                .await;
+        }
+    }
+}
+
+/// The first line of a request head, after a read of the whole head. A
+/// client sends nothing more before the answer to a `CONNECT`, so the
+/// buffer has no bytes of the tunnel.
+async fn read_head(reader: &mut (impl tokio::io::AsyncBufRead + Unpin)) -> Option<String> {
+    use tokio::io::AsyncBufReadExt;
+    let mut first = String::new();
+    reader.read_line(&mut first).await.ok()?;
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match reader.read_line(&mut line).await {
+            Ok(0) | Err(_) => return None,
+            Ok(_) if line.trim_end().is_empty() => return Some(first.trim_end().to_string()),
+            Ok(_) => {}
+        }
+    }
+}
+
+/// The loopback address of a `CONNECT` request line, or `None`.
+fn loopback_target(first: &str) -> Option<std::net::SocketAddr> {
+    let authority = first.strip_prefix("CONNECT ")?.split_whitespace().next()?;
+    authority
+        .parse::<std::net::SocketAddr>()
+        .ok()
+        .filter(|address| address.ip().is_loopback())
 }

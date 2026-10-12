@@ -1136,6 +1136,27 @@ async fn requests_go_through_the_proxy_unless_no_proxy_names_the_host() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_https_server_works_through_the_tunnel_of_a_proxy() {
+    let fixture = ncp_testkit::serve_https(Mode::Modern).await.unwrap();
+    let proxy = ncp_testkit::serve_tunnel_proxy().await.unwrap();
+    let home = Home::new("proxy-tunnel")
+        .set("HTTPS_PROXY", &proxy.url)
+        .set("SSL_CERT_FILE", ncp_testkit::TEST_CA);
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let authority = fixture
+        .url
+        .trim_start_matches("https://")
+        .trim_end_matches("/mcp");
+    let lines = proxy.request_lines.lock().unwrap().clone();
+    assert!(
+        lines.contains(&format!("CONNECT {authority} HTTP/1.1")),
+        "{lines:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn https_server_works_with_the_roots_in_ssl_cert_file() {
     let fixture = ncp_testkit::serve_https(Mode::Modern).await.unwrap();
     let home = Home::new("cert-file").set("SSL_CERT_FILE", ncp_testkit::TEST_CA);

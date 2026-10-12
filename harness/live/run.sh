@@ -5,12 +5,9 @@
 # Usage:
 #   harness/live/run.sh [FILTER]
 #
-# FILTER selects tests by name, for example "keychain". With no FILTER, the
-# proxy test does not run: while the system proxy points to the test, the
-# other HTTPS connections of the Mac fail. Run it alone with "proxy".
-#
-# The terminal goes to a record in .scratch/live/, through script, so that
-# the questions of ncp still see a terminal.
+# FILTER selects tests by name, for example "keychain". The terminal goes
+# to a record in .scratch/live/, through script, so that the questions of
+# ncp still see a terminal.
 set -eu
 
 if [ "$(uname)" != Darwin ]; then
@@ -22,10 +19,6 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
 mkdir -p .scratch/live
 record=".scratch/live/$(date +%Y-%m-%d-%H%M%S).log"
-
-if [ $# -eq 0 ]; then
-	set -- --skip system_proxy
-fi
 
 cargo build --locked -p ncp
 status=0

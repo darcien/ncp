@@ -2,8 +2,10 @@
 //! the system settings and a login at a real server. See
 //! `docs/live-tests.md`.
 //!
-//! A person must be present, and only the user runs them. Thus they are
-//! ignored by default. Run them with `mise run live`.
+//! They change the state of the Mac, and most need a person, so only the
+//! user runs them. Thus they are ignored by default. Run them with `mise
+//! run live`. The proxy test needs only `sudo`, so a CI runner on macOS can
+//! run it.
 
 // The whole file is test code, where the agent rules permit unwrap.
 #![allow(clippy::unwrap_used)]
@@ -13,10 +15,12 @@ mod common;
 
 use std::{
     path::{Path, PathBuf},
-    process::Stdio,
+    process::{Command, Stdio},
+    time::{Duration, Instant},
 };
 
 use common::{Home, Run};
+use ncp_testkit::Mode;
 use serde_json::{Value, json};
 
 const FIXTURE: &str = env!("CARGO_BIN_EXE_ncp-fixture");
@@ -206,9 +210,12 @@ fn oauth_login_with_a_browser_keeps_the_tokens_in_the_native_store() {
     assert!(!status.to_string().contains(LIVE_SERVER), "{status}");
 }
 
-/// The port of the HTTPS proxy of the system settings at 127.0.0.1.
-fn system_https_proxy_port() -> u16 {
-    let output = std::process::Command::new("/usr/sbin/scutil")
+const NETWORKSETUP: &str = "/usr/sbin/networksetup";
+
+/// The port of the HTTPS proxy of the system settings, when it is on and
+/// at 127.0.0.1.
+fn system_https_proxy() -> Option<u16> {
+    let output = Command::new("/usr/sbin/scutil")
         .arg("--proxy")
         .output()
         .unwrap();
@@ -220,50 +227,167 @@ fn system_https_proxy_port() -> u16 {
             .map(|(_, value)| value.to_string())
     };
     let on = field("HTTPSEnable").as_deref() == Some("1");
-    match (on, field("HTTPSProxy"), field("HTTPSPort")) {
-        (true, Some(host), Some(port)) if host == "127.0.0.1" => port.parse().unwrap(),
-        _ => panic!(
-            "set the HTTPS proxy of the system settings first, for example:\n\
-             sudo networksetup -setsecurewebproxy Wi-Fi 127.0.0.1 18080\n\
-             Remove it after the test:\n\
-             sudo networksetup -setsecurewebproxystate Wi-Fi off\n\
-             scutil --proxy shows:\n{text}"
-        ),
+    let local = field("HTTPSProxy").as_deref() == Some("127.0.0.1");
+    field("HTTPSPort")
+        .and_then(|port| port.parse().ok())
+        .filter(|_| on && local)
+}
+
+/// The network services that are on. The first line of the list is a
+/// note, and a service that is off starts with `*`.
+fn network_services() -> Vec<String> {
+    let output = Command::new(NETWORKSETUP)
+        .arg("-listallnetworkservices")
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .skip(1)
+        .filter(|line| !line.is_empty() && !line.starts_with('*'))
+        .map(str::to_string)
+        .collect()
+}
+
+/// The HTTPS proxy of a service: on or off, and the stored server and
+/// port, if any.
+fn secure_web_proxy(service: &str) -> (bool, Option<(String, String)>) {
+    let output = Command::new(NETWORKSETUP)
+        .args(["-getsecurewebproxy", service])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    let field = |key: &str| {
+        text.lines()
+            .find_map(|line| line.strip_prefix(key))
+            .map_or_else(String::new, |value| value.trim().to_string())
+    };
+    let server = field("Server:");
+    let stored = (!server.is_empty()).then(|| (server, field("Port:")));
+    (field("Enabled:") == "Yes", stored)
+}
+
+/// `networksetup` with root rights. `sudo` asks for the password on the
+/// terminal. A CI runner has `sudo` with no password.
+fn networksetup_as_root(args: &[&str]) -> bool {
+    Command::new("/usr/bin/sudo")
+        .arg(NETWORKSETUP)
+        .args(args)
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// The HTTPS proxy of the system settings for one test. It goes on for each
+/// network service that is on, so that the service in use has it. The drop
+/// sets each service back, also after a failure.
+struct SystemProxy {
+    /// Each service, with the server and port that it had stored.
+    services: Vec<(String, Option<(String, String)>)>,
+}
+
+impl SystemProxy {
+    fn set(port: u16) -> Self {
+        let services = network_services()
+            .into_iter()
+            .map(|service| {
+                let (on, stored) = secure_web_proxy(&service);
+                // The test cannot set back the password of a proxy, so it
+                // does not change a proxy that is in use.
+                assert!(
+                    !on,
+                    "{service} uses an HTTPS proxy: the test does not change it"
+                );
+                (service, stored)
+            })
+            .collect();
+        let proxy = Self { services };
+        let port_text = port.to_string();
+        for (service, _) in &proxy.services {
+            let set = ["-setsecurewebproxy", service, "127.0.0.1", &port_text];
+            assert!(
+                networksetup_as_root(&set),
+                "cannot set the proxy of {service}"
+            );
+        }
+        // The system settings change in the background.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while system_https_proxy() != Some(port) {
+            assert!(
+                Instant::now() < deadline,
+                "scutil --proxy does not show the proxy"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        proxy
     }
 }
 
-/// `ncp` reads only the manual proxy of the system settings, not PAC and
-/// not the bypass list (design C5). The fake proxy answers each request
-/// with 502, so nothing goes to the network.
+impl Drop for SystemProxy {
+    fn drop(&mut self) {
+        for (service, stored) in &self.services {
+            if let Some((server, port)) = stored {
+                networksetup_as_root(&["-setsecurewebproxy", service, server, port]);
+            }
+            if !networksetup_as_root(&["-setsecurewebproxystate", service, "off"]) {
+                eprintln!(
+                    "set the proxy back: sudo networksetup -setsecurewebproxystate '{service}' off"
+                );
+            }
+        }
+    }
+}
+
+/// The routes that `-v` shows.
+fn routes(run: &Run) -> Vec<String> {
+    run.stderr()
+        .iter()
+        .filter_map(|line| line["debug"]["message"].as_str())
+        .filter(|message| message.starts_with("route to "))
+        .map(str::to_string)
+        .collect()
+}
+
+/// `ncp` reads the manual HTTPS proxy of the system settings when no
+/// variable is set (design C5). The request goes through the tunnel of a
+/// local proxy to a local HTTPS server, so nothing goes to the network, and
+/// a CI runner can run the test with no person.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "needs the HTTPS proxy of the system settings at 127.0.0.1"]
-async fn system_proxy_routes_a_request_when_no_variable_is_set() {
-    let port = system_https_proxy_port();
-    let proxy = ncp_testkit::serve_fake_proxy_on(port).await.unwrap();
-    let home = Home::new("system-proxy");
-    let url = "https://ncp-live.invalid/mcp";
-    home.configure(&json!({"web": {"type": "http", "url": url}}));
-    let routes = |run: &Run| -> Vec<String> {
-        run.stderr()
-            .iter()
-            .filter_map(|line| line["debug"]["message"].as_str())
-            .filter(|message| message.starts_with("route to "))
-            .map(str::to_string)
-            .collect()
-    };
+#[ignore = "changes the HTTPS proxy of the system settings with sudo"]
+async fn system_proxy_carries_a_request_when_no_variable_is_set() {
+    say(
+        "This test sets the HTTPS proxy of the system settings to a test proxy. \
+         It sets the proxy back at the end, also after a failure. sudo asks for your password. \
+         While the test runs, the other HTTPS connections of this Mac fail. \
+         If you stop the test with Ctrl-C, set the proxy back: \
+         sudo networksetup -setsecurewebproxystate SERVICE off",
+    );
+    let fixture = ncp_testkit::serve_https(Mode::Modern).await.unwrap();
+    let proxy = ncp_testkit::serve_tunnel_proxy().await.unwrap();
+    let _system = SystemProxy::set(proxy.port);
+    let home = Home::new("system-proxy").set("SSL_CERT_FILE", ncp_testkit::TEST_CA);
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
 
     let run = home.run(&["-v", "tool", "list", "web"]);
-    let route = format!("route to {url}: proxy http://127.0.0.1:{port}/ from the system settings");
-    assert_eq!(routes(&run), [route], "{}", run.describe());
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let route = format!(
+        "route to {}: proxy {}/ from the system settings",
+        fixture.url, proxy.url
+    );
+    assert_eq!(routes(&run), [route]);
+    let authority = fixture
+        .url
+        .trim_start_matches("https://")
+        .trim_end_matches("/mcp");
     let lines = proxy.request_lines.lock().unwrap().clone();
-    let connect = "CONNECT ncp-live.invalid:443";
     assert!(
-        lines.iter().any(|line| line.starts_with(connect)),
+        lines.contains(&format!("CONNECT {authority} HTTP/1.1")),
         "{lines:?}"
     );
 
     let home = home.set("HTTPS_PROXY", "http://127.0.0.1:9");
     let run = home.run(&["-v", "tool", "list", "web"]);
-    let route = format!("route to {url}: proxy http://127.0.0.1:9/ from HTTPS_PROXY");
+    let route = format!(
+        "route to {}: proxy http://127.0.0.1:9/ from HTTPS_PROXY",
+        fixture.url
+    );
     assert_eq!(routes(&run), [route], "{}", run.describe());
 }
