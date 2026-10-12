@@ -98,6 +98,10 @@ pub enum AddError {
         "--secret needs a URL with no ${{NAME}} in its scheme, host or port: ncp sends a stored value only to a literal origin"
     )]
     SecretOrigin,
+    /// The field only: the text of a reference that is not valid can be a
+    /// value that the user typed by mistake.
+    #[error("the value of {0} has a ${{...}} that is not a valid reference")]
+    Reference(String),
     #[error("the entry is not valid: {0}")]
     Entry(#[from] EntryError),
 }
@@ -113,7 +117,10 @@ pub fn build(name: &str, request: &Request) -> Result<Entry, AddError> {
         Form::Stdio { command, args } => stdio_fields(command, args, request)?,
     };
     let value = Value::Object(fields.iter().cloned().collect());
-    let shape = config::check_entry(name, &value)?;
+    let shape = config::check_entry(name, &value).map_err(|error| match error {
+        EntryError::Variable { field, .. } => AddError::Reference(field),
+        other => AddError::Entry(other),
+    })?;
     let server = config::unexpanded_server(name, &value)?;
     if let Some(secret) = &request.secret {
         if !shape.variables.contains(secret.as_str()) {
@@ -341,6 +348,13 @@ mod tests {
         assert!(!error.to_string().contains("user"));
         let error = build("gh", &stdio(&["OK", "sk-live-abc123"])).unwrap_err();
         assert_eq!(error, AddError::EnvName(2));
+        assert!(!error.to_string().contains("sk-live"));
+    }
+
+    #[test]
+    fn a_reference_that_is_not_valid_names_only_the_field() {
+        let error = build("web", &remote(&["X-Key: ${sk-live-abc}"])).unwrap_err();
+        assert_eq!(error, AddError::Reference("headers.X-Key".into()));
         assert!(!error.to_string().contains("sk-live"));
     }
 

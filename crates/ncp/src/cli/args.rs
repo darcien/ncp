@@ -280,14 +280,20 @@ pub struct AddArgs {
     pub global: bool,
     /// A header of an http server. An Authorization header must be
     /// '<scheme> ${NAME}' or '${NAME}'.
-    #[arg(long = "header", value_name = "'NAME: VALUE'")]
+    // A value that starts with "-" is a value, so that clap does not show
+    // it in an error: the text can be a secret.
+    #[arg(
+        long = "header",
+        value_name = "'NAME: VALUE'",
+        allow_hyphen_values = true
+    )]
     pub headers: Vec<String>,
     /// An environment variable of a stdio server: NAME writes ${NAME}, and
     /// NAME=VALUE writes VALUE as it is
-    #[arg(long = "env", value_name = "NAME[=VALUE]")]
+    #[arg(long = "env", value_name = "NAME[=VALUE]", allow_hyphen_values = true)]
     pub env: Vec<String>,
     /// Read the value of ${NAME} and store it for the origin of the entry
-    #[arg(long, value_name = "NAME")]
+    #[arg(long, value_name = "NAME", allow_hyphen_values = true)]
     pub secret: Option<String>,
     /// The place for the value of --secret. Default: native.
     #[arg(long, value_enum, requires = "secret")]

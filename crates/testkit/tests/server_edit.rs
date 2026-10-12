@@ -888,3 +888,61 @@ fn a_duplicate_key_in_the_global_file_does_not_stop_a_remove_from_the_project() 
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert_eq!(run.stdout()["tokensStay"], false);
 }
+
+#[test]
+fn a_global_duplicate_key_with_the_name_keeps_the_tokens_of_the_name() {
+    let home = Home::new("r-global-duplicate-name");
+    let path = home.config_path();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let entry = format!(r#"{{"type": "http", "url": "{WEB}"}}"#);
+    std::fs::write(
+        &path,
+        format!(r#"{{"mcpServers": {{}}, "mcpServers": {{"p": {entry}}}}}"#),
+    )
+    .unwrap();
+    let home = home.project("app", &json!({"p": {"type": "http", "url": WEB}}));
+    assert_eq!(home.run(&["trust"]).code(), 0);
+    let run = home.run(&["server", "remove", "p"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(run.stdout()["tokensStay"], true);
+    // With the project file ignored, the global entry runs, and its file
+    // has a duplicate key.
+    let home = Home::new("r-global-duplicate-ignored");
+    let path = home.config_path();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        format!(r#"{{"mcpServers": {{}}, "mcpServers": {{"p": {entry}}}}}"#),
+    )
+    .unwrap();
+    let home = home.project("app", &json!({"p": {"type": "http", "url": WEB}}));
+    assert_eq!(home.run(&["trust", "--ignore"]).code(), 0);
+    let run = home.run(&["server", "remove", "p"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(
+        run.error()["message"]
+            .as_str()
+            .unwrap()
+            .contains("more than one time")
+    );
+}
+
+#[test]
+fn a_value_that_starts_with_two_hyphens_is_not_in_the_error() {
+    let home = Home::new("a-hyphen");
+    let run = home.run(&[
+        "server",
+        "add",
+        "gh",
+        "--global",
+        "--env",
+        "--sk-live-abc",
+        "--",
+        "srv",
+    ]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(!run.stderr_text().contains("sk-live"), "{}", run.describe());
+    let run = add_global(&home, "web", WEB, &["--secret", "--sk-live-abc"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(!run.stderr_text().contains("sk-live"), "{}", run.describe());
+}

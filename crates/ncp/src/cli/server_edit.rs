@@ -653,12 +653,11 @@ pub async fn remove(context: &Context<'_>, name: &str, global: bool) -> Result<(
     let loaded = session::load(context, None).await?;
     let global_file = global_target(context)?;
     let project = loaded.project.project().filter(|project| project.has(name));
-    // A global file that the edit cannot use stops only a remove from it.
-    let in_global = match config_edit::entry(global_file.base_text(), name) {
-        Ok(entry) => entry.is_some(),
-        Err(_) if project.is_some() && !global => false,
-        Err(error) => return Err(edit_failure(&global_file, &error)),
-    };
+    // The rule of the loader: the last copy of a key. A duplicate key
+    // stops only an edit of the global file.
+    let in_global = config::raw_servers(global_file.base_text())
+        .map_err(|error| edit_failure(&global_file, &EditError::Config(error)))?
+        .contains_key(name);
     let place = remove_place(
         project.map(|project| project.trust),
         in_global,
