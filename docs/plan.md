@@ -494,6 +494,10 @@ step.
 Do this milestone last. The workflow needs action pins from github.com. The
 push, the tag and the CIMD URL need the user.
 
+Parked by the user on 2026-10-12. Start only after the user does the tests
+in `docs/manual-tests.md`, and reviews the build decisions in section 9 of
+`docs/design/cli.md`.
+
 1. **Stop and ask** before the distribution channel (D2), CI, and any push or
    upload. They add network destinations and accounts.
 2. The decisions of 2026-10-09 (`.scratch/backlog/release.md`):
