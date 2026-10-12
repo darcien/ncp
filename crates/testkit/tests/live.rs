@@ -209,7 +209,11 @@ fn system_https_proxy_port() -> u16 {
     match (on, field("HTTPSProxy"), field("HTTPSPort")) {
         (true, Some(host), Some(port)) if host == "127.0.0.1" => port.parse().unwrap(),
         _ => panic!(
-            "set the HTTPS proxy of the system settings first; see docs/live-tests.md\n{text}"
+            "set the HTTPS proxy of the system settings first, for example:\n\
+             sudo networksetup -setsecurewebproxy Wi-Fi 127.0.0.1 18080\n\
+             Remove it after the test:\n\
+             sudo networksetup -setsecurewebproxystate Wi-Fi off\n\
+             scutil --proxy shows:\n{text}"
         ),
     }
 }

@@ -12,8 +12,9 @@ the proxy code.
 ## Run
 
 ```sh
-mise run live            # All tests.
+mise run live            # All tests, but not the proxy test.
 mise run live keychain   # One test. The filter is a part of the test name.
+mise run live proxy      # The proxy test. Set the system proxy first.
 ```
 
 The task builds `ncp`, and runs the tests in
@@ -34,8 +35,9 @@ test removes its Keychain items at the end, also after a failure.
 
 ### The system proxy
 
-While the proxy is set, the HTTPS connections of the Mac fail. Set it
-just before the test, and remove it just after:
+While the proxy is set, the HTTPS connections of the Mac fail. Thus the
+proxy test runs only by its name. Set the proxy just before the test, and
+remove it just after:
 
 ```sh
 networksetup -listallnetworkservices                              # Find the name, for example Wi-Fi.
