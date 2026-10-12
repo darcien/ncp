@@ -3,8 +3,8 @@
 The live tests run `ncp` against the real parts of this Mac and a real
 server: the login Keychain, a browser, the system settings, and a login
 with your account. The other tests are sealed: they use only local stubs,
-fixtures and temporary folders. A live test needs a person, so only the
-user runs them, and the git hook only compiles them.
+fixtures and temporary folders. A live test changes the state of this Mac,
+so only the user runs them, and the git hook only compiles them.
 
 Run them before a release, and after a change to the store, the login or
 the proxy code.
@@ -38,24 +38,24 @@ The `oauth` test uses the server that you approved on 2026-10-11.
 
 The test changes the system settings itself, with `sudo networksetup`:
 
-1. It stops when a network service uses an HTTPS proxy already, for
-   example a company proxy. It does not change such a proxy.
+1. It stops when a network service has a stored HTTPS proxy, for example
+   a company proxy. It does not change such a proxy, because it cannot set
+   back its password. A proxy at 127.0.0.1 from an earlier run does not
+   stop it.
 2. It starts a test proxy on a free port of 127.0.0.1, and sets the HTTPS
    proxy of each network service that is on to that port.
-3. After the checks, it sets the proxy of each service off again, also
-   after a failure. The settings keep 127.0.0.1 and the port, with the
-   proxy off.
+3. At the end, it turns the proxy of each service off. A watchdog with
+   root rights does this too when the test stops with no clean end, for
+   example after Ctrl-C. The settings keep 127.0.0.1 and the port, with
+   the proxy off.
 
 While the test runs (some seconds), the other HTTPS connections of the
-Mac fail. If you stop the test with Ctrl-C, set the proxy back yourself:
+Mac fail.
 
-```sh
-networksetup -listallnetworkservices
-sudo networksetup -setsecurewebproxystate SERVICE off
-```
-
-The test needs no person and no network, only `sudo`. A CI runner on
-macOS has `sudo` with no password, so it can run `mise run live proxy`.
+The test sends nothing out of the Mac, but it needs a network service
+that is on. It needs no person, only `sudo`. Thus a CI runner on macOS
+with `sudo` with no password can possibly run it. Check that on a runner
+before you add it to CI.
 
 ## Results
 

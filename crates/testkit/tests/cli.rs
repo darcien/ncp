@@ -1119,12 +1119,12 @@ async fn loopback_server_through_a_remote_proxy_gives_the_no_proxy_hint() {
 #[tokio::test(flavor = "multi_thread")]
 async fn requests_go_through_the_proxy_unless_no_proxy_names_the_host() {
     let fixture = serve_http(Mode::Modern).await.unwrap();
-    let proxy = ncp_testkit::serve_fake_proxy().await.unwrap();
-    let home = Home::new("local-proxy").set("HTTP_PROXY", &proxy.url);
+    let proxy = ncp_testkit::serve_test_proxy().await.unwrap();
+    let home = Home::new("local-proxy").set("HTTP_PROXY", &proxy.url());
     home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
-    let lines = proxy.request_lines.lock().unwrap().clone();
+    let lines = proxy.request_lines();
     assert!(
         lines
             .iter()
@@ -1138,20 +1138,16 @@ async fn requests_go_through_the_proxy_unless_no_proxy_names_the_host() {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_https_server_works_through_the_tunnel_of_a_proxy() {
     let fixture = ncp_testkit::serve_https(Mode::Modern).await.unwrap();
-    let proxy = ncp_testkit::serve_tunnel_proxy().await.unwrap();
+    let proxy = ncp_testkit::serve_test_proxy().await.unwrap();
     let home = Home::new("proxy-tunnel")
-        .set("HTTPS_PROXY", &proxy.url)
+        .set("HTTPS_PROXY", &proxy.url())
         .set("SSL_CERT_FILE", ncp_testkit::TEST_CA);
     home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
-    let authority = fixture
-        .url
-        .trim_start_matches("https://")
-        .trim_end_matches("/mcp");
-    let lines = proxy.request_lines.lock().unwrap().clone();
+    let lines = proxy.request_lines();
     assert!(
-        lines.contains(&format!("CONNECT {authority} HTTP/1.1")),
+        lines.contains(&common::connect_line(&fixture.url)),
         "{lines:?}"
     );
 }
@@ -1981,11 +1977,11 @@ async fn trace_of_a_login_and_a_call_shows_no_token_code_or_verifier() {
 #[tokio::test(flavor = "multi_thread")]
 async fn oauth_discovery_goes_through_the_proxy() {
     let (_auth, fixture) = oauth_fixture(AuthSettings::default()).await;
-    let proxy = ncp_testkit::serve_fake_proxy().await.unwrap();
-    let home = oauth_home("login-proxy", &fixture.url).set("HTTP_PROXY", &proxy.url);
+    let proxy = ncp_testkit::serve_test_proxy().await.unwrap();
+    let home = oauth_home("login-proxy", &fixture.url).set("HTTP_PROXY", &proxy.url());
     let run = home.run(&LOGIN_TO_FILE);
     assert_ne!(run.code(), 0, "{}", run.describe());
-    let lines = proxy.request_lines.lock().unwrap().clone();
+    let lines = proxy.request_lines();
     assert!(
         lines
             .iter()

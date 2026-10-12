@@ -167,6 +167,14 @@ impl Drop for Home {
     }
 }
 
+/// The `CONNECT` line of a request to the server through a proxy.
+pub fn connect_line(server_url: &str) -> String {
+    let url = url::Url::parse(server_url).unwrap();
+    let host = url.host_str().unwrap();
+    let port = url.port_or_known_default().unwrap();
+    format!("CONNECT {host}:{port} HTTP/1.1")
+}
+
 pub struct Run(pub Output);
 
 impl Run {

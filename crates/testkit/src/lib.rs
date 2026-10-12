@@ -944,43 +944,45 @@ async fn oauth_handle(
         .await
 }
 
-/// A proxy that records the first line of each request. It stops when the
-/// value is dropped.
-pub struct FakeProxy {
-    pub url: String,
-    pub port: u16,
-    pub request_lines: Arc<std::sync::Mutex<Vec<String>>>,
+/// A local proxy. It makes a tunnel for a `CONNECT` to a loopback address,
+/// as a real proxy does, and answers each other request with `502 Bad
+/// Gateway`, so that a test never goes to the network. It looks up no
+/// name, so a `CONNECT` to `localhost` gets `502` too. It records the first
+/// line of each request, and stops when the value is dropped.
+pub struct TestProxy {
+    pub address: std::net::SocketAddr,
+    request_lines: Arc<std::sync::Mutex<Vec<String>>>,
     stop: CancellationToken,
 }
 
-impl Drop for FakeProxy {
+impl TestProxy {
+    #[must_use]
+    pub fn url(&self) -> String {
+        format!("http://{}", self.address)
+    }
+
+    /// The first line of each request so far.
+    #[must_use]
+    pub fn request_lines(&self) -> Vec<String> {
+        self.request_lines
+            .lock()
+            .map(|lines| lines.clone())
+            .unwrap_or_default()
+    }
+}
+
+impl Drop for TestProxy {
     fn drop(&mut self) {
         self.stop.cancel();
     }
 }
 
-/// Starts a proxy on a free loopback port that answers each request with
-/// `502 Bad Gateway`.
+/// Starts a test proxy on a free loopback port.
 ///
 /// # Errors
 ///
 /// Returns an error when no loopback port is free.
-pub async fn serve_fake_proxy() -> std::io::Result<FakeProxy> {
-    serve_proxy(false).await
-}
-
-/// Starts a proxy on a free loopback port that makes a tunnel for a
-/// `CONNECT` to a loopback address, as a real proxy does. Each other request
-/// gets `502 Bad Gateway`, so that a test never goes to the network.
-///
-/// # Errors
-///
-/// Returns an error when no loopback port is free.
-pub async fn serve_tunnel_proxy() -> std::io::Result<FakeProxy> {
-    serve_proxy(true).await
-}
-
-async fn serve_proxy(tunnel: bool) -> std::io::Result<FakeProxy> {
+pub async fn serve_test_proxy() -> std::io::Result<TestProxy> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
     let request_lines: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
@@ -995,23 +997,19 @@ async fn serve_proxy(tunnel: bool) -> std::io::Result<FakeProxy> {
                 },
                 () = accept_stop.cancelled() => return,
             };
-            tokio::spawn(answer_proxy_request(stream, lines.clone(), tunnel));
+            tokio::spawn(answer_proxy_request(stream, lines.clone()));
         }
     });
-    Ok(FakeProxy {
-        url: format!("http://{address}"),
-        port: address.port(),
+    Ok(TestProxy {
+        address,
         request_lines,
         stop,
     })
 }
 
-/// Records the first line of the request, then makes the tunnel or answers
-/// `502`.
 async fn answer_proxy_request(
     mut stream: tokio::net::TcpStream,
     lines: Arc<std::sync::Mutex<Vec<String>>>,
-    tunnel: bool,
 ) {
     use tokio::io::AsyncWriteExt;
     let Some(first) = read_head(&mut tokio::io::BufReader::new(&mut stream)).await else {
@@ -1020,7 +1018,7 @@ async fn answer_proxy_request(
     if let Ok(mut lines) = lines.lock() {
         lines.push(first.clone());
     }
-    let upstream = match loopback_target(&first).filter(|_| tunnel) {
+    let upstream = match loopback_target(&first) {
         Some(target) => tokio::net::TcpStream::connect(target).await.ok(),
         None => None,
     };

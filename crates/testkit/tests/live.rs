@@ -2,10 +2,8 @@
 //! the system settings and a login at a real server. See
 //! `docs/live-tests.md`.
 //!
-//! They change the state of the Mac, and most need a person, so only the
-//! user runs them. Thus they are ignored by default. Run them with `mise
-//! run live`. The proxy test needs only `sudo`, so a CI runner on macOS can
-//! run it.
+//! They change the state of the Mac, so only the user runs them. Thus they
+//! are ignored by default. Run them with `mise run live`.
 
 // The whole file is test code, where the agent rules permit unwrap.
 #![allow(clippy::unwrap_used)]
@@ -14,6 +12,7 @@
 mod common;
 
 use std::{
+    os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -212,23 +211,26 @@ fn oauth_login_with_a_browser_keeps_the_tokens_in_the_native_store() {
 
 const NETWORKSETUP: &str = "/usr/sbin/networksetup";
 
+/// The value of a `key: value` line of `scutil` or `networksetup`.
+fn field<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    text.lines()
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.trim() == key)
+        .map(|(_, value)| value.trim())
+}
+
+fn output_of(program: &str, args: &[&str]) -> String {
+    let output = Command::new(program).args(args).output().unwrap();
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
 /// The port of the HTTPS proxy of the system settings, when it is on and
 /// at 127.0.0.1.
 fn system_https_proxy() -> Option<u16> {
-    let output = Command::new("/usr/sbin/scutil")
-        .arg("--proxy")
-        .output()
-        .unwrap();
-    let text = String::from_utf8_lossy(&output.stdout);
-    let field = |key: &str| {
-        text.lines()
-            .filter_map(|line| line.trim().split_once(" : "))
-            .find(|(name, _)| *name == key)
-            .map(|(_, value)| value.to_string())
-    };
-    let on = field("HTTPSEnable").as_deref() == Some("1");
-    let local = field("HTTPSProxy").as_deref() == Some("127.0.0.1");
-    field("HTTPSPort")
+    let text = output_of("/usr/sbin/scutil", &["--proxy"]);
+    let on = field(&text, "HTTPSEnable") == Some("1");
+    let local = field(&text, "HTTPSProxy") == Some("127.0.0.1");
+    field(&text, "HTTPSPort")
         .and_then(|port| port.parse().ok())
         .filter(|_| on && local)
 }
@@ -236,11 +238,7 @@ fn system_https_proxy() -> Option<u16> {
 /// The network services that are on. The first line of the list is a
 /// note, and a service that is off starts with `*`.
 fn network_services() -> Vec<String> {
-    let output = Command::new(NETWORKSETUP)
-        .arg("-listallnetworkservices")
-        .output()
-        .unwrap();
-    String::from_utf8_lossy(&output.stdout)
+    output_of(NETWORKSETUP, &["-listallnetworkservices"])
         .lines()
         .skip(1)
         .filter(|line| !line.is_empty() && !line.starts_with('*'))
@@ -248,65 +246,52 @@ fn network_services() -> Vec<String> {
         .collect()
 }
 
-/// The HTTPS proxy of a service: on or off, and the stored server and
-/// port, if any.
-fn secure_web_proxy(service: &str) -> (bool, Option<(String, String)>) {
-    let output = Command::new(NETWORKSETUP)
-        .args(["-getsecurewebproxy", service])
-        .output()
-        .unwrap();
-    let text = String::from_utf8_lossy(&output.stdout);
-    let field = |key: &str| {
-        text.lines()
-            .find_map(|line| line.strip_prefix(key))
-            .map_or_else(String::new, |value| value.trim().to_string())
-    };
-    let server = field("Server:");
-    let stored = (!server.is_empty()).then(|| (server, field("Port:")));
-    (field("Enabled:") == "Yes", stored)
+/// The stored HTTPS proxy server of a service, when it is not the server of
+/// this test. The test does not change such a proxy, because it cannot set
+/// back its password.
+fn other_https_proxy(service: &str) -> Option<String> {
+    let text = output_of(NETWORKSETUP, &["-getsecurewebproxy", service]);
+    field(&text, "Server")
+        .filter(|server| !server.is_empty() && *server != "127.0.0.1")
+        .map(str::to_string)
 }
 
-/// `networksetup` with root rights. `sudo` asks for the password on the
-/// terminal. A CI runner has `sudo` with no password.
-fn networksetup_as_root(args: &[&str]) -> bool {
+fn sudo(args: &[&str]) -> bool {
     Command::new("/usr/bin/sudo")
-        .arg(NETWORKSETUP)
         .args(args)
         .status()
         .is_ok_and(|status| status.success())
 }
 
-/// The HTTPS proxy of the system settings for one test. It goes on for each
-/// network service that is on, so that the service in use has it. The drop
-/// sets each service back, also after a failure.
+/// The HTTPS proxy of the system settings for one test, on each network
+/// service that is on, so that the service in use has it. The drop turns
+/// it off again. A watchdog with root rights turns it off too when the test
+/// process ends with no drop, for example after Ctrl-C.
 struct SystemProxy {
-    /// Each service, with the server and port that it had stored.
-    services: Vec<(String, Option<(String, String)>)>,
+    services: Vec<String>,
 }
 
 impl SystemProxy {
     fn set(port: u16) -> Self {
-        let services = network_services()
-            .into_iter()
-            .map(|service| {
-                let (on, stored) = secure_web_proxy(&service);
-                // The test cannot set back the password of a proxy, so it
-                // does not change a proxy that is in use.
-                assert!(
-                    !on,
-                    "{service} uses an HTTPS proxy: the test does not change it"
-                );
-                (service, stored)
-            })
-            .collect();
+        let services = network_services();
+        for service in &services {
+            if let Some(server) = other_https_proxy(service) {
+                panic!("{service} has the HTTPS proxy {server}: the test does not change it");
+            }
+        }
+        assert!(sudo(&["-v"]), "sudo did not accept the password");
+        Self::watch(&services);
         let proxy = Self { services };
         let port_text = port.to_string();
-        for (service, _) in &proxy.services {
-            let set = ["-setsecurewebproxy", service, "127.0.0.1", &port_text];
-            assert!(
-                networksetup_as_root(&set),
-                "cannot set the proxy of {service}"
-            );
+        for service in &proxy.services {
+            let set = [
+                NETWORKSETUP,
+                "-setsecurewebproxy",
+                service,
+                "127.0.0.1",
+                &port_text,
+            ];
+            assert!(sudo(&set), "cannot set the proxy of {service}");
         }
         // The system settings change in the background.
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -319,19 +304,32 @@ impl SystemProxy {
         }
         proxy
     }
+
+    /// Starts the watchdog in its own process group, so that the Ctrl-C of
+    /// the terminal does not stop it. The names go in as arguments, so the
+    /// shell does not read them.
+    fn watch(services: &[String]) {
+        let script = "test=$1; shift; \
+            while kill -0 \"$test\" 2>/dev/null; do sleep 1; done; \
+            for service in \"$@\"; do \
+            /usr/sbin/networksetup -setsecurewebproxystate \"$service\" off; done";
+        let pid = std::process::id().to_string();
+        let started = Command::new("/usr/bin/sudo")
+            .args(["-n", "/bin/sh", "-c", script, "watchdog", &pid])
+            .args(services)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn();
+        assert!(started.is_ok(), "cannot start the watchdog");
+    }
 }
 
 impl Drop for SystemProxy {
     fn drop(&mut self) {
-        for (service, stored) in &self.services {
-            if let Some((server, port)) = stored {
-                networksetup_as_root(&["-setsecurewebproxy", service, server, port]);
-            }
-            if !networksetup_as_root(&["-setsecurewebproxystate", service, "off"]) {
-                eprintln!(
-                    "set the proxy back: sudo networksetup -setsecurewebproxystate '{service}' off"
-                );
-            }
+        for service in &self.services {
+            sudo(&[NETWORKSETUP, "-setsecurewebproxystate", service, "off"]);
         }
     }
 }
@@ -348,21 +346,16 @@ fn routes(run: &Run) -> Vec<String> {
 
 /// `ncp` reads the manual HTTPS proxy of the system settings when no
 /// variable is set (design C5). The request goes through the tunnel of a
-/// local proxy to a local HTTPS server, so nothing goes to the network, and
-/// a CI runner can run the test with no person.
+/// local proxy to a local HTTPS server.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "changes the HTTPS proxy of the system settings with sudo"]
 async fn system_proxy_carries_a_request_when_no_variable_is_set() {
     say(
-        "This test sets the HTTPS proxy of the system settings to a test proxy. \
-         It sets the proxy back at the end, also after a failure. sudo asks for your password. \
-         While the test runs, the other HTTPS connections of this Mac fail. \
-         If you stop the test with Ctrl-C, set the proxy back: \
-         sudo networksetup -setsecurewebproxystate SERVICE off",
+        "sudo asks for your password. The test sets the HTTPS proxy of the system settings, and turns it off at the end, also when the test stops.",
     );
     let fixture = ncp_testkit::serve_https(Mode::Modern).await.unwrap();
-    let proxy = ncp_testkit::serve_tunnel_proxy().await.unwrap();
-    let _system = SystemProxy::set(proxy.port);
+    let proxy = ncp_testkit::serve_test_proxy().await.unwrap();
+    let _system = SystemProxy::set(proxy.address.port());
     let home = Home::new("system-proxy").set("SSL_CERT_FILE", ncp_testkit::TEST_CA);
     home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
 
@@ -370,16 +363,13 @@ async fn system_proxy_carries_a_request_when_no_variable_is_set() {
     assert_eq!(run.code(), 0, "{}", run.describe());
     let route = format!(
         "route to {}: proxy {}/ from the system settings",
-        fixture.url, proxy.url
+        fixture.url,
+        proxy.url()
     );
     assert_eq!(routes(&run), [route]);
-    let authority = fixture
-        .url
-        .trim_start_matches("https://")
-        .trim_end_matches("/mcp");
-    let lines = proxy.request_lines.lock().unwrap().clone();
+    let lines = proxy.request_lines();
     assert!(
-        lines.contains(&format!("CONNECT {authority} HTTP/1.1")),
+        lines.contains(&common::connect_line(&fixture.url)),
         "{lines:?}"
     );
 
