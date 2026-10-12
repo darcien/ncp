@@ -7,7 +7,7 @@
 #![allow(dead_code)]
 
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Output, Stdio},
 };
 
@@ -128,13 +128,22 @@ impl Home {
         self.run_with_stdin(args, "")
     }
 
-    pub fn run_with_stdin(&self, args: &[&str], stdin: &str) -> Run {
-        use std::io::Write as _;
-        let mut child = Command::new(NCP)
-            .args(args)
+    /// The program in the current folder, with only the environment of
+    /// this home.
+    pub fn command(&self, program: &Path) -> Command {
+        let mut command = Command::new(program);
+        command
             .current_dir(&self.cwd)
             .env_clear()
-            .envs(self.env.iter().cloned())
+            .envs(self.env.iter().cloned());
+        command
+    }
+
+    pub fn run_with_stdin(&self, args: &[&str], stdin: &str) -> Run {
+        use std::io::Write as _;
+        let mut child = self
+            .command(Path::new(NCP))
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

@@ -953,8 +953,18 @@ impl Drop for FakeProxy {
 ///
 /// Returns an error when no loopback port is free.
 pub async fn serve_fake_proxy() -> std::io::Result<FakeProxy> {
+    serve_fake_proxy_on(0).await
+}
+
+/// Starts a fake proxy on the loopback port, for example the port that the
+/// system settings name.
+///
+/// # Errors
+///
+/// Returns an error when the port is not free.
+pub async fn serve_fake_proxy_on(port: u16) -> std::io::Result<FakeProxy> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     let url = format!("http://{}", listener.local_addr()?);
     let request_lines: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
     let stop = CancellationToken::new();

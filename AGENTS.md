@@ -71,6 +71,10 @@ Automated tests do not use the macOS Keychain or the Secret Service of the
 host. The Keychain shows a prompt, and an agent cannot accept it. Use the
 in-memory store or the opt-in file store in tests.
 
+The live tests (`mise run live`, `docs/live-tests.md`) are the exception.
+They use the login Keychain, a browser, the system settings and a real
+server. Only the user runs them. An agent never runs them.
+
 Tests of the Linux Secret Service store run only in the Linux harness
 container. Each test run starts its own D-Bus session and keyring daemon in
 the container.
@@ -86,7 +90,8 @@ the container.
 - Run `mise run precommit` to run all checks on all files, for example after
   a change to `hk.pkl` or `mise.toml`.
 - Tests use only local servers: stubs, rmcp fixtures, and official MCP test
-  parts. Do not call third-party servers.
+  parts. Do not call third-party servers. The live tests are the exception
+  (see above).
 
 ## Commits
 

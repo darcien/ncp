@@ -106,6 +106,12 @@ run = "pnpm install --frozen-lockfile"
 description = "Run the interop tests against the official MCP everything server"
 run = "cargo test -p ncp-testkit --locked --test interop -- --ignored"
 
+# The live tests use the login Keychain, a browser, the system settings and
+# a real server. Only the user runs them. See docs/live-tests.md.
+[tasks.live]
+description = "Run the live tests on this Mac. A person must be present"
+run = "harness/live/run.sh"
+
 # Run it before the other Linux tasks: a volume that is in use cannot be
 # removed.
 [tasks."linux:prune"]
