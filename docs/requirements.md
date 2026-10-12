@@ -160,6 +160,10 @@ no loss.
   `127.0.0.0/8`, `::1`). No user name or password in the URL. Reason: tokens
   and headers must not go over the network in plain text, and the file must
   not hold a secret.
+- `ncp` changes a configuration file only through `server add` and `server
+  remove` (docs/design/server-add.md). It can create the file. It writes
+  strict JSON for the new entry and keeps every other byte of the file. A
+  value that the user gives to `server add` is a value that the user wrote.
 - `ncp` writes no secret to the file. A secret is a named value, and the
   file names it with `${NAME}`. `ncp` accepts a literal value that the user
   wrote, because it cannot tell a secret from another value, and the file

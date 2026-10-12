@@ -36,9 +36,11 @@ the decisions and their reasons.
 - The network commands use the verbs of the MCP methods (`list`, `call`,
   `read`, `get`).
 - No command waits for input that it did not ask for. A command reads stdin
-  only when an argument says so (`-`), when `secret set` reads the value,
-  when `auth login` reads a pasted redirect URL, or when a server asks a
-  question (elicitation) and stdin and stderr are a TTY (B63). Each wait
+  only when an argument says so (`-`), when `secret set` or `server add
+  --secret` reads the value, when `auth login` reads a pasted redirect URL,
+  when `ncp` asks the trust question of a project file (B76), or when a
+  server asks a question (elicitation) and stdin and stderr are a TTY
+  (B63). Each wait
   has a time limit. Thus an agent cannot hang on stdin.
 - No command starts OAuth, except `auth login`. A browser opens only for
   `auth login`, and for an elicitation in URL mode after the person says
@@ -49,6 +51,9 @@ the decisions and their reasons.
 ## 2. Commands
 
 ```
+ncp [OPTIONS] server add <SERVER> <URL> [--global] [--header 'NAME: VALUE']... [--secret <NAME> [--credential-store <native|file>]]
+ncp [OPTIONS] server add <SERVER> [--global] [--env NAME | --env NAME=VALUE]... [--secret <NAME> [--credential-store <native|file>]] -- <COMMAND> [ARG...]
+ncp [OPTIONS] server remove <SERVER> [--global]
 ncp [OPTIONS] server list
 ncp [OPTIONS] server show <SERVER>
 ncp [OPTIONS] tool list <SERVER>
@@ -66,6 +71,8 @@ ncp generate-shell-completion <bash|zsh|fish>
 
 | Command | Network | Result |
 |---|---|---|
+| `server add` | No | Adds an entry to the project file, or with `--global` to the global file, and keeps every other byte of the file. With `--secret NAME`, also reads and stores the value of `${NAME}`. The result gives the steps that are left ([server-add.md](server-add.md)). |
+| `server remove` | No | Removes the entry that runs for the name, or with `--global` the global entry, and the OAuth tokens of the server. `${NAME}` secrets stay ([server-add.md](server-add.md) section 6). |
 | `server list` | No | Each server of the global file and of the project file (section 2.5): name, transport, target, scope, file, and the trust state of a project entry. Invalid entries with their errors. It does not start a server and does not read the native store or the file, so it never shows a prompt. |
 | `server show` | Yes | What the server says about itself in its handshake (`server/discover` or `initialize`): `serverInfo`, protocol version, capabilities and `instructions`, with the configuration target. No other request. |
 | `tool list` | Yes | The tools of the server. Text: one line for each tool, with the name, the title or the first line of the description, and a mark for the read-only or destructive hint. The mark says "hint": the spec tells clients to treat annotations from a server as untrusted. JSON: the full MCP `Tool` objects. When the server has `instructions`, a hint on stderr names `server show`. |
@@ -80,8 +87,8 @@ ncp generate-shell-completion <bash|zsh|fish>
 | `trust` | No | Trusts the project file of the current folder, and shows its entries, as `mise trust`. `--show` shows them and changes nothing; `--untrust` removes the trust; `--ignore` refuses the file (section 2.5). |
 | `generate-shell-completion` | No | The completion script for the shell. Server names come from the configuration. Tool names come only from a cache, or are not completed. Completion never starts a server. |
 
-`ncp --help` shows the normal order of work: `server list`, `server show`,
-`tool list`, `tool show`, `tool call`.
+`ncp --help` shows the normal order of work: `server add`, `server list`,
+`server show`, `tool list`, `tool show`, `tool call`.
 
 Resources and prompts (P7) have the same shape. Each command uses the MCP
 methods on its line:
@@ -143,7 +150,10 @@ and the error says "missing tool name".
 | `--no-cache` | Read and write no cache: no cached protocol version and no cached tool list (B62), as uv names the flag. |
 | `--refresh` | Read no cache, but write it: probe the protocol version and get the tool list again (B62), as uv names the flag. |
 | `--timeout <seconds>` | The time limit for one request, in whole seconds. Default 300 s (decision C7). A timeout sends a cancel request and exits with code 3. Progress notifications do not reset the clock. |
-| `--credential-store <native\|file>` | Only on `secret set` and `auth login`: the place for the new value. Default `native` (decision C2). |
+| `--credential-store <native\|file>` | Only on `secret set`, `auth login` and `server add --secret`: the place for the new value. Default `native` (decision C2). |
+| `--global` | Only on `server add` and `server remove`: the global file in place of the project file, as `mise use -g`. |
+| `--header 'NAME: VALUE'`, `--env NAME[=VALUE]` | Only on `server add`: a header of an http entry, an `env` value of a stdio entry. `--env NAME` writes `${NAME}`. |
+| `--secret <NAME>` | Only on `server add`: read the value of `${NAME}` (hidden on a TTY, else from stdin) and store it. |
 | `--server <SERVER>` | Only on `secret set` and `secret delete`: use only the destination of this entry (B72). |
 | `--unused`, `--all` | Only on `secret delete`: delete the items of the name that no entry uses, or all items of the name (B72). |
 | `--no-browser` | Only on `auth login`: print the URL and read the redirect URL from stdin (A10). |
@@ -239,7 +249,7 @@ LINEAR_KEY --server linear --credential-store file`.
   Other commands work as before.
 - `${NAME}` in a trusted project entry expands as in the global file.
 - `server add` and `server remove` write the project file; `--global`
-  writes the global file (milestone 19).
+  writes the global file ([server-add.md](server-add.md)).
 
 ## 3. Exit codes (I3)
 

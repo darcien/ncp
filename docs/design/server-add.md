@@ -1,10 +1,9 @@
-# Proposal: `ncp server add` and `ncp server remove`
+# Design: `ncp server add` and `ncp server remove`
 
-Status: proposal v7 (2026-10-11). Review rounds (adversarial and grug)
+Status: version 7, accepted by the user on 2026-10-12. Build:
+[plan.md](../plan.md) milestone 19. Review rounds (adversarial and grug)
 on v2 and v3, and an adversarial round on v6 against the built milestone
-18. Not accepted: the user must accept it before the build
-([plan.md](../plan.md) milestone 19, gate). Section 8 lists the decisions
-and the one open question.
+18. Section 8 lists the decisions.
 
 Version 7 takes the fixes of the review of v6 (section 11, round 3).
 
@@ -396,15 +395,12 @@ second file next to it and never renames over it.
 
 Keep this list current. Settled items keep their date.
 
-Open (ask the user):
-- **Where a new project file goes.** Project-config rule 9 says "the
-  current folder", as `mise use`. In a subfolder of a git repository with
-  no project file, the search stops at the git root, so a new
-  `src/.mcp.json` applies only to `src` and below, and Claude Code and
-  VS Code do not read it. Option A (rule 9 as accepted): the current
-  folder, as mise. Option B: the folder where the search stopped at
-  `.git`, else the current folder, so that the file is where Claude Code
-  reads it. B changes accepted rule 9.
+Settled (user, 2026-10-12):
+- **Where a new project file goes:** the current folder, as `mise use`
+  and project-config rule 9 (option A). In a subfolder of a git
+  repository with no project file, the new file applies only to that
+  subfolder. The option of the git root (B) was refused, because it
+  changes accepted rule 9.
 
 Settled (user, 2026-10-10):
 - Stdin: no implicit question. `--secret NAME` asks or reads stdin.
@@ -491,7 +487,7 @@ inside the lock, rule 3 again under the lock; `--secret` with `${` in the
 origin of the URL; write access and folder creation; duplicate keys and
 the CST options; header names with no case; tokens of an invalid entry and
 of another project; `scope`, `created`, `changed` in the result; the list
-of doc changes. Open: where a new project file goes (section 8).
+of doc changes. The user chose where a new project file goes (section 8).
 
 Round 2 (v3), taken from the adversarial review: `usedBy` and `place` in the
 result (item 1, minimum fix; the real fix is decision 5); same entry and

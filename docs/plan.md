@@ -452,7 +452,8 @@ orders the work.
 
 ## Milestone 19: `server add` and `server remove` (gate)
 
-Proposal: `.scratch/backlog/server-add.md` (version 5, two review rounds).
+Design: `docs/design/server-add.md` (version 7), accepted by the user on
+2026-10-12, with option A for a new project file (the current folder).
 Its target files, `--global` and the trust check before a write come from
 `docs/design/project-config.md` rule 9 (milestone 18).
 The user wants one flow: the entry, the secret and the login hint in one

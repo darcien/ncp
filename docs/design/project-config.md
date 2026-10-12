@@ -353,7 +353,10 @@ Accepted risks:
   and in the home folder it writes the global file; an untrusted file
   asks with a TTY and gives exit 2 with no TTY, and an ignored file gives
   exit 2, with no write; after a write, the new bytes are trusted; `server add --global` warns when a trusted project entry
-  has the name.
+  has the name. The cases of [server-add.md](server-add.md) 4.5, 4.7 and
+  the table of section 6: an unusable file, a change of the file between
+  the trust check and the write, and `server remove` for each trust
+  state.
 - Questions: `server list`, `secret list`, `auth status` and completion
   never ask; completion writes nothing to stderr.
 - Gate: shell completion, did-you-mean, `auth status`, `secret set` and
