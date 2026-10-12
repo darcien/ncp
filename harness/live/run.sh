@@ -1,6 +1,6 @@
 #!/bin/sh
-# Runs the live tests on this Mac: the login Keychain, a real browser login
-# and the system proxy. A person must be present. See docs/live-tests.md.
+# Runs the live tests on this Mac: the login Keychain and a real browser
+# login. See docs/live-tests.md.
 #
 # Usage:
 #   harness/live/run.sh [FILTER]
@@ -19,6 +19,13 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
 mkdir -p .scratch/live
 record=".scratch/live/$(date +%Y-%m-%d-%H%M%S).log"
+
+# The proxy test changes the proxy of the whole machine, so it runs only on
+# a host that is thrown away after the test, for example a CI runner.
+if [ "${NCP_DISPOSABLE_HOST:-}" != 1 ]; then
+	echo "run.sh: the proxy test runs only with NCP_DISPOSABLE_HOST=1" >&2
+	set -- "$@" --skip system_proxy
+fi
 
 cargo build --locked -p ncp
 status=0

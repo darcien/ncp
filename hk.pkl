@@ -70,6 +70,10 @@ steps {
     glob = List("**/Cargo.toml", "Cargo.lock", "deny.toml", "mise.toml")
     check = reads("mise run check:deny")
   }
+  ["system-proxy"] {
+    glob = List("**/Cargo.toml", "Cargo.lock")
+    check = reads("mise run check:system-proxy")
+  }
   ["cargo-test"] {
     glob = buildInputs
     exclude = markdown

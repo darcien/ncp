@@ -1,7 +1,8 @@
 //! Helpers for the tests that run the `ncp` binary.
 //!
 //! Each test runs the binary with a clean environment and its own `HOME`
-//! and XDG directories. stdout is a pipe, so the output is JSON.
+//! and XDG directories, and with no proxy. stdout is a pipe, so the output
+//! is JSON.
 
 // Each test file uses only some of the helpers.
 #![allow(dead_code)]
@@ -44,6 +45,10 @@ impl Home {
                 "XDG_STATE_HOME".into(),
                 root.join("state").display().to_string(),
             ),
+            // `ncp` also reads the proxy of the macOS system settings, which
+            // the environment does not hold. `*` matches each host name but
+            // no IP address. A test of a proxy removes this value.
+            ("NO_PROXY".into(), "*,127.0.0.1,::1".into()),
         ];
         Self {
             cwd: root.clone(),

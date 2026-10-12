@@ -12,7 +12,6 @@
 mod common;
 
 use std::{
-    os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -246,16 +245,6 @@ fn network_services() -> Vec<String> {
         .collect()
 }
 
-/// The stored HTTPS proxy server of a service, when it is not the server of
-/// this test. The test does not change such a proxy, because it cannot set
-/// back its password.
-fn other_https_proxy(service: &str) -> Option<String> {
-    let text = output_of(NETWORKSETUP, &["-getsecurewebproxy", service]);
-    field(&text, "Server")
-        .filter(|server| !server.is_empty() && *server != "127.0.0.1")
-        .map(str::to_string)
-}
-
 fn sudo(args: &[&str]) -> bool {
     Command::new("/usr/bin/sudo")
         .args(args)
@@ -265,23 +254,17 @@ fn sudo(args: &[&str]) -> bool {
 
 /// The HTTPS proxy of the system settings for one test, on each network
 /// service that is on, so that the service in use has it. The drop turns
-/// it off again. A watchdog with root rights turns it off too when the test
-/// process ends with no drop, for example after Ctrl-C.
+/// it off. The host is thrown away after the test, so the test does not
+/// keep the old settings.
 struct SystemProxy {
     services: Vec<String>,
 }
 
 impl SystemProxy {
     fn set(port: u16) -> Self {
-        let services = network_services();
-        for service in &services {
-            if let Some(server) = other_https_proxy(service) {
-                panic!("{service} has the HTTPS proxy {server}: the test does not change it");
-            }
-        }
-        assert!(sudo(&["-v"]), "sudo did not accept the password");
-        Self::watch(&services);
-        let proxy = Self { services };
+        let proxy = Self {
+            services: network_services(),
+        };
         let port_text = port.to_string();
         for service in &proxy.services {
             let set = [
@@ -304,26 +287,6 @@ impl SystemProxy {
         }
         proxy
     }
-
-    /// Starts the watchdog in its own process group, so that the Ctrl-C of
-    /// the terminal does not stop it. The names go in as arguments, so the
-    /// shell does not read them.
-    fn watch(services: &[String]) {
-        let script = "test=$1; shift; \
-            while kill -0 \"$test\" 2>/dev/null; do sleep 1; done; \
-            for service in \"$@\"; do \
-            /usr/sbin/networksetup -setsecurewebproxystate \"$service\" off; done";
-        let pid = std::process::id().to_string();
-        let started = Command::new("/usr/bin/sudo")
-            .args(["-n", "/bin/sh", "-c", script, "watchdog", &pid])
-            .args(services)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .process_group(0)
-            .spawn();
-        assert!(started.is_ok(), "cannot start the watchdog");
-    }
 }
 
 impl Drop for SystemProxy {
@@ -344,14 +307,22 @@ fn routes(run: &Run) -> Vec<String> {
         .collect()
 }
 
-/// `ncp` reads the manual HTTPS proxy of the system settings when no
-/// variable is set (design C5). The request goes through the tunnel of a
-/// local proxy to a local HTTPS server.
+/// The variable that says that the host is thrown away after the test, for
+/// example a CI runner. The test changes the proxy of the whole machine.
+const DISPOSABLE_HOST: &str = "NCP_DISPOSABLE_HOST";
+
+/// `ncp` reads the manual HTTPS proxy of the system settings when the
+/// scheme has no variable (design C5). The request goes through the tunnel
+/// of a local proxy to a local HTTPS server. The other tests cover the
+/// order and the label with no change to the machine; this test covers the
+/// read of the system settings.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "changes the HTTPS proxy of the system settings with sudo"]
+#[ignore = "changes the HTTPS proxy of the whole machine"]
 async fn system_proxy_carries_a_request_when_no_variable_is_set() {
-    say(
-        "sudo asks for your password. The test sets the HTTPS proxy of the system settings, and turns it off at the end, also when the test stops.",
+    assert_eq!(
+        std::env::var(DISPOSABLE_HOST).as_deref(),
+        Ok("1"),
+        "this test runs only on a host that is thrown away after the test; set {DISPOSABLE_HOST}=1 there"
     );
     let fixture = ncp_testkit::serve_https(Mode::Modern).await.unwrap();
     let proxy = ncp_testkit::serve_test_proxy().await.unwrap();

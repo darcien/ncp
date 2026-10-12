@@ -332,7 +332,7 @@ fn value_from_the_credential_file_expands_in_env_and_the_environment_wins() {
 /// server.
 #[test]
 fn stdio_server_gets_only_the_environment_of_ncp_and_its_entry() {
-    let home = Home::new("server-env");
+    let home = Home::new("server-env").unset("NO_PROXY");
     home.configure(&json!({"fx": {"command": FIXTURE, "args": ["modern"],
         "env": {"TOKEN": "${USED}", "GREETING": "hello"}}}));
     let run = home.run_with_stdin(
@@ -1103,7 +1103,9 @@ fn copy_check_of_a_slow_native_store_stops_at_its_limit_and_leaves_no_program() 
 #[tokio::test(flavor = "multi_thread")]
 async fn loopback_server_through_a_remote_proxy_gives_the_no_proxy_hint() {
     let fixture = serve_http(Mode::Modern).await.unwrap();
-    let home = Home::new("remote-proxy").set("HTTP_PROXY", "http://proxy.invalid:3128");
+    let home = Home::new("remote-proxy")
+        .unset("NO_PROXY")
+        .set("HTTP_PROXY", "http://proxy.invalid:3128");
     home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
@@ -1120,7 +1122,9 @@ async fn loopback_server_through_a_remote_proxy_gives_the_no_proxy_hint() {
 async fn requests_go_through_the_proxy_unless_no_proxy_names_the_host() {
     let fixture = serve_http(Mode::Modern).await.unwrap();
     let proxy = ncp_testkit::serve_test_proxy().await.unwrap();
-    let home = Home::new("local-proxy").set("HTTP_PROXY", &proxy.url());
+    let home = Home::new("local-proxy")
+        .unset("NO_PROXY")
+        .set("HTTP_PROXY", &proxy.url());
     home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
@@ -1140,6 +1144,7 @@ async fn an_https_server_works_through_the_tunnel_of_a_proxy() {
     let fixture = ncp_testkit::serve_https(Mode::Modern).await.unwrap();
     let proxy = ncp_testkit::serve_test_proxy().await.unwrap();
     let home = Home::new("proxy-tunnel")
+        .unset("NO_PROXY")
         .set("HTTPS_PROXY", &proxy.url())
         .set("SSL_CERT_FILE", ncp_testkit::TEST_CA);
     home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
@@ -1978,7 +1983,9 @@ async fn trace_of_a_login_and_a_call_shows_no_token_code_or_verifier() {
 async fn oauth_discovery_goes_through_the_proxy() {
     let (_auth, fixture) = oauth_fixture(AuthSettings::default()).await;
     let proxy = ncp_testkit::serve_test_proxy().await.unwrap();
-    let home = oauth_home("login-proxy", &fixture.url).set("HTTP_PROXY", &proxy.url());
+    let home = oauth_home("login-proxy", &fixture.url)
+        .unset("NO_PROXY")
+        .set("HTTP_PROXY", &proxy.url());
     let run = home.run(&LOGIN_TO_FILE);
     assert_ne!(run.code(), 0, "{}", run.describe());
     let lines = proxy.request_lines();
