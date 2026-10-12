@@ -655,9 +655,14 @@ pub async fn remove(context: &Context<'_>, name: &str, global: bool) -> Result<(
     let project = loaded.project.project().filter(|project| project.has(name));
     // The rule of the loader: the last copy of a key. A duplicate key
     // stops only an edit of the global file.
-    let in_global = config::raw_servers(global_file.base_text())
+    // A missing global file has no servers.
+    let in_global = global_file
+        .base
+        .as_deref()
+        .map(config::raw_servers)
+        .transpose()
         .map_err(|error| edit_failure(&global_file, &EditError::Config(error)))?
-        .contains_key(name);
+        .is_some_and(|servers| servers.contains_key(name));
     let place = remove_place(
         project.map(|project| project.trust),
         in_global,

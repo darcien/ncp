@@ -661,6 +661,16 @@ fn remove_takes_the_project_entry_that_runs_and_keeps_the_trust() {
 }
 
 #[test]
+fn remove_from_the_project_works_with_no_global_file() {
+    let home = Home::new("r-no-global").project("app", &json!({"web": {"command": "x"}}));
+    assert_eq!(home.run(&["trust"]).code(), 0);
+    let run = home.run(&["server", "remove", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(servers_of(&home.project_file()).get("web").is_none());
+    assert!(!home.config_path().exists());
+}
+
+#[test]
 fn remove_of_an_unknown_name_gives_the_nearest_name() {
     let home = both_files("r-unknown");
     let run = home.run(&["server", "remove", "gg"]);
