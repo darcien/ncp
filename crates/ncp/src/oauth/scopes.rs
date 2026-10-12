@@ -32,10 +32,9 @@ pub fn challenged(challenge: &str, server_url: &str) -> Option<Vec<String>> {
 pub fn with_offline_access(scopes: Vec<String>, supported: Option<&[String]>) -> Vec<String> {
     let listed = supported.is_some_and(|supported| supported.iter().any(|s| s == OFFLINE_ACCESS));
     if listed && !scopes.is_empty() && !scopes.iter().any(|s| s == OFFLINE_ACCESS) {
-        union(&scopes, &[OFFLINE_ACCESS.to_string()])
-    } else {
-        scopes
+        return scopes.into_iter().chain([OFFLINE_ACCESS.into()]).collect();
     }
+    scopes
 }
 
 /// The scopes of a login. With no scopes of a `403`, the initial selection.

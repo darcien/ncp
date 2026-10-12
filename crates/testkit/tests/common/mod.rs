@@ -140,9 +140,13 @@ impl Home {
     }
 
     pub fn run_with_stdin(&self, args: &[&str], stdin: &str) -> Run {
+        self.run_program(Path::new(NCP), args, stdin)
+    }
+
+    pub fn run_program(&self, program: &Path, args: &[&str], stdin: &str) -> Run {
         use std::io::Write as _;
         let mut child = self
-            .command(Path::new(NCP))
+            .command(program)
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

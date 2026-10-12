@@ -42,17 +42,7 @@ fn live_home(test: &str) -> Home {
 }
 
 fn run(home: &Home, program: &Path, args: &[&str], stdin: &str) -> Run {
-    use std::io::Write as _;
-    let mut child = home
-        .command(program)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let _ = child.stdin.take().unwrap().write_all(stdin.as_bytes());
-    Run(child.wait_with_output().unwrap())
+    home.run_program(program, args, stdin)
 }
 
 /// A run that the person sees and answers: stdin and stderr are the
@@ -151,6 +141,8 @@ fn authorization_values(run: &Run) -> Vec<String> {
 #[test]
 #[ignore = "needs a browser and a Cloudflare account"]
 fn oauth_login_with_a_browser_keeps_the_tokens_in_the_keychain() {
+    // `server add` writes a new `.mcp.json` in a project folder, which
+    // the `.git` folder marks, as for a user in a repository.
     let mut home = live_home("oauth");
     home.cwd = home.root.join("project");
     std::fs::create_dir_all(home.cwd.join(".git")).unwrap();

@@ -11,7 +11,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use rmcp::transport::auth::{
     AuthError, CredentialRefreshGuard, CredentialStore as RmcpStore, StoredCredentials,
 };
-use serde_json::Value;
+use serde_json::{Map, Value};
 use tokio::sync::Mutex;
 
 use super::items;
@@ -34,12 +34,9 @@ pub struct TokenStore {
     key: CredentialKey,
     store: Arc<dyn CredentialStore>,
     copy: Mutex<Cached>,
-    /// The scopes of a `403` since the last login (design B52). rmcp does
-    /// not know the field, so a refresh writes it back from here.
-    required_scopes: Mutex<Option<Value>>,
-    /// The scopes that the login requested (design B79). A refresh writes
-    /// them back from here, as the scopes of a `403`.
-    requested_scopes: Mutex<Option<Value>>,
+    /// The scope fields of `ncp` in the item (design B52, B79). rmcp does
+    /// not know them, so a refresh writes them back from here.
+    scope_fields: Mutex<Map<String, Value>>,
     /// The server that the tokens are for. A save writes it with the tokens.
     binding: Option<items::TokenBinding>,
     /// The lock file that one refresh at a time holds, across processes.
@@ -62,8 +59,7 @@ impl TokenStore {
             key: CredentialKey::OAuthTokens(server),
             store,
             copy: Mutex::new(Cached::Unread),
-            required_scopes: Mutex::new(None),
-            requested_scopes: Mutex::new(None),
+            scope_fields: Mutex::new(Map::new()),
             binding: None,
             refresh_lock: None,
             timer: None,
@@ -100,8 +96,7 @@ impl TokenStore {
     pub fn with_item(self, item: TokensItem) -> Self {
         Self {
             copy: Mutex::new(Cached::Read(Box::new(Some(item.tokens)))),
-            required_scopes: Mutex::new(item.required_scopes),
-            requested_scopes: Mutex::new(item.requested_scopes),
+            scope_fields: Mutex::new(item.scope_fields),
             binding: item.binding,
             ..self
         }
@@ -119,8 +114,10 @@ impl TokenStore {
     /// The adapter that keeps the scopes that a login requests.
     #[must_use]
     pub fn with_requested_scopes(self, scopes: &[String]) -> Self {
+        let mut fields = self.scope_fields.into_inner();
+        fields.insert(items::REQUESTED_SCOPES.into(), Value::from(scopes));
         Self {
-            requested_scopes: Mutex::new(Some(Value::from(scopes))),
+            scope_fields: Mutex::new(fields),
             ..self
         }
     }
@@ -139,8 +136,8 @@ impl TokenStore {
 /// The tokens item: the tokens of rmcp and the fields of `ncp`.
 pub struct TokensItem {
     pub tokens: StoredCredentials,
-    pub required_scopes: Option<Value>,
-    pub requested_scopes: Option<Value>,
+    /// The scope fields of `ncp`, by field name.
+    pub scope_fields: Map<String, Value>,
     /// `None` when the item has no binding or a binding that is not valid.
     pub binding: Option<items::TokenBinding>,
 }
@@ -156,16 +153,17 @@ pub fn parse_item(secret: &Secret) -> Result<TokensItem, items::ItemError> {
         reason: error.to_string(),
     };
     let json: Value = serde_json::from_str(secret.expose()).map_err(error)?;
-    let required_scopes = json.get(items::REQUIRED_SCOPES).cloned();
-    let requested_scopes = json.get(items::REQUESTED_SCOPES).cloned();
+    let scope_fields = items::SCOPE_FIELDS
+        .iter()
+        .filter_map(|&field| Some((field.to_string(), json.get(field)?.clone())))
+        .collect();
     let binding = json
         .get(items::BINDING)
         .and_then(|binding| serde_json::from_value(binding.clone()).ok());
     let tokens = serde_json::from_value(json).map_err(error)?;
     Ok(TokensItem {
         tokens,
-        required_scopes,
-        requested_scopes,
+        scope_fields,
         binding,
     })
 }
@@ -256,16 +254,11 @@ impl RmcpStore for TokenStore {
             items::check_binding(item.binding.as_ref(), expected)
                 .map_err(|mismatch| binding_error(&mismatch))?;
         }
-        let (tokens, required_scopes, requested_scopes) = match item {
-            Some(item) => (
-                Some(item.tokens),
-                item.required_scopes,
-                item.requested_scopes,
-            ),
-            None => (None, None, None),
+        let (tokens, scope_fields) = match item {
+            Some(item) => (Some(item.tokens), item.scope_fields),
+            None => (None, Map::new()),
         };
-        *self.required_scopes.lock().await = required_scopes;
-        *self.requested_scopes.lock().await = requested_scopes;
+        *self.scope_fields.lock().await = scope_fields;
         *copy = Cached::Read(Box::new(tokens.clone()));
         Ok(tokens)
     }
@@ -274,11 +267,8 @@ impl RmcpStore for TokenStore {
         let failed = |reason: String| AuthError::CredentialStoreError(reason);
         let mut json =
             serde_json::to_value(&credentials).map_err(|error| failed(error.to_string()))?;
-        if let Some(scopes) = self.required_scopes.lock().await.clone() {
-            json[items::REQUIRED_SCOPES] = scopes;
-        }
-        if let Some(scopes) = self.requested_scopes.lock().await.clone() {
-            json[items::REQUESTED_SCOPES] = scopes;
+        for (field, scopes) in self.scope_fields.lock().await.iter() {
+            json[field] = scopes.clone();
         }
         if let Some(binding) = &self.binding {
             json[items::BINDING] =
@@ -329,8 +319,7 @@ impl RmcpStore for TokenStore {
         self.time(started);
         deleted.map_err(|error| store_error(&error))?;
         *self.copy.lock().await = Cached::Read(Box::new(None));
-        *self.required_scopes.lock().await = None;
-        *self.requested_scopes.lock().await = None;
+        self.scope_fields.lock().await.clear();
         Ok(())
     }
 }
@@ -497,8 +486,7 @@ mod tests {
         let backing = Arc::new(Counting::default());
         let adapter = TokenStore::new(server(), backing.clone()).with_item(TokensItem {
             tokens: tokens("c2"),
-            required_scopes: None,
-            requested_scopes: None,
+            scope_fields: Map::new(),
             binding: None,
         });
         assert_eq!(adapter.load().await.unwrap().unwrap().client_id, "c2");

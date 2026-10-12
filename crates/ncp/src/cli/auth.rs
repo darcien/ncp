@@ -755,9 +755,10 @@ impl TokenPlaces {
     }
 }
 
-/// The scopes of a new login with no step-up (design B79). The challenge of
-/// the probe with no token comes first; with no scope there, rmcp selects
-/// from the protected resource metadata.
+/// The scopes of a new login with no step-up (design B79). rmcp can parse
+/// the challenge too, but it adds the scopes of the protected resource
+/// metadata to it, and the spec gives the challenge priority. With no scope
+/// in the challenge, rmcp selects from the protected resource metadata.
 fn initial_scopes(
     manager: &AuthorizationManager,
     challenge: Option<&str>,

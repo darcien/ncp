@@ -9,9 +9,8 @@
 # proxy test does not run: while the system proxy points to the test, the
 # other HTTPS connections of the Mac fail. Run it alone with "proxy".
 #
-# The terminal goes
-# to a record in .scratch/live/, through script, so that the questions of
-# ncp still see a terminal.
+# The terminal goes to a record in .scratch/live/, through script, so that
+# the questions of ncp still see a terminal.
 set -eu
 
 if [ "$(uname)" != Darwin ]; then
