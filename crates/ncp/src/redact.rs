@@ -45,11 +45,20 @@ pub fn hide(value: &str) -> &'static str {
     if value.is_empty() { "" } else { HIDDEN }
 }
 
+/// True for a header field that RFC 9110 defines as credentials. Field
+/// names have no case (RFC 9110 §5.1).
+#[must_use]
+pub fn is_credential_header(name: &str) -> bool {
+    SECRET_HEADERS
+        .iter()
+        .any(|known| known.eq_ignore_ascii_case(name))
+}
+
 /// The header value as it shows. `sensitive` is true for a value that came
 /// from `${NAME}`.
 #[must_use]
 pub fn header(name: &str, value: &str, sensitive: bool) -> String {
-    if sensitive || SECRET_HEADERS.contains(&name.to_ascii_lowercase().as_str()) {
+    if sensitive || is_credential_header(name) {
         hide(value).to_string()
     } else {
         value.to_string()

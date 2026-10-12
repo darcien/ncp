@@ -17,7 +17,7 @@ use crate::{
     server::{NameError, ServerName, ServerUrl, UrlError},
 };
 
-const SERVERS_KEY: &str = "mcpServers";
+pub const SERVERS_KEY: &str = "mcpServers";
 /// Comments and trailing commas only. The other options of the parser are
 /// JSON5 forms.
 pub(crate) const JSONC: jsonc_parser::ParseOptions = jsonc_parser::ParseOptions {

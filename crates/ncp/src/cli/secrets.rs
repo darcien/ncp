@@ -850,11 +850,37 @@ async fn stored_items(context: &Context<'_>, native: &Opened) -> Result<Stored, 
 }
 
 /// One row of `secret list`: an item and the servers that use its key.
-struct SecretRow {
-    name: SecretName,
-    destination: Destination,
-    places: Vec<&'static str>,
-    servers: Vec<String>,
+/// One row of `secret list`: a name and its destination, the places that
+/// have it, and the servers that use it.
+pub(super) struct SecretRow {
+    pub name: SecretName,
+    pub destination: Destination,
+    pub places: Vec<&'static str>,
+    pub servers: Vec<String>,
+}
+
+impl SecretRow {
+    pub(super) fn json(&self) -> serde_json::Value {
+        json!({
+            "name": self.name.as_str(),
+            "destination": destination_json(&self.destination),
+            "credentialStores": self.places,
+            "used": !self.servers.is_empty(),
+            "servers": self.servers,
+        })
+    }
+
+    /// The places as words: "the native store and the credential file".
+    pub(super) fn places_text(&self) -> String {
+        self.places
+            .iter()
+            .map(|place| match *place {
+                "native" => place_text(CredentialPlace::Native),
+                _ => place_text(CredentialPlace::File),
+            })
+            .collect::<Vec<_>>()
+            .join(" and ")
+    }
 }
 
 fn secret_rows(
@@ -902,8 +928,8 @@ pub(super) async fn store_for_add(
         name: name.clone(),
     };
     let word = render::shell_word(server.name.as_str());
-    let native = native(context).await;
-    let chosen = match (place, &native) {
+    let places = places(context).await;
+    let chosen = match (place, &places[0].1) {
         (CredentialPlace::Native, Ok(store)) => store.clone(),
         (CredentialPlace::Native, Err(error)) => {
             return Err(store_failure(error).hint("give --credential-store file"));
@@ -911,10 +937,7 @@ pub(super) async fn store_for_add(
         (CredentialPlace::File, _) => file(context),
     };
     let mut stored = Vec::new();
-    for (other, opened) in [
-        (CredentialPlace::Native, native),
-        (CredentialPlace::File, Ok(file(context))),
-    ] {
+    for (other, opened) in places {
         let store = match opened {
             Ok(store) => store,
             Err(StoreError::Unavailable(_)) => continue,
@@ -948,6 +971,14 @@ pub(super) async fn store_for_add(
     Ok(())
 }
 
+/// The two places of stored items, the native store first.
+pub(super) async fn places(context: &Context<'_>) -> [(CredentialPlace, Opened); 2] {
+    [
+        (CredentialPlace::Native, native(context).await),
+        (CredentialPlace::File, Ok(file(context))),
+    ]
+}
+
 /// The rows of `secret list` for each `${NAME}` of the new entry: the
 /// destination, the stores that have it, and the servers that use it. A
 /// reused value shows, so that the user sees that it now also goes to
@@ -956,13 +987,18 @@ pub(super) async fn rows_of_entry(
     context: &Context<'_>,
     entry: &Server,
     servers: &[&Server],
-) -> Vec<serde_json::Value> {
+) -> Vec<SecretRow> {
     // An entry with no `${NAME}` needs no list of the stores, which can
     // show a prompt of the native store.
+    let names: Vec<SecretName> = entry
+        .value_names()
+        .into_iter()
+        .filter_map(|name| SecretName::parse(name).ok())
+        .collect();
     let Ok(destination) = binding::value_destination(entry) else {
         return Vec::new();
     };
-    if entry.value_names().is_empty() {
+    if names.is_empty() {
         return Vec::new();
     }
     let stored = match stored_items(context, &native(context).await).await {
@@ -970,29 +1006,20 @@ pub(super) async fn rows_of_entry(
             warn_unlisted(context, &stored.failed);
             stored.items
         }
-        Err(_) => BTreeMap::new(),
+        Err(failure) => {
+            context.ui.warning(None, &failure.message);
+            BTreeMap::new()
+        }
     };
-    entry
-        .value_names()
+    let items = names
         .into_iter()
-        .filter_map(|name| SecretName::parse(name).ok())
         .map(|name| {
-            let places = stored
-                .get(&(name.clone(), destination.clone()))
-                .cloned()
-                .unwrap_or_default();
-            let uses: Vec<Use<'_>> = binding::uses(servers.iter().copied(), name.as_str())
-                .into_iter()
-                .filter(|item| item.destination.as_ref() == Ok(&destination))
-                .collect();
-            json!({
-                "name": name.as_str(),
-                "destination": destination_json(&destination),
-                "credentialStores": places,
-                "servers": server_names(&uses),
-            })
+            let key = (name, destination.clone());
+            let places = stored.get(&key).cloned().unwrap_or_default();
+            (key, places)
         })
-        .collect()
+        .collect();
+    secret_rows(items, servers)
 }
 
 /// `ncp` knows only the global file and the project file of the current
@@ -1043,15 +1070,7 @@ async fn list(context: &Context<'_>) -> Result<(), Failure> {
                     .collect::<Vec<_>>(),
             )
         },
-        || {
-            json!({"secrets": rows.iter().map(|row| json!({
-                "name": row.name.as_str(),
-                "destination": destination_json(&row.destination),
-                "credentialStores": row.places,
-                "used": !row.servers.is_empty(),
-                "servers": row.servers,
-            })).collect::<Vec<_>>()})
-        },
+        || json!({"secrets": rows.iter().map(SecretRow::json).collect::<Vec<_>>()}),
     )
 }
 

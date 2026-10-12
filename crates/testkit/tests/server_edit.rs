@@ -38,6 +38,31 @@ fn new_project_file(home: &Home) -> PathBuf {
     std::fs::canonicalize(&home.cwd).unwrap().join(".mcp.json")
 }
 
+/// `ncp server add NAME URL --global` with more arguments.
+fn add_global(home: &Home, name: &str, url: &str, more: &[&str]) -> common::Run {
+    let args: Vec<&str> = ["server", "add", name, url, "--global"]
+        .into_iter()
+        .chain(more.iter().copied())
+        .collect();
+    home.run(&args)
+}
+
+fn add_global_with_stdin(
+    home: &Home,
+    name: &str,
+    url: &str,
+    more: &[&str],
+    stdin: &str,
+) -> common::Run {
+    let args: Vec<&str> = ["server", "add", name, url, "--global"]
+        .into_iter()
+        .chain(more.iter().copied())
+        .collect();
+    home.run_with_stdin(&args, stdin)
+}
+
+const WEB: &str = "https://web.example.com/mcp";
+
 #[test]
 fn add_creates_a_project_file_in_the_current_folder_and_trusts_it() {
     let home = in_repository(Home::new("a-new"));
@@ -141,16 +166,42 @@ fn add_writes_through_a_symlink_and_keeps_the_link() {
 }
 
 #[test]
-fn the_same_entry_again_changes_nothing_and_another_entry_is_an_error() {
+fn the_same_entry_again_changes_nothing() {
     let home = Home::new("a-again");
-    let add = |url: &str| home.run(&["server", "add", "web", url, "--global"]);
-    assert_eq!(add("https://web.example.com/mcp").code(), 0);
-    let run = add("https://web.example.com/mcp");
+    assert_eq!(add_global(&home, "web", WEB, &[]).code(), 0);
+    let run = add_global(&home, "web", WEB, &[]);
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert_eq!(run.stdout()["changed"], false);
-    let run = add("https://other.example.com/mcp");
+}
+
+#[test]
+fn another_entry_of_the_name_is_an_error() {
+    let home = Home::new("a-other");
+    assert_eq!(add_global(&home, "web", WEB, &[]).code(), 0);
+    let run = add_global(&home, "web", "https://other.example.com/mcp", &[]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert_eq!(run.error()["hint"], "ncp server remove web --global");
+}
+
+#[test]
+fn a_duplicate_key_of_the_name_is_an_error() {
+    let home = Home::new("a-duplicate");
+    let path = home.config_path();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let entry = format!(r#"{{"type": "http", "url": "{WEB}"}}"#);
+    std::fs::write(
+        &path,
+        format!(r#"{{"mcpServers": {{"web": {entry}, "web": {entry}}}}}"#),
+    )
+    .unwrap();
+    let run = add_global(&home, "web", WEB, &[]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(
+        run.error()["message"]
+            .as_str()
+            .unwrap()
+            .contains("more than one time")
+    );
 }
 
 #[test]
@@ -179,7 +230,7 @@ fn a_literal_credential_header_is_an_error_that_shows_no_value() {
 }
 
 #[test]
-fn usage_errors_come_before_any_read_or_write() {
+fn a_usage_error_writes_no_file() {
     let home = Home::new("a-usage");
     for args in [
         &["server", "add", "web"][..],
@@ -218,6 +269,7 @@ fn usage_errors_come_before_any_read_or_write() {
     ] {
         let run = home.run_with_stdin(args, "value");
         assert_eq!(run.code(), 2, "{args:?}: {}", run.describe());
+        assert!(!home.config_path().exists(), "{args:?}");
     }
     let config = home.config_path().display().to_string();
     let run = home.run(&[
@@ -234,26 +286,59 @@ fn usage_errors_come_before_any_read_or_write() {
 }
 
 #[test]
-fn an_untrusted_project_file_is_not_changed_without_a_trust() {
+fn an_untrusted_project_file_is_not_changed_with_no_tty() {
     let home = Home::new("a-untrusted").project("app", &json!({"fs": {"command": "x"}}));
     let file = home.project_file();
     let before = std::fs::read_to_string(&file).unwrap();
-    let run = home.run(&["server", "add", "web", "https://w.example.com/mcp"]);
+    let run = home.run(&["server", "add", "web", WEB]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert_eq!(run.error()["hint"], "ncp trust --show");
     assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
-    // A No at the question ignores the file.
-    let tty = home.set("NCP_TEST_TTY", "1");
-    let run = tty.run_with_stdin(
-        &["server", "add", "web", "https://w.example.com/mcp"],
-        "n\n",
-    );
+}
+
+#[test]
+fn a_no_at_the_question_ignores_the_file_and_changes_nothing() {
+    let home = Home::new("a-no")
+        .project("app", &json!({"fs": {"command": "x"}}))
+        .set("NCP_TEST_TTY", "1");
+    let file = home.project_file();
+    let before = std::fs::read_to_string(&file).unwrap();
+    let run = home.run_with_stdin(&["server", "add", "web", WEB], "n\n");
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
-    let home = tty.unset("NCP_TEST_TTY");
-    let run = home.run(&["server", "add", "web", "https://w.example.com/mcp"]);
+    let home = home.unset("NCP_TEST_TTY");
+    let run = home.run(&["server", "add", "web", WEB]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert_eq!(run.error()["hint"], "--global");
+}
+
+#[test]
+fn a_new_file_at_the_path_of_an_ignored_file_is_trusted() {
+    let home = Home::new("a-reborn").project("app", &json!({"fs": {"command": "x"}}));
+    assert_eq!(home.run(&["trust", "--ignore"]).code(), 0);
+    std::fs::remove_file(home.project_file()).unwrap();
+    let run = home.run(&["server", "add", "web", WEB]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(run.stdout()["created"], true);
+    assert_eq!(home.run(&["trust", "--show"]).stdout()["trust"], "trusted");
+}
+
+#[test]
+fn a_change_of_a_project_file_after_the_trust_stops_the_write() {
+    let home = Home::new("a-race-project")
+        .project("app", &json!({"fs": {"command": "x"}}))
+        .set("NCP_TEST_CHANGE_BEFORE_RENAME", "1");
+    assert_eq!(home.run(&["trust"]).code(), 0);
+    let run = home.run(&["server", "add", "web", WEB]);
+    assert_eq!(run.code(), 3, "{}", run.describe());
+    let text = std::fs::read_to_string(home.project_file()).unwrap();
+    assert!(!text.contains("web"), "{text}");
+    // The changed bytes are not trusted.
+    let home = home.unset("NCP_TEST_CHANGE_BEFORE_RENAME");
+    assert_eq!(
+        home.run(&["trust", "--show"]).stdout()["trust"],
+        "untrusted"
+    );
 }
 
 #[test]
@@ -350,6 +435,75 @@ fn two_adds_at_the_same_time_keep_both_entries() {
     assert_eq!(servers.as_object().unwrap().len(), 4);
 }
 
+#[test]
+fn the_same_add_at_the_same_time_passes_each_time() {
+    let home = Home::new("a-parallel-same");
+    std::thread::scope(|scope| {
+        let runs: Vec<_> = (0..4)
+            .map(|_| scope.spawn(|| add_global(&home, "web", WEB, &[]).code()))
+            .collect();
+        for run in runs {
+            assert_eq!(run.join().unwrap(), 0);
+        }
+    });
+}
+
+#[test]
+fn a_symlink_to_a_missing_file_stays() {
+    let home = Home::new("a-dangling");
+    let path = home.config_path();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(home.root.join("missing.json"), &path).unwrap();
+    let run = add_global(&home, "web", WEB, &[]);
+    assert_eq!(run.code(), 3, "{}", run.describe());
+    assert!(
+        std::fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+}
+
+#[test]
+fn an_invalid_flag_name_is_not_in_the_error() {
+    let home = Home::new("a-echo");
+    let run = home.run(&[
+        "server",
+        "add",
+        "gh",
+        "--global",
+        "--env",
+        "sk-live-abc123",
+        "--",
+        "srv",
+    ]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(!run.stderr_text().contains("sk-live"), "{}", run.describe());
+    let run = add_global(
+        &home,
+        "web",
+        WEB,
+        &["--header", "Authorization Bearer user:pa55"],
+    );
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(!run.stderr_text().contains("pa55"), "{}", run.describe());
+}
+
+#[test]
+fn the_text_result_names_the_file_and_the_steps() {
+    let home = Home::new("a-text");
+    let run = add_global(&home, "web", WEB, &["--output-format", "text"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let file = home.config_path();
+    assert_eq!(
+        run.stdout_text(),
+        format!(
+            "Created {0}.\nAdded web to {0}.\nNext:\n  ncp auth login web   (if the server needs a login)\n  ncp server show web\n",
+            file.display()
+        )
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn secret_stores_the_value_and_the_file_keeps_the_reference() {
     let fixture = serve_http_with(Mode::Modern, Some("t0ken")).await.unwrap();
@@ -384,25 +538,46 @@ async fn secret_stores_the_value_and_the_file_keeps_the_reference() {
         "{text}"
     );
     assert_eq!(home.run(&["tool", "list", "web"]).code(), 0);
-    // The same value again passes; another value is an error.
-    let run = home.run_with_stdin(&args, "t0ken");
-    assert_eq!(run.code(), 0, "{}", run.describe());
-    let other = [
-        "server",
-        "add",
-        "web2",
-        &fixture.url,
-        "--global",
-        "--header",
-        "Authorization: Bearer ${WEB_TOKEN}",
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn secret_with_another_stored_value_is_an_error_and_writes_no_entry() {
+    let fixture = serve_http_with(Mode::Modern, Some("t0ken")).await.unwrap();
+    let home = Home::new("a-secret-other");
+    let header = ["--header", "Authorization: Bearer ${WEB_TOKEN}"];
+    let secret = ["--secret", "WEB_TOKEN", "--credential-store", "file"];
+    let more: Vec<&str> = header.iter().chain(secret.iter()).copied().collect();
+    assert_eq!(
+        add_global_with_stdin(&home, "web", &fixture.url, &more, "t0ken").code(),
+        0
+    );
+    // The same value again passes.
+    assert_eq!(
+        add_global_with_stdin(&home, "web", &fixture.url, &more, "t0ken").code(),
+        0
+    );
+    let run = add_global_with_stdin(&home, "web2", &fixture.url, &more, "other");
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(servers_of(&home.config_path()).get("web2").is_none());
+}
+
+#[test]
+fn secret_on_an_entry_that_is_there_still_stores_the_value() {
+    let home = Home::new("a-secret-retry");
+    let header = ["--header", "Authorization: Bearer ${KEY}"];
+    assert_eq!(add_global(&home, "web", WEB, &header).code(), 0);
+    let more = [
+        header[0],
+        header[1],
         "--secret",
-        "WEB_TOKEN",
+        "KEY",
         "--credential-store",
         "file",
     ];
-    let run = home.run_with_stdin(&other, "other");
-    assert_eq!(run.code(), 2, "{}", run.describe());
-    assert!(servers_of(&home.config_path()).get("web2").is_none());
+    let run = add_global_with_stdin(&home, "web", WEB, &more, "value");
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(run.stdout()["changed"], false);
+    assert_eq!(home.file_accounts(), ["secret/https://web.example.com/KEY"]);
 }
 
 #[test]
@@ -460,14 +635,18 @@ fn add_global_warns_when_a_trusted_project_entry_has_the_name() {
     );
 }
 
-#[test]
-fn remove_takes_the_entry_that_runs() {
-    let home = Home::new("r-effective");
+fn both_files(test: &str) -> Home {
+    let home = Home::new(test);
     home.configure(&json!({"web": {"command": "global"}, "g": {"command": "x"}}));
-    let home = home.project(
+    home.project(
         "app",
         &json!({"web": {"command": "project"}, "p": {"command": "x"}}),
-    );
+    )
+}
+
+#[test]
+fn remove_takes_the_project_entry_that_runs_and_keeps_the_trust() {
+    let home = both_files("r-project");
     assert_eq!(home.run(&["trust"]).code(), 0);
     let run = home.run(&["server", "remove", "web"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
@@ -475,11 +654,15 @@ fn remove_takes_the_entry_that_runs() {
     assert_eq!(run.stdout()["file"], json!(home.project_file()));
     assert!(servers_of(&home.project_file()).get("web").is_none());
     assert!(servers_of(&home.config_path())["web"].is_object());
-    // The project file stays trusted after the write.
     assert_eq!(home.run(&["trust", "--show"]).stdout()["trust"], "trusted");
+    // Then the global entry runs, and a second remove takes it.
     let run = home.run(&["server", "remove", "web"]);
-    assert_eq!(run.code(), 0, "{}", run.describe());
     assert_eq!(run.stdout()["scope"], "global");
+}
+
+#[test]
+fn remove_of_an_unknown_name_gives_the_nearest_name() {
+    let home = both_files("r-unknown");
     let run = home.run(&["server", "remove", "gg"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert!(
@@ -487,6 +670,39 @@ fn remove_takes_the_entry_that_runs() {
             .as_str()
             .unwrap()
             .contains("did you mean \"g\"")
+    );
+}
+
+#[test]
+fn remove_global_of_a_project_name_names_the_project_file() {
+    let home = both_files("r-global-only");
+    assert_eq!(home.run(&["trust"]).code(), 0);
+    let run = home.run(&["server", "remove", "p", "--global"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(run.error()["hint"], "ncp server remove p");
+}
+
+#[test]
+fn remove_from_an_untrusted_project_file_needs_the_trust() {
+    let home = both_files("r-untrusted");
+    let run = home.run(&["server", "remove", "p"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(run.error()["hint"], "ncp trust --show");
+    let home = home.set("NCP_TEST_TTY", "1");
+    let run = home.run_with_stdin(&["server", "remove", "p"], "y\n");
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(servers_of(&home.project_file()).get("p").is_none());
+}
+
+#[test]
+fn remove_of_an_invalid_entry_by_its_raw_key() {
+    let home = Home::new("r-invalid");
+    home.configure(&json!({"bad.name": {"command": "x"}, "ok": {"command": "y"}}));
+    let run = home.run(&["server", "remove", "bad.name", "--global"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(
+        servers_of(&home.config_path()),
+        json!({"ok": {"command": "y"}})
     );
 }
 
@@ -531,10 +747,46 @@ fn remove_deletes_only_the_tokens_bound_to_the_entry() {
     let run = home.run(&["server", "remove", "web"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert_eq!(run.stdout()["credentialStores"], json!(["file"]));
-    let run = home.run(&["server", "remove", "other"]);
+    let run = home.run(&["server", "remove", "other", "--output-format", "text"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
-    assert_eq!(run.stdout()["credentialStores"], json!([]));
+    assert!(
+        run.stdout_text().contains("The OAuth tokens of other stay"),
+        "{}",
+        run.describe()
+    );
     assert_eq!(home.file_accounts(), ["oauth/other/tokens"]);
+}
+
+#[test]
+fn remove_with_a_store_that_fails_gives_a_warning_and_removes_the_entry() {
+    let home = Home::new("r-store");
+    home.configure(&json!({"web": {"type": "http", "url": WEB}}));
+    // A folder in the place of the credential file: each read fails.
+    std::fs::create_dir_all(home.root.join("state/ncp/credentials.json")).unwrap();
+    let run = home.run(&["server", "remove", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(
+        run.stderr()
+            .iter()
+            .any(|line| line.get("warning").is_some()),
+        "{}",
+        run.describe()
+    );
+    assert_eq!(servers_of(&home.config_path()), json!({}));
+}
+
+#[test]
+fn the_tokens_stay_when_the_other_file_still_has_the_name() {
+    let home = both_files("r-still");
+    assert_eq!(home.run(&["trust"]).code(), 0);
+    let run = home.run(&["server", "remove", "web", "--output-format", "text"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(
+        run.stdout_text()
+            .contains("The OAuth tokens stay: the entry of web in"),
+        "{}",
+        run.describe()
+    );
 }
 
 /// A local HTTP server that answers each request with `404`, as a server
@@ -573,4 +825,35 @@ fn a_url_with_a_wrong_path_gives_a_hint_at_the_first_connect() {
         "{}",
         run.describe()
     );
+}
+
+#[test]
+fn ctrl_c_stops_the_wait_for_the_lock() {
+    let home = Home::new("a-lock-interrupt");
+    let lock = home.root.join("state/ncp/config.lock");
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    let held = std::fs::File::create(&lock).unwrap();
+    held.lock().unwrap();
+    let child = std::process::Command::new(common::NCP)
+        .args(["server", "add", "web", WEB, "--global"])
+        .env_clear()
+        .envs(home.env.iter().cloned())
+        .current_dir(&home.cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(700));
+    let sent = std::process::Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(sent.success());
+    let started = std::time::Instant::now();
+    let run = common::Run(child.wait_with_output().unwrap());
+    assert_eq!(run.code(), 130, "{}", run.describe());
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert!(!home.config_path().exists());
+    drop(held);
 }

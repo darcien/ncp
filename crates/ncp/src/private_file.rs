@@ -7,7 +7,7 @@
 use std::{
     fs::{self, DirBuilder, OpenOptions},
     io::Write,
-    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
+    os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
     path::Path,
 };
 
@@ -22,20 +22,46 @@ pub fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         .recursive(true)
         .mode(0o700)
         .create(parent)?;
-    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
-    OpenOptions::new()
+    replace(path, bytes, 0o600, || Ok(()))
+}
+
+/// Replaces the file with a new file of the mode, in the same folder, so
+/// that a failed write cannot leave a partial file. `before_rename` runs
+/// last, for example to check that nobody changed the old file; its error
+/// stops the rename.
+///
+/// # Errors
+///
+/// Returns the error of the write, of the rename, or of `before_rename`.
+pub fn replace<E: From<std::io::Error>>(
+    path: &Path,
+    bytes: &[u8],
+    mode: u32,
+    before_rename: impl FnOnce() -> Result<(), E>,
+) -> Result<(), E> {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let temporary = path.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
+    let result = OpenOptions::new()
         .write(true)
         .create_new(true)
-        .mode(0o600)
+        .mode(mode)
         .open(&temporary)
         .and_then(|mut file| {
             file.write_all(bytes)?;
+            // The mode exactly, also with a umask.
+            file.set_permissions(fs::Permissions::from_mode(mode))?;
             file.sync_all()
         })
-        .and_then(|()| fs::rename(&temporary, path))
-        .inspect_err(|_| {
-            let _ = fs::remove_file(&temporary);
-        })
+        .map_err(E::from)
+        .and_then(|()| before_rename())
+        .and_then(|()| fs::rename(&temporary, path).map_err(E::from));
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 #[cfg(test)]

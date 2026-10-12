@@ -158,17 +158,19 @@ pub fn change(paths: &Paths, project: &Project, change: Change) -> Result<Trust,
     Ok(trust_state(paths, &project.file, &project.digest))
 }
 
-/// Trusts the bytes that `ncp` wrote to the project file: the user saw the
-/// old bytes and gave the new entry (project-config rule 9).
+/// Trusts the bytes that `ncp` wrote to the project file, and removes an
+/// ignored record of an old file at the path: the user saw the old bytes,
+/// or there were none, and gave the change (project-config rule 9).
 ///
 /// # Errors
 ///
-/// Returns a failure when the record cannot be written.
+/// Returns a failure when a record cannot be written.
 pub fn trust_written(paths: &Paths, file: &Path, text: &str) -> Result<(), Failure> {
     private_file::write(
         &record(&paths.trusted_configs, file),
         project::digest(text.as_bytes()).as_bytes(),
     )
+    .and_then(|()| remove(&record(&paths.ignored_configs, file)))
     .map_err(|error| record_failure(&error))
 }
 

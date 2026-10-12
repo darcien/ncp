@@ -315,7 +315,9 @@ pub enum ServerCommand {
     Add(AddArgs),
     /// Remove a server from the file that gives it, or with --global from
     /// ~/.config/ncp/mcp.json, and its OAuth tokens. Stored ${NAME} values
-    /// stay: other entries of the same origin can use them.
+    /// stay: other entries of the same origin can use them. A project in
+    /// another folder with an entry of the same name and URL then needs a
+    /// new login.
     Remove {
         /// The server name from the configuration
         server: String,

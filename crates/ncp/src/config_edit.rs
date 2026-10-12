@@ -9,9 +9,7 @@
 use jsonc_parser::cst::{CstInputValue, CstObject, CstRootNode};
 use serde_json::{Map, Value};
 
-use crate::config::{self, ConfigError};
-
-const SERVERS_KEY: &str = "mcpServers";
+use crate::config::{self, ConfigError, SERVERS_KEY};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EditError {
@@ -30,23 +28,46 @@ pub enum EditError {
     SelfCheck,
 }
 
-/// The entry of the name as the file writes it, with no check.
+/// The entry of the name as the file writes it. A duplicate key on the
+/// path is an error, as for an edit.
 ///
 /// # Errors
 ///
-/// Returns an error when the text does not parse.
+/// Returns an error when the text does not parse or has a duplicate key.
 pub fn entry(text: &str, name: &str) -> Result<Option<Value>, EditError> {
-    Ok(config::raw_servers(base(text))?.get(name).cloned())
+    let (old, _, object) = tree(text)?;
+    let found = match single(&object, SERVERS_KEY)? {
+        Some(_) => object
+            .object_value(SERVERS_KEY)
+            .map(|servers| single(&servers, name))
+            .transpose()?
+            .flatten(),
+        None => None,
+    };
+    Ok(found.and_then(|_| old.get(SERVERS_KEY)?.get(name).cloned()))
 }
 
 /// Adds the entry at the end of `mcpServers`, with the indent of the
-/// entries next to it. An empty text is a new file.
+/// entries next to it. An empty text is a new file. `None`: the file has
+/// the same entry already, so a retry after a failure passes (rule 3 of
+/// docs/design/server-add.md).
 ///
 /// # Errors
 ///
 /// Returns an error when the text does not parse, has a duplicate key on
-/// the path of the edit, or the self-check fails.
-pub fn add(text: &str, name: &str, fields: &[(String, Value)]) -> Result<String, EditError> {
+/// the path of the edit, has another entry of the name, or the self-check
+/// fails.
+pub fn add(
+    text: &str,
+    name: &str,
+    fields: &[(String, Value)],
+) -> Result<Option<String>, EditError> {
+    let value = Value::Object(fields.iter().cloned().collect());
+    match entry(text, name)? {
+        Some(old) if old == value => return Ok(None),
+        Some(_) => return Err(EditError::Exists(name.to_string())),
+        None => {}
+    }
     let (old, root, object) = tree(text)?;
     let servers = match single(&object, SERVERS_KEY)? {
         Some(_) => object
@@ -54,9 +75,6 @@ pub fn add(text: &str, name: &str, fields: &[(String, Value)]) -> Result<String,
             .ok_or(ConfigError::ServersNotObject)?,
         None => object.object_value_or_set(SERVERS_KEY),
     };
-    if single(&servers, name)?.is_some() {
-        return Err(EditError::Exists(name.to_string()));
-    }
     servers.append(
         name,
         CstInputValue::Object(
@@ -66,14 +84,7 @@ pub fn add(text: &str, name: &str, fields: &[(String, Value)]) -> Result<String,
                 .collect(),
         ),
     );
-    let mut expected = old;
-    let mut entries = config::raw_servers(base(text))?;
-    entries.insert(
-        name.to_string(),
-        Value::Object(fields.iter().cloned().collect()),
-    );
-    expected.insert(SERVERS_KEY.to_string(), Value::Object(entries));
-    finish(text, &root, &expected)
+    finish(text, &root, &expected(old, name, Some(value))).map(Some)
 }
 
 /// Removes the entry by its raw key, so that an invalid entry or a name
@@ -92,11 +103,22 @@ pub fn remove(text: &str, name: &str) -> Result<String, EditError> {
     single(&servers, name)?
         .ok_or_else(|| EditError::NotFound(name.to_string()))?
         .remove();
-    let mut expected = old;
-    let mut entries = config::raw_servers(text)?;
-    entries.remove(name);
-    expected.insert(SERVERS_KEY.to_string(), Value::Object(entries));
-    finish(text, &root, &expected)
+    finish(text, &root, &expected(old, name, None))
+}
+
+/// The old content with the one change: the entry of the name added, or
+/// removed with `None`.
+fn expected(mut old: Map<String, Value>, name: &str, entry: Option<Value>) -> Map<String, Value> {
+    let mut servers = match old.remove(SERVERS_KEY) {
+        Some(Value::Object(servers)) => servers,
+        _ => Map::new(),
+    };
+    match entry {
+        Some(entry) => servers.insert(name.to_string(), entry),
+        None => servers.remove(name),
+    };
+    old.insert(SERVERS_KEY.to_string(), Value::Object(servers));
+    old
 }
 
 /// A new file starts as an empty object.
@@ -180,7 +202,7 @@ mod tests {
 
     #[test]
     fn a_new_file_gets_an_indent_of_two_and_a_last_new_line() {
-        let text = add("", "web", &fields()).unwrap();
+        let text = add("", "web", &fields()).unwrap().unwrap();
         assert_eq!(
             text,
             "{\n  \"mcpServers\": {\n    \"web\": {\n      \"type\": \"http\",\n      \"url\": \"https://x.test/mcp\"\n    }\n  }\n}\n"
@@ -190,7 +212,7 @@ mod tests {
     #[test]
     fn an_add_keeps_comments_order_indent_and_unknown_keys() {
         let old = "{\n    // my servers\n    \"theme\": 1,\n    \"mcpServers\": {\n        \"a\": {\"command\": \"x\", \"odd\": true}, // keep\n    },\n}\n";
-        let new = add(old, "web", &fields()).unwrap();
+        let new = add(old, "web", &fields()).unwrap().unwrap();
         assert!(new.starts_with("{\n    // my servers\n    \"theme\": 1,\n    \"mcpServers\": {\n        \"a\": {\"command\": \"x\", \"odd\": true}, // keep\n"), "{new}");
         assert!(new.contains("        \"web\": {"), "{new}");
         let servers = config::raw_servers(&new).unwrap();
@@ -199,7 +221,7 @@ mod tests {
 
     #[test]
     fn a_file_with_no_servers_map_gets_one() {
-        let new = add("{\"theme\": 1}", "web", &fields()).unwrap();
+        let new = add("{\"theme\": 1}", "web", &fields()).unwrap().unwrap();
         assert_eq!(config::parse_root(&new).unwrap()["theme"], json!(1));
         assert!(config::raw_servers(&new).unwrap().contains_key("web"));
     }
@@ -226,6 +248,7 @@ mod tests {
             add(r#"{"mcpServers": {"a": 1}}"#, "a", &fields()),
             Err(EditError::Exists("a".into()))
         );
+        assert_eq!(entry(twice, "a"), Err(EditError::Duplicate("a".into())));
         let servers_twice = r#"{"mcpServers": {}, "mcpServers": {}}"#;
         assert_eq!(
             add(servers_twice, "web", &fields()),
@@ -239,6 +262,12 @@ mod tests {
             add("[]", "web", &fields()),
             Err(EditError::Config(ConfigError::NotObject))
         ));
+    }
+
+    #[test]
+    fn the_same_entry_again_is_no_change() {
+        let text = add("", "web", &fields()).unwrap().unwrap();
+        assert_eq!(add(&text, "web", &fields()), Ok(None));
     }
 
     #[test]

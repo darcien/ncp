@@ -1281,74 +1281,82 @@ async fn logout(context: &Context<'_>, word: &str) -> Result<(), Failure> {
     )
 }
 
+/// What `server remove` did with the OAuth items of a removed entry.
+#[derive(Debug, Default)]
+pub(super) struct TokenRemoval {
+    /// The places that had the tokens of the entry.
+    pub removed: Vec<CredentialPlace>,
+    /// A place keeps tokens of the name that are for another server, or
+    /// that `ncp` cannot compare.
+    pub kept: bool,
+}
+
+/// What a place had for the name.
+enum Found {
+    Nothing,
+    Removed,
+    Kept,
+}
+
 /// The OAuth items of an entry that `server remove` removed
 /// (docs/design/server-add.md section 6). The tokens are keyed by the
 /// server name, so they go only when their binding is the URL of the
-/// entry, and its issuer when the entry names one. The client item goes
-/// with them when it is for the issuer of the tokens. A store that cannot
-/// answer gives a warning: the remove of the entry must not depend on the
-/// store, and the binding stops the use of the old tokens.
+/// entry (`resource`), and its issuer when the entry names one. With no
+/// URL to compare, they stay. The client item goes with them when it is
+/// for the issuer of the tokens. A store that cannot answer gives a
+/// warning: the remove of the entry must not depend on the store, and the
+/// binding stops the use of the old tokens.
 pub(super) async fn remove_bound_items(
     context: &Context<'_>,
     server: &ServerName,
-    resource: &str,
+    resource: Option<&str>,
     issuer: Option<&str>,
-) -> Vec<CredentialPlace> {
+) -> TokenRemoval {
     let _lock = hold_tokens_lock(context, server).await;
-    let native = match secrets::native(context).await {
-        Ok(store) => Some(store),
-        Err(crate::store::StoreError::Unavailable(_)) => None,
-        Err(error) => {
-            context.ui.warning(
-                Some(server.as_str()),
-                &format!("the native store gave no answer, and its tokens stay: {error}"),
-            );
-            None
-        }
-    };
-    let places = native
-        .map(|store| (CredentialPlace::Native, store))
-        .into_iter()
-        .chain(std::iter::once((
-            CredentialPlace::File,
-            secrets::file(context),
-        )));
-    let mut removed = Vec::new();
-    for (place, store) in places {
-        match remove_bound(context, &store, server, resource, issuer).await {
-            Ok(true) => removed.push(place),
-            Ok(false) => {}
+    let mut removal = TokenRemoval::default();
+    for (place, opened) in secrets::places(context).await {
+        let found = match opened {
+            Ok(store) => remove_bound(context, &store, server, resource, issuer).await,
+            Err(crate::store::StoreError::Unavailable(_)) => Ok(Found::Nothing),
+            Err(error) => Err(error),
+        };
+        match found {
+            Ok(Found::Nothing) => {}
+            Ok(Found::Removed) => removal.removed.push(place),
+            Ok(Found::Kept) => removal.kept = true,
             Err(error) => context.ui.warning(
                 Some(server.as_str()),
                 &format!(
-                    "ncp cannot remove the tokens from {}: {error}",
+                    "ncp cannot check {} for tokens, and they stay: {error}",
                     secrets::place_text(place)
                 ),
             ),
         }
     }
-    removed
+    removal
 }
 
 async fn remove_bound(
     context: &Context<'_>,
     store: &Arc<dyn CredentialStore>,
     server: &ServerName,
-    resource: &str,
+    resource: Option<&str>,
     issuer: Option<&str>,
-) -> Result<bool, crate::store::StoreError> {
+) -> Result<Found, crate::store::StoreError> {
     let tokens_key = CredentialKey::OAuthTokens(server.clone());
     let wanted = tokens_key.clone();
     let Some(secret) = secrets::call(context, store, move |store| store.load(&wanted)).await?
     else {
-        return Ok(false);
+        return Ok(Found::Nothing);
     };
-    let Some(binding) = parse_item(&secret).ok().and_then(|item| item.binding) else {
-        return Ok(false);
+    let binding = parse_item(&secret).ok().and_then(|item| item.binding);
+    let bound = binding.as_ref().filter(|binding| {
+        resource == Some(binding.resource.as_str())
+            && issuer.is_none_or(|issuer| issuer == binding.issuer)
+    });
+    let Some(binding) = bound else {
+        return Ok(Found::Kept);
     };
-    if binding.resource != resource || issuer.is_some_and(|issuer| issuer != binding.issuer) {
-        return Ok(false);
-    }
     secrets::call(context, store, move |store| store.delete(&tokens_key)).await?;
     let client_key = CredentialKey::OAuthClient(server.clone());
     let wanted = client_key.clone();
@@ -1359,7 +1367,7 @@ async fn remove_bound(
     {
         secrets::call(context, store, move |store| store.delete(&client_key)).await?;
     }
-    Ok(true)
+    Ok(Found::Removed)
 }
 
 /// Removes the item from the native store and the file. A native store
