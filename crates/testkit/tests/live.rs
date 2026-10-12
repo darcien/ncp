@@ -45,18 +45,21 @@ fn run(home: &Home, program: &Path, args: &[&str], stdin: &str) -> Run {
     home.run_program(program, args, stdin)
 }
 
-/// A run that the person sees and answers: stdin and stderr are the
-/// terminal. stdout is a pipe, so the result is JSON.
-fn run_with_person(home: &Home, args: &[&str]) -> Run {
+/// A login that the person sees and answers: stdin and stderr are the
+/// terminal, and the output is text, as for a user. Gives the result line.
+fn login_with_person(home: &Home, args: &[&str]) -> String {
     let output = home
         .command(&ncp())
+        .arg("--output-format=text")
         .args(args)
         .stdin(Stdio::inherit())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .output()
         .unwrap();
-    Run(output)
+    let run = Run(output);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    run.stdout_text()
 }
 
 fn ok(run: &Run) -> Value {
@@ -91,7 +94,9 @@ impl Drop for Cleanup<'_> {
 #[test]
 #[ignore = "uses the login Keychain"]
 fn keychain_gives_a_secret_to_a_new_binary_with_no_dialog() {
-    say("If a Keychain dialog opens, click Deny. The test then fails.");
+    say(
+        "Do nothing. This test uses the login Keychain. If a Keychain dialog opens, click Deny. The test then fails.",
+    );
     let home = live_home("keychain").set("NCP_TEST_SECURITY_PROGRAM", "/usr/bin/security");
     let _cleanup = Cleanup {
         home: &home,
@@ -159,20 +164,32 @@ fn oauth_login_with_a_browser_keeps_the_tokens_in_the_native_store() {
     let added = ncp_ok(&home, &["server", "add", LIVE_SERVER, url]);
     assert_eq!(added["created"], true, "{added}");
 
-    say("A browser opens. Log in to Cloudflare, and give the access.");
-    let login = ok(&run_with_person(&home, &["auth", "login", LIVE_SERVER]));
-    assert_eq!(login["credentialStore"], "native", "{login}");
+    say(
+        "Login 1 of 2. The browser opens by itself. Log in to Cloudflare, and give the access. \
+         Then wait. The test continues by itself.",
+    );
+    let login = login_with_person(&home, &["auth", "login", LIVE_SERVER]);
+    assert!(
+        login.contains("The tokens are in the native store."),
+        "{login}"
+    );
     let status = ncp_ok(&home, &["auth", "status", LIVE_SERVER]);
     assert_eq!(status["servers"][0]["loggedIn"], true, "{status}");
     let tools = ncp_ok(&home, &["tool", "list", LIVE_SERVER]);
     assert!(!tools["tools"].as_array().unwrap().is_empty(), "{tools}");
 
     say(
-        "Open the URL in a browser, and give the access. Paste the URL of the page that does not load.",
+        "Login 2 of 2. The browser does not open. Copy the URL below, and open it in a browser. \
+         Log in, and give the access. Then the browser goes to a page on 127.0.0.1. \
+         If that page loads, wait: the test continues by itself. \
+         If it does not load, copy its URL, paste it here, and press Enter.",
     );
     let no_browser = ["auth", "login", LIVE_SERVER, "--no-browser"];
-    let login = ok(&run_with_person(&home, &no_browser));
-    assert_eq!(login["credentialStore"], "native", "{login}");
+    let login = login_with_person(&home, &no_browser);
+    assert!(
+        login.contains("The tokens are in the native store."),
+        "{login}"
+    );
 
     let traced = run(&home, &ncp(), &["-vv", "tool", "list", LIVE_SERVER], "");
     assert_eq!(traced.code(), 0, "{}", traced.describe());
