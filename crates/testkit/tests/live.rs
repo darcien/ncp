@@ -136,40 +136,45 @@ fn authorization_values(run: &Run) -> Vec<String> {
         .collect()
 }
 
+/// The name of the test server. The Keychain items of `ncp` have the
+/// server name in their key, so the name must not be one of the user.
+const LIVE_SERVER: &str = "ncp-live-cf";
+
 /// The user approved this server on 2026-10-11, for the manual tests of
 /// `server add`.
 #[test]
 #[ignore = "needs a browser and a Cloudflare account"]
-fn oauth_login_with_a_browser_keeps_the_tokens_in_the_keychain() {
+fn oauth_login_with_a_browser_keeps_the_tokens_in_the_native_store() {
     // `server add` writes a new `.mcp.json` in a project folder, which
     // the `.git` folder marks, as for a user in a repository.
     let mut home = live_home("oauth");
     home.cwd = home.root.join("project");
     std::fs::create_dir_all(home.cwd.join(".git")).unwrap();
+    // `server remove` removes the tokens and the client of the server.
     let _cleanup = Cleanup {
         home: &home,
-        args: &["auth", "logout", "cf"],
+        args: &["server", "remove", LIVE_SERVER],
     };
     let url = "https://mcp.cloudflare.com/mcp";
-    let added = ncp_ok(&home, &["server", "add", "cf", url]);
+    let added = ncp_ok(&home, &["server", "add", LIVE_SERVER, url]);
     assert_eq!(added["created"], true, "{added}");
 
     say("A browser opens. Log in to Cloudflare, and give the access.");
-    let login = ok(&run_with_person(&home, &["auth", "login", "cf"]));
+    let login = ok(&run_with_person(&home, &["auth", "login", LIVE_SERVER]));
     assert_eq!(login["credentialStore"], "native", "{login}");
-    let status = ncp_ok(&home, &["auth", "status", "cf"]);
+    let status = ncp_ok(&home, &["auth", "status", LIVE_SERVER]);
     assert_eq!(status["servers"][0]["loggedIn"], true, "{status}");
-    let tools = ncp_ok(&home, &["tool", "list", "cf"]);
+    let tools = ncp_ok(&home, &["tool", "list", LIVE_SERVER]);
     assert!(!tools["tools"].as_array().unwrap().is_empty(), "{tools}");
 
     say(
         "Open the URL in a browser, and give the access. Paste the URL of the page that does not load.",
     );
-    let no_browser = ["auth", "login", "cf", "--no-browser"];
+    let no_browser = ["auth", "login", LIVE_SERVER, "--no-browser"];
     let login = ok(&run_with_person(&home, &no_browser));
     assert_eq!(login["credentialStore"], "native", "{login}");
 
-    let traced = run(&home, &ncp(), &["-vv", "tool", "list", "cf"], "");
+    let traced = run(&home, &ncp(), &["-vv", "tool", "list", LIVE_SERVER], "");
     assert_eq!(traced.code(), 0, "{}", traced.describe());
     let values = authorization_values(&traced);
     assert!(!values.is_empty(), "no Authorization header in the trace");
@@ -178,10 +183,10 @@ fn oauth_login_with_a_browser_keeps_the_tokens_in_the_keychain() {
         "the trace shows a token"
     );
 
-    let removed = ncp_ok(&home, &["server", "remove", "cf"]);
+    let removed = ncp_ok(&home, &["server", "remove", LIVE_SERVER]);
     assert_eq!(removed["credentialStores"], json!(["native"]), "{removed}");
     let status = ncp_ok(&home, &["auth", "status"]);
-    assert!(!status.to_string().contains("\"cf\""), "{status}");
+    assert!(!status.to_string().contains(LIVE_SERVER), "{status}");
 }
 
 /// The port of the HTTPS proxy of the system settings at 127.0.0.1.

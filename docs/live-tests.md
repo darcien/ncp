@@ -19,8 +19,10 @@ mise run live proxy      # The proxy test. Set the system proxy first.
 
 The task builds `ncp`, and runs the tests in
 `crates/testkit/tests/live.rs`. Each test uses its own temporary XDG
-folders, so your configuration does not change. The questions show on the
-terminal with `>>>`.
+folders, so your configuration does not change. The Keychain is shared:
+the tests use only the names `NCP_LIVE_CHECK` and `ncp-live-cf`, and they
+remove their items at the end, also after a failure. The questions show
+on the terminal with `>>>`.
 
 ## Tests
 
@@ -30,8 +32,7 @@ terminal with `>>>`.
 | `oauth` | A login at `mcp.cloudflare.com` with the browser and with `--no-browser`. The tokens go to the Keychain, `-vv` shows no token, and `server remove` removes the tokens. | Log in to Cloudflare two times, and paste one URL. |
 | `proxy` | With no proxy variable, `ncp` uses the HTTPS proxy of the system settings, and `-v` names the source. A variable wins over the system settings. Nothing goes to the network: a fake proxy answers. | Set the system proxy before the test, and remove it after. |
 
-The `oauth` test uses the server that you approved on 2026-10-11. The
-test removes its Keychain items at the end, also after a failure.
+The `oauth` test uses the server that you approved on 2026-10-11.
 
 ### The system proxy
 
@@ -57,7 +58,9 @@ on that port.
 | The result | A new report `docs/research/live-tests-YYYY-MM-DD.md` | Yes |
 
 The record can contain your account name and the URLs of the login, so it
-stays in `.scratch/`. Ask the agent to write the report from it.
+stays in `.scratch/`. It also has the URL that you paste in the `oauth`
+test. The code in that URL works only one time, and only with the PKCE
+verifier of that login. Ask the agent to write the report from the record.
 
 These tests replace the steps of `docs/research/macos-keychain.md`,
 `oauth-login-steps.md`, `macos-system-proxy.md`, and the OAuth step of

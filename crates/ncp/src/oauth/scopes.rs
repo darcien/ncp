@@ -1,6 +1,7 @@
 //! The scopes of a login request (design B79), as MCP 2026-07-28,
-//! basic/authorization, selects them: "Scope Selection Strategy" for a new
-//! login, and "Step-Up Authorization Flow" after a `403 insufficient_scope`.
+//! basic/authorization, selects them: "Scope Selection Strategy" for the
+//! initial selection, and "Step-Up Authorization Flow" for the union with
+//! the scopes of the last request and of a `403 insufficient_scope`.
 //!
 //! The granted scopes of the old tokens never go into a request: the user
 //! can grant more than the request on the consent page, and a new request
@@ -37,28 +38,25 @@ pub fn with_offline_access(scopes: Vec<String>, supported: Option<&[String]>) ->
     scopes
 }
 
-/// The scopes of a login. With no scopes of a `403`, the initial selection.
-/// With them, a step-up: the union of the scopes that the last login
-/// requested and the scopes of the `403`. Tokens from before the requested
-/// scopes were kept use the initial selection in place of the last request.
+/// The scopes of a login: the initial selection, the scopes that the last
+/// login requested, and the scopes of a `403` since then. A new login
+/// re-authorizes, and the spec keeps the earlier scopes in a
+/// re-authorization, so that the user does not lose a permission that a
+/// step-up gave.
 #[must_use]
 pub fn for_login(
-    initial: Vec<String>,
+    initial: &[String],
     last_requested: &[String],
     required: &[String],
 ) -> Vec<String> {
-    match (required, last_requested) {
-        ([], _) => initial,
-        (required, []) => union(&initial, required),
-        (required, last_requested) => union(last_requested, required),
-    }
+    union(&union(initial, last_requested), required)
 }
 
 /// The scopes of a JSON array of the tokens item. Other values give none.
 #[must_use]
-pub fn list(value: &Value) -> Vec<String> {
+pub fn list(value: Option<&Value>) -> Vec<String> {
     value
-        .as_array()
+        .and_then(Value::as_array)
         .map(|scopes| {
             scopes
                 .iter()
@@ -123,31 +121,29 @@ mod tests {
     }
 
     #[test]
-    fn a_new_login_asks_for_the_initial_selection_only() {
+    fn a_second_login_asks_again_for_the_same_scopes() {
         let initial = scopes("user:read account:read offline_access");
-        assert_eq!(
-            for_login(initial.clone(), &scopes("user:read account:read"), &[]),
-            initial
-        );
+        assert_eq!(for_login(&initial, &initial, &[]), initial);
+        assert_eq!(for_login(&initial, &[], &[]), initial);
     }
 
     #[test]
-    fn a_step_up_asks_for_the_last_request_and_the_scopes_of_the_403() {
+    fn a_login_keeps_the_last_request_and_adds_the_scopes_of_a_403() {
         let initial = scopes("a offline_access");
         assert_eq!(
-            for_login(initial.clone(), &scopes("a b"), &scopes("c b")),
-            scopes("a b c")
+            for_login(&initial, &scopes("a b"), &scopes("c b")),
+            scopes("a offline_access b c")
         );
         assert_eq!(
-            for_login(initial, &[], &scopes("c")),
+            for_login(&initial, &[], &scopes("c")),
             scopes("a offline_access c")
         );
     }
 
     #[test]
     fn reads_a_scope_list_and_ignores_other_values() {
-        assert_eq!(list(&json!(["a", 1, "b"])), scopes("a b"));
-        assert_eq!(list(&json!("a b")), scopes(""));
-        assert_eq!(list(&Value::Null), scopes(""));
+        assert_eq!(list(Some(&json!(["a", 1, "b"]))), scopes("a b"));
+        assert_eq!(list(Some(&json!("a b"))), scopes(""));
+        assert_eq!(list(None), scopes(""));
     }
 }

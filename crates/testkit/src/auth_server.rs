@@ -71,6 +71,11 @@ pub struct AuthSettings {
     /// path makes a new issuer on the same server.
     pub issuer_path: String,
     pub scopes_supported: Vec<String>,
+    /// The protected resource metadata of the MCP fixture names
+    /// `scopes_supported`.
+    pub resource_scopes: bool,
+    /// The `scope` of the `401` challenge of the MCP fixture.
+    pub challenge_scope: Option<String>,
     /// Scopes that the user grants on top of the request, as a consent
     /// page with a choice of permissions can.
     pub granted_extra: Vec<String>,
@@ -89,6 +94,8 @@ impl Default for AuthSettings {
             registration: Registration::Public,
             issuer_path: String::new(),
             scopes_supported: vec!["a".into(), "b".into()],
+            resource_scopes: true,
+            challenge_scope: None,
             granted_extra: Vec::new(),
             service_documentation: None,
         }
@@ -182,11 +189,27 @@ impl AuthState {
         format!("{}{}", self.origin, self.lock().settings.issuer_path)
     }
 
-    /// The scopes that the server supports. The MCP fixture names them in
-    /// its protected resource metadata too.
+    /// The scopes that the server supports.
     #[must_use]
     pub fn scopes_supported(&self) -> Vec<String> {
         self.lock().settings.scopes_supported.clone()
+    }
+
+    /// The `scopes_supported` of the protected resource metadata of the MCP
+    /// fixture: the scopes of this server, or none.
+    #[must_use]
+    pub fn resource_scopes(&self) -> Option<Vec<String>> {
+        let guard = self.lock();
+        guard
+            .settings
+            .resource_scopes
+            .then(|| guard.settings.scopes_supported.clone())
+    }
+
+    /// The `scope` of the `401` challenge of the MCP fixture.
+    #[must_use]
+    pub fn challenge_scope(&self) -> Option<String> {
+        self.lock().settings.challenge_scope.clone()
     }
 
     /// The scopes of a valid access token, or `None` for an unknown or an

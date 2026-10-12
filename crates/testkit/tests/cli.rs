@@ -1860,6 +1860,56 @@ async fn step_up_keeps_the_scopes(name: &str, native: bool) {
     assert_eq!(run.code(), 0, "{}", run.describe());
 }
 
+/// The scope that a login asks for, with the settings of the server.
+async fn first_login_scope(name: &str, settings: AuthSettings) -> Option<String> {
+    let (auth, fixture) = oauth_fixture(settings).await;
+    let home = oauth_home(name, &fixture.url);
+    let run = home.run(&LOGIN_TO_FILE);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    auth.record().authorize_scope
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_login_asks_for_the_scope_of_the_challenge_before_the_resource_metadata() {
+    let settings = AuthSettings {
+        challenge_scope: Some("c".into()),
+        ..AuthSettings::default()
+    };
+    let scope = first_login_scope("challenge-scope", settings).await;
+    assert_eq!(scope.as_deref(), Some("c"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_login_sends_no_scope_when_the_resource_metadata_names_none() {
+    let settings = AuthSettings {
+        resource_scopes: false,
+        ..AuthSettings::default()
+    };
+    assert_eq!(first_login_scope("no-scope", settings).await, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_login_keeps_the_last_request_only_for_the_same_server() {
+    let (auth, fixture) = oauth_fixture(AuthSettings {
+        scopes_supported: vec!["a".into()],
+        ..AuthSettings::default()
+    })
+    .await;
+    let home = oauth_home("last-request", &fixture.url);
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    change_stored_tokens(&home, |tokens| {
+        tokens["ncp_requested_scopes"] = json!(["a", "z"]);
+    });
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    assert_eq!(auth.record().authorize_scope.unwrap(), "a z");
+    change_stored_tokens(&home, |tokens| {
+        tokens["ncp_requested_scopes"] = json!(["y"]);
+        tokens["ncp_binding"]["issuer"] = json!("https://other.test");
+    });
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    assert_eq!(auth.record().authorize_scope.unwrap(), "a");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_second_login_asks_for_the_same_scopes_and_not_for_the_granted_extra() {
     let (auth, fixture) = oauth_fixture(AuthSettings {

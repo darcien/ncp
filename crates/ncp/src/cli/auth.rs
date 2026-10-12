@@ -274,13 +274,17 @@ async fn login(
     if let Some(client) = &remote.oauth_client {
         check_issuer(name, client, &metadata)?;
     }
-    manager.set_metadata(metadata.clone());
+    // rmcp reads the scopes of the authorization server only to select
+    // scopes. Without them, it falls back to no scope, as the spec does.
+    let mut selection = metadata.clone();
+    selection.scopes_supported = None;
+    manager.set_metadata(selection);
     let initial = initial_scopes(&manager, challenge.as_deref(), remote, &metadata);
-    let scopes = login_scopes(context, server, (&store, place), initial).await;
     let binding = items::TokenBinding {
         resource: remote.url.without_query(),
         issuer: issuer.clone(),
     };
+    let scopes = login_scopes(context, server, (&store, place), (&initial, &binding)).await;
     manager.set_credential_store(
         TokenStore::new(server.name.clone(), store.clone())
             .fresh()
@@ -613,12 +617,15 @@ async fn add_required_scopes(
     server: &Server,
     scopes: &[String],
 ) -> Result<(), Failure> {
+    // The read and the write of the item must not go around the save of a
+    // login or a refresh in another process.
+    let _lock = hold_tokens_lock(context, &server.name).await;
     let key = CredentialKey::OAuthTokens(server.name.clone());
     if let Some((store, secret)) = find_tokens(context, server).await? {
         let mut tokens: Value = serde_json::from_str(secret.expose()).map_err(|error| {
             Failure::protocol(format!("the stored tokens are not JSON: {error}"))
         })?;
-        let required = scopes::union(&scopes::list(&tokens[items::REQUIRED_SCOPES]), scopes);
+        let required = scopes::union(&scopes::list(tokens.get(items::REQUIRED_SCOPES)), scopes);
         tokens[items::REQUIRED_SCOPES] = json!(required);
         let secret = items::to_secret("tokens", &tokens)
             .map_err(|error| Failure::protocol(error.to_string()))?;
@@ -765,22 +772,20 @@ fn initial_scopes(
     remote: &RemoteServer,
     metadata: &AuthorizationMetadata,
 ) -> Vec<String> {
-    match challenge.and_then(|challenge| scopes::challenged(challenge, &remote.url.without_query()))
-    {
-        Some(challenged) => {
-            scopes::with_offline_access(challenged, metadata.scopes_supported.as_deref())
-        }
-        None => manager.select_scopes(None, &[]),
-    }
+    let selected = challenge
+        .and_then(|challenge| scopes::challenged(challenge, &remote.url.without_query()))
+        .unwrap_or_else(|| manager.select_scopes(None, &[]));
+    scopes::with_offline_access(selected, metadata.scopes_supported.as_deref())
 }
 
-/// The scopes for a new login (design B79): the initial selection, or a
-/// step-up when the stored tokens keep the scopes of a `403` answer.
+/// The scopes for a new login (design B79), with the scopes that the stored
+/// tokens keep. Tokens of another server or issuer keep nothing for this
+/// login.
 async fn login_scopes(
     context: &Context<'_>,
     server: &Server,
     chosen: (&Arc<dyn CredentialStore>, CredentialPlace),
-    initial: Vec<String>,
+    (initial, binding): (&[String], &items::TokenBinding),
 ) -> Vec<String> {
     let key = CredentialKey::OAuthTokens(server.name.clone());
     let (store, place) = chosen;
@@ -799,13 +804,15 @@ async fn login_scopes(
     } else {
         None
     };
-    let stored = found
-        .and_then(|secret| serde_json::from_str::<Value>(secret.expose()).ok())
-        .unwrap_or(Value::Null);
+    let fields = found
+        .and_then(|secret| parse_item(&secret).ok())
+        .filter(|item| items::check_binding(item.binding.as_ref(), binding).is_ok())
+        .map(|item| item.scope_fields)
+        .unwrap_or_default();
     scopes::for_login(
         initial,
-        &scopes::list(&stored[items::REQUESTED_SCOPES]),
-        &scopes::list(&stored[items::REQUIRED_SCOPES]),
+        &scopes::list(fields.get(items::REQUESTED_SCOPES)),
+        &scopes::list(fields.get(items::REQUIRED_SCOPES)),
     )
 }
 

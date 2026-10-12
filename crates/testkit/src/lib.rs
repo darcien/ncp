@@ -835,6 +835,17 @@ async fn serve_connection(
 
 type FixtureResponse = http::Response<BoxBody<Bytes, Infallible>>;
 
+/// The `WWW-Authenticate` value of a `401`, with the `scope` of the
+/// settings when they have one.
+fn login_challenge(oauth: &OAuthAccess, error: &str, metadata: &str) -> String {
+    let scope = oauth
+        .auth
+        .challenge_scope()
+        .map(|scope| format!(", scope=\"{scope}\""))
+        .unwrap_or_default();
+    format!("Bearer {error}resource_metadata=\"{metadata}\"{scope}")
+}
+
 fn challenge(status: http::StatusCode, value: &str) -> FixtureResponse {
     let mut response = http::Response::new(Full::new(Bytes::new()).boxed());
     *response.status_mut() = status;
@@ -865,15 +876,15 @@ async fn oauth_handle(
         && path.starts_with(WELL_KNOWN_RESOURCE)
         && metadata.ends_with(path)
     {
-        return auth_server::json_response(
-            http::StatusCode::OK,
-            &json!({
-                "resource": resource,
-                "authorization_servers": [oauth.auth.issuer()],
-                "bearer_methods_supported": ["header"],
-                "scopes_supported": oauth.auth.scopes_supported(),
-            }),
-        );
+        let mut document = json!({
+            "resource": resource,
+            "authorization_servers": [oauth.auth.issuer()],
+            "bearer_methods_supported": ["header"],
+        });
+        if let Some(scopes) = oauth.auth.resource_scopes() {
+            document["scopes_supported"] = json!(scopes);
+        }
+        return auth_server::json_response(http::StatusCode::OK, &document);
     }
     let token = sent.and_then(|value| value.strip_prefix("Bearer "));
     let scopes = token.and_then(|token| oauth.auth.token_scopes(token));
@@ -896,7 +907,7 @@ async fn oauth_handle(
         }
         return challenge(
             http::StatusCode::UNAUTHORIZED,
-            &format!("Bearer resource_metadata=\"{metadata}\""),
+            &login_challenge(oauth, "", &metadata),
         );
     }
     let Some(scopes) = scopes else {
@@ -907,7 +918,7 @@ async fn oauth_handle(
         };
         return challenge(
             http::StatusCode::UNAUTHORIZED,
-            &format!("Bearer {error}resource_metadata=\"{metadata}\""),
+            &login_challenge(oauth, error, &metadata),
         );
     };
     let Some(step_up) = &oauth.step_up else {

@@ -394,10 +394,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_refresh_keeps_the_scopes_of_a_403_and_a_login_drops_them() {
+    async fn a_refresh_keeps_the_scope_fields_and_a_login_drops_them() {
         let backing = Arc::new(Counting::default());
         let item = Secret::new(
-            r#"{"client_id":"c1","token_response":null,"ncp_required_scopes":["b"]}"#.into(),
+            r#"{"client_id":"c1","token_response":null,"ncp_required_scopes":["b"],"ncp_requested_scopes":["a"]}"#.into(),
         );
         backing
             .inner
@@ -409,10 +409,14 @@ mod tests {
         let key = CredentialKey::OAuthTokens(server());
         let saved = backing.inner.load(&key).unwrap().unwrap();
         assert!(saved.expose().contains("ncp_required_scopes"), "{saved:?}");
-        let login = TokenStore::new(server(), backing.clone()).fresh();
+        assert!(saved.expose().contains("ncp_requested_scopes"), "{saved:?}");
+        let login = TokenStore::new(server(), backing.clone())
+            .fresh()
+            .with_requested_scopes(&["c".into()]);
         login.save(tokens("c2")).await.unwrap();
         let saved = backing.inner.load(&key).unwrap().unwrap();
         assert!(!saved.expose().contains("ncp_required_scopes"));
+        assert!(saved.expose().contains(r#""ncp_requested_scopes":["c"]"#));
     }
 
     #[tokio::test]
