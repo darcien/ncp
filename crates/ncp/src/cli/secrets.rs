@@ -849,7 +849,6 @@ async fn stored_items(context: &Context<'_>, native: &Opened) -> Result<Stored, 
     })
 }
 
-/// One row of `secret list`: an item and the servers that use its key.
 /// One row of `secret list`: a name and its destination, the places that
 /// have it, and the servers that use it.
 pub(super) struct SecretRow {

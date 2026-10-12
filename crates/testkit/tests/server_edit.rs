@@ -783,7 +783,7 @@ fn the_tokens_stay_when_the_other_file_still_has_the_name() {
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert!(
         run.stdout_text()
-            .contains("The OAuth tokens stay: the entry of web in"),
+            .contains("OAuth tokens of web, if any, stay: the entry of web in"),
         "{}",
         run.describe()
     );
@@ -856,4 +856,35 @@ fn ctrl_c_stops_the_wait_for_the_lock() {
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
     assert!(!home.config_path().exists());
     drop(held);
+}
+
+#[test]
+fn a_secret_word_that_is_not_a_name_is_not_in_the_error() {
+    let home = Home::new("a-secret-echo");
+    let run = add_global(
+        &home,
+        "web",
+        WEB,
+        &[
+            "--header",
+            "Authorization: Bearer ${K}",
+            "--secret",
+            "sk-live-ABC123",
+        ],
+    );
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(!run.stderr_text().contains("sk-live"), "{}", run.describe());
+}
+
+#[test]
+fn a_duplicate_key_in_the_global_file_does_not_stop_a_remove_from_the_project() {
+    let home = Home::new("r-global-duplicate");
+    let path = home.config_path();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, r#"{"mcpServers": {}, "mcpServers": {}}"#).unwrap();
+    let home = home.project("app", &json!({"p": {"command": "x"}}));
+    assert_eq!(home.run(&["trust"]).code(), 0);
+    let run = home.run(&["server", "remove", "p"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(run.stdout()["tokensStay"], false);
 }

@@ -174,10 +174,16 @@ fn request(args: &AddArgs) -> Result<Request, Failure> {
         form,
         headers: args.headers.clone(),
         env: args.env.clone(),
+        // The error does not show the word after --secret: a user can type
+        // the value there by mistake (design rule 12).
         secret: args
             .secret
             .as_deref()
-            .map(secrets::secret_name)
+            .map(|word| {
+                crate::credential::SecretName::parse(word).map_err(|_| {
+                    Failure::usage("the word after --secret is not a valid name of a secret")
+                })
+            })
             .transpose()?,
     })
 }
@@ -646,10 +652,13 @@ pub async fn remove(context: &Context<'_>, name: &str, global: bool) -> Result<(
     }
     let loaded = session::load(context, None).await?;
     let global_file = global_target(context)?;
-    let in_global = config_edit::entry(global_file.base_text(), name)
-        .map_err(|error| edit_failure(&global_file, &error))?
-        .is_some();
     let project = loaded.project.project().filter(|project| project.has(name));
+    // A global file that the edit cannot use stops only a remove from it.
+    let in_global = match config_edit::entry(global_file.base_text(), name) {
+        Ok(entry) => entry.is_some(),
+        Err(_) if project.is_some() && !global => false,
+        Err(error) => return Err(edit_failure(&global_file, &error)),
+    };
     let place = remove_place(
         project.map(|project| project.trust),
         in_global,
@@ -669,11 +678,15 @@ pub async fn remove(context: &Context<'_>, name: &str, global: bool) -> Result<(
             .hint("ncp trust"));
         }
         (Place::OnlyInProject, Some(project)) => {
+            let hint = match project.trust {
+                Trust::Ignored => "ncp trust".to_string(),
+                _ => remove_command(name, Scope::Project),
+            };
             return Err(Failure::usage(format!(
                 "the global file has no server {name}; it is in {}",
                 project.file.display()
             ))
-            .hint(remove_command(name, Scope::Project)));
+            .hint(hint));
         }
         _ => return Err(not_found(context, &loaded, name)),
     };
@@ -725,7 +738,7 @@ fn report_removed(
                 .collect();
             [
                 Some(format!("Removed {name} from {}.", target.file.display())),
-                still.map(|still| format!("The OAuth tokens stay: {still}.")),
+                still.map(|still| format!("OAuth tokens of {name}, if any, stay: {still}.")),
                 (!removed.is_empty()).then(|| format!(
                     "Removed the OAuth tokens of {name} from {}. A project in another folder with the same entry needs a new login.",
                     removed.join(" and ")
@@ -745,6 +758,7 @@ fn report_removed(
                 "scope": target.scope.word(),
                 "file": target.file,
                 "credentialStores": places,
+                "tokensStay": still.is_some() || tokens.kept,
             })
         },
     )

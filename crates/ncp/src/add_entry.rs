@@ -187,7 +187,8 @@ fn headers(flags: &[String]) -> Result<Map<String, Value>, AddError> {
             if value.is_empty() {
                 return Err(AddError::HeaderEmpty(name.to_string()));
             }
-            if value.chars().any(char::is_control) {
+            // RFC 9110 §5.5 permits a tab in a field value.
+            if value.chars().any(|c| c.is_control() && c != '\t') {
                 return Err(AddError::HeaderControl(name.to_string()));
             }
             if redact::is_credential_header(name) && !is_credential_template(value) {
