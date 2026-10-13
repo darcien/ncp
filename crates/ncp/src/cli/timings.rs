@@ -13,7 +13,6 @@ use serde_json::{Map, Value, json};
 
 use super::ui::{Format, json_line};
 
-/// The times of one run.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Record {
     pub config: Option<Duration>,

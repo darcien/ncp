@@ -470,9 +470,9 @@ pub(super) async fn stored_login(
     let metadata = discover(&manager, challenge)
         .await
         .map_err(|failure| failure.server(name))?;
-    // The configured client of the tokens. Its issuer is checked before
-    // rmcp reads the tokens, because rmcp removes the tokens of another
-    // issuer, and before any refresh sends the secret.
+    // The issuer of the configured client is checked before rmcp reads the
+    // tokens, because rmcp removes the tokens of another issuer, and before
+    // any refresh sends the secret.
     let configured = remote
         .oauth_client
         .as_ref()

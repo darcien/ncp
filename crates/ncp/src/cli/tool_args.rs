@@ -66,8 +66,6 @@ pub fn parse(words: &[String]) -> Result<Input, ArgumentError> {
     }
 }
 
-/// Reads a JSON object, for example from stdin.
-///
 /// # Errors
 ///
 /// Returns an error when the text is not one JSON object.

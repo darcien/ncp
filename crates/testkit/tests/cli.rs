@@ -1756,7 +1756,6 @@ async fn expired_token_is_refreshed_with_no_user_action_and_kept() {
     assert_ne!(before, after, "the new tokens go back to the file");
 }
 
-/// Changes the stored tokens item of `web` in the credential file.
 fn change_stored_tokens(home: &Home, change: impl FnOnce(&mut Value)) {
     fn find(value: &mut Value) -> Option<&mut Value> {
         let object = value.as_object_mut()?;

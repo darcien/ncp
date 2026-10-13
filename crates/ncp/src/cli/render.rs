@@ -209,7 +209,6 @@ fn path_text(path: &Path) -> String {
     super::ui::printable(&super::ui::one_line(&path.display().to_string())).into_owned()
 }
 
-/// The text before the question of the trust.
 #[must_use]
 pub fn project_question(project: &Project) -> String {
     let state = match project.trust {
@@ -413,7 +412,6 @@ pub fn tool_show(server: &str, tool: &Tool) -> String {
     text
 }
 
-/// The properties of an object schema, one block for each property.
 #[must_use]
 pub fn properties(schema: &JsonObject) -> String {
     let required: Vec<&str> = schema
@@ -496,7 +494,6 @@ pub fn example_call_with(server: &str, tool: &Tool, also: &[&str]) -> String {
     .join(" ")
 }
 
-/// The handshake data of a server, from the JSON object of `server show`.
 #[must_use]
 pub fn server_show(show: &JsonObject) -> String {
     let text_of = |key: &str| show.get(key).and_then(Value::as_str).unwrap_or("");

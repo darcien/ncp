@@ -393,8 +393,7 @@ impl From<std::io::Error> for Stop {
     }
 }
 
-/// The lock of the configuration files. The wait runs on its own thread,
-/// so that Ctrl-C stops it.
+/// The wait runs on its own thread, so that Ctrl-C stops it.
 async fn lock(context: &Context<'_>) -> Result<private_file::Lock, Failure> {
     let path = context.paths.config_lock.clone();
     let shown = path.display().to_string();
@@ -623,8 +622,6 @@ enum Place {
     Missing,
 }
 
-/// The table of design section 6, from the trust of a project file that
-/// has the name, the global file, and `--global`.
 fn remove_place(project: Option<Trust>, in_global: bool, global_only: bool) -> Place {
     match (project, in_global, global_only) {
         (_, true, true) | (None | Some(Trust::Ignored), true, false) => Place::Global,
@@ -771,8 +768,7 @@ fn not_found(context: &Context<'_>, loaded: &Loaded, name: &str) -> Failure {
         .unwrap_or_else(|| Failure::usage(format!("no server {name:?} is configured")))
 }
 
-/// The OAuth items of the removed entry. An entry that does not load has
-/// no URL to compare, so its tokens stay, and the result says so.
+/// An entry that does not load has no URL to compare, so its tokens stay, and the result says so.
 async fn remove_tokens(context: &Context<'_>, name: &str, entry: &Value) -> TokenRemoval {
     match config::parse_one(name, entry, context.env) {
         Ok(server) => match &server.transport {

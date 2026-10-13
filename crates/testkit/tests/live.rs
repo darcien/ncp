@@ -67,7 +67,6 @@ fn ok(run: &Run) -> Value {
     run.stdout()
 }
 
-/// The JSON result of a run of `ncp` that must pass.
 fn ncp_ok(home: &Home, args: &[&str]) -> Value {
     ok(&run(home, &ncp(), args, ""))
 }
@@ -130,7 +129,6 @@ fn keychain_gives_a_secret_to_a_new_binary_with_no_dialog() {
     assert!(!list.to_string().contains(SECRET), "{list}");
 }
 
-/// The values of the `Authorization` headers in the trace of a run.
 fn authorization_values(run: &Run) -> Vec<String> {
     run.stderr()
         .iter()
@@ -297,7 +295,6 @@ impl Drop for SystemProxy {
     }
 }
 
-/// The routes that `-v` shows.
 fn routes(run: &Run) -> Vec<String> {
     run.stderr()
         .iter()

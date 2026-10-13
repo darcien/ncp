@@ -729,8 +729,6 @@ impl Connection {
         self.service.peer_info()
     }
 
-    /// Each page is one request with its own limits.
-    ///
     /// # Errors
     ///
     /// Returns an error when a `tools/list` request fails, is cancelled or

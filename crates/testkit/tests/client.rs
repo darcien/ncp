@@ -138,7 +138,6 @@ fn arguments(value: serde_json::Value) -> JsonObject {
     }
 }
 
-/// Calls a tool and returns the first text content.
 async fn call_text(connection: &Connection, tool: &str, args: serde_json::Value) -> String {
     let response = connection
         .call_tool(

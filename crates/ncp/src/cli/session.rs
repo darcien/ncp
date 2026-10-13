@@ -664,7 +664,6 @@ fn cached_version_text(cached: Option<&ProtocolVersion>) -> String {
     }
 }
 
-/// The proxy route of the server URL, with its source.
 fn route_text(env: &Env, server: &Server, remote: &config::RemoteServer) -> String {
     let shown = hide_expanded_url(server, remote.url.as_str().to_string());
     match url::Url::parse(remote.url.as_str()) {

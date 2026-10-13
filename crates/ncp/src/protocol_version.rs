@@ -120,7 +120,6 @@ pub enum Startup {
     Initialize(ProtocolVersion),
 }
 
-/// Chooses how to start from the cached version.
 #[must_use]
 pub fn startup(cached: Option<&ProtocolVersion>) -> Startup {
     match cached {

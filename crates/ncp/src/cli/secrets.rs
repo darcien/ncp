@@ -536,8 +536,8 @@ async fn set(
     )
 }
 
-/// The time for the check of the other place. The check only gives a
-/// warning, so it must not wait for a locked store.
+/// The copy check only gives a warning, so it must not wait for a locked
+/// store.
 const COPY_CHECK_LIMIT: Duration = Duration::from_secs(5);
 
 /// Warnings when another place has a value for the key: `ncp` reads the

@@ -127,7 +127,6 @@ fn record(folder: &Path, file: &Path) -> PathBuf {
     folder.join(project::record_name(file))
 }
 
-/// A change of the records of a project file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Change {
     /// Trust the bytes that `ncp` read, and remove an ignored record.

@@ -31,7 +31,6 @@ impl Format {
     }
 }
 
-/// How much diagnostic output goes to stderr.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Verbosity {
     /// `-q`: no hints and no warnings. Errors stay.
@@ -44,8 +43,8 @@ pub enum Verbosity {
 }
 
 impl Verbosity {
-    /// The level for the counts of `-q` and `-v` flags. clap does not
-    /// permit both. `-qq` is the same as `-q` for now, as uv accepts it.
+    /// clap does not permit both. `-qq` is the same as `-q` for now, as
+    /// uv accepts it.
     #[must_use]
     pub fn from_flags(quiet: u8, count: u8) -> Self {
         match count {
@@ -64,8 +63,6 @@ pub struct Ui {
 }
 
 impl Ui {
-    /// Writes the result: the text for a TTY, or the JSON value.
-    ///
     /// # Errors
     ///
     /// Returns a failure when stdout cannot be written.
@@ -97,15 +94,13 @@ impl Ui {
         }
     }
 
-    /// A `-v` diagnostic. It never holds a secret value.
+    /// The message must never hold a secret value.
     pub fn debug(self, server: Option<&str>, message: &str) {
         if self.verbosity >= Verbosity::Verbose {
             self.note(&note("debug", self.format, server, message));
         }
     }
 
-    /// A line that is ready for stderr, for example a `-vv` trace or the
-    /// timings.
     pub fn diagnostic(self, line: &str) {
         self.stderr(line);
     }
@@ -114,8 +109,6 @@ impl Ui {
         self.note(&error_text(self.format, failure));
     }
 
-    /// A note of `ncp`. Each line of its message after the first is
-    /// indented (see [`indented`]).
     fn note(self, text: &str) {
         self.stderr(text);
     }
@@ -129,8 +122,7 @@ impl Ui {
         }
     }
 
-    /// The progress of the requests to the server, on stderr. `-q` hides
-    /// it, as it hides hints.
+    /// `-q` hides the progress, as it hides hints.
     #[must_use]
     pub fn progress(self, server: &str) -> crate::client::ProgressSink {
         if self.verbosity == Verbosity::Quiet {
@@ -167,8 +159,6 @@ impl Ui {
     }
 }
 
-/// Writes bytes to stdout, for example the contents of a resource.
-///
 /// # Errors
 ///
 /// Returns a failure when stdout cannot be written.
@@ -182,8 +172,8 @@ pub fn write_stdout_bytes(bytes: &[u8]) -> Result<(), Failure> {
     }
 }
 
-/// Writes to stdout. A closed pipe (for example `ncp ... | head`) is not an
-/// error of the command, but a full disk is.
+/// A closed pipe (for example `ncp ... | head`) is not an error of the
+/// command, but a full disk is.
 ///
 /// # Errors
 ///
@@ -264,7 +254,6 @@ fn invisible_format(c: char) -> bool {
     )
 }
 
-/// The shortest time between two progress lines.
 const PROGRESS_STEP: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// A number of a progress notification: with no decimals when it is whole.

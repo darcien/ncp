@@ -158,7 +158,6 @@ fn percent_encoded(value: &str) -> String {
     })
 }
 
-/// True when the OAuth field or form parameter holds a secret.
 #[must_use]
 pub fn is_oauth_secret(name: &str) -> bool {
     OAUTH_SECRET_FIELDS.contains(&name)
