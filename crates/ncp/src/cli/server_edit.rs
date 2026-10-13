@@ -134,7 +134,7 @@ pub async fn add(context: &Context<'_>, args: AddArgs) -> Result<(), Failure> {
     let entry = add_entry::build(name, &request).map_err(|error| add_failure(name, &error))?;
     let loaded = session::load(context, None).await?;
     let target = add_target(context, &loaded, args.global).await?;
-    // Another entry of the name stops before a value is read.
+    // Another entry of the name stops the add before `ncp` reads a value.
     if config_edit::entry(target.base_text(), name)
         .map_err(|error| edit_failure(&target, &error))?
         .is_some_and(|old| old != entry.value())
@@ -209,10 +209,10 @@ fn remove_command(name: &str, scope: Scope) -> String {
     }
 }
 
-/// The file of `server add`: the project file; the global file with
-/// `--global`, with `--config-file`, or in the home folder; a new
-/// `.mcp.json` in the current folder when there is no project file, as
-/// `mise use` (project-config rule 9).
+/// `server add` writes to the project file. It writes to the global file
+/// with `--global`, with `--config-file`, or in the home folder. With no
+/// project file, it makes `.mcp.json` in the current folder, as `mise use`
+/// does (project-config rule 9).
 async fn add_target(
     context: &Context<'_>,
     loaded: &Loaded,
@@ -332,10 +332,13 @@ fn untrusted(project: &Project) -> Failure {
     .hint("ncp trust --show")
 }
 
-/// Changes the file under the lock (design 4.7 steps 6 to 9): the base,
-/// the edit, an atomic replace with a last check, and the trust record of
-/// the new bytes of a project file. Each question was before the lock, so
-/// no person waits inside it.
+/// The steps under the lock (design 4.7 steps 6 to 9):
+/// - read the base
+/// - make the edit
+/// - replace the file atomically, after a last check
+/// - write the trust record of a project file
+///
+/// Each question comes before the lock, so no person waits inside it.
 async fn change(
     context: &Context<'_>,
     target: &Target,
@@ -344,8 +347,8 @@ async fn change(
     let _lock = lock(context).await?;
     let real = real_path(&target.file)?;
     // The base of a project file is the bytes that the user trusted. The
-    // global file needs no trust, so its base is the bytes under the lock,
-    // and two adds of agents at the same time both pass (B77).
+    // global file needs no trust, so its base is the bytes under the lock.
+    // Thus two adds of agents at the same time both pass (B77).
     let base = match target.scope {
         Scope::Project => {
             unchanged(target, &real, target.base.as_ref())?;
@@ -543,9 +546,11 @@ fn value_line(name: &str, row: &SecretRow) -> String {
     format!("{}: {stored}, {used}.\n", row.name)
 }
 
-/// The steps that are left: a value that no store and no variable has, a
-/// variable of the command or the URL, the login of an http server with
-/// no credential header, and a check of the connection.
+/// The steps that are left:
+/// - a value that no store and no variable has
+/// - a variable of the command or the URL
+/// - the login of an http server with no credential header
+/// - a check of the connection
 fn next_steps(context: &Context<'_>, name: &str, entry: &Entry, rows: &[SecretRow]) -> Vec<Step> {
     let word = render::shell_word(name);
     let unset = |variable: &str| !context.env.contains_key(variable);

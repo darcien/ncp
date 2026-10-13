@@ -652,9 +652,9 @@ async fn read_value(
     Ok(Secret::new(line.to_string()))
 }
 
-/// All of stdin, for a value that a pipe or a file gives. The read runs on
-/// a thread of its own, not of the runtime: a read of the runtime cannot
-/// stop, and the exit after the time limit would wait for it.
+/// The read runs on its own thread, not on the runtime. A read on the
+/// runtime cannot stop, and the exit after the time limit would wait for
+/// it.
 async fn read_piped(context: &Context<'_>) -> Result<String, Unread> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
@@ -692,8 +692,8 @@ fn stty(args: &[&str]) -> std::io::Result<String> {
 }
 
 /// One line from the terminal, with the echo off. The terminal settings
-/// come back after the line, after an error, after the time limit and
-/// after Ctrl-C, so the shell of the user works again.
+/// come back after each end: the line, an error, the time limit or Ctrl-C.
+/// Thus the shell of the user works again.
 ///
 /// The terminal is in non-canonical mode: in canonical mode macOS keeps
 /// only 1024 bytes of a line, and a longer token would never end. Thus
@@ -704,8 +704,8 @@ async fn read_hidden_line(context: &Context<'_>, prompt: &str) -> Result<String,
     // Fail closed: with no echo control, the value would show.
     stty(&["-echo", "-icanon", "min", "1", "time", "0"]).map_err(Unread::Failed)?;
     let (sender, receiver) = tokio::sync::oneshot::channel();
-    // A thread of its own, not of the runtime, so that the runtime does not
-    // wait for it at the exit after Ctrl-C or the time limit.
+    // The read runs on its own thread, so that the runtime does not wait
+    // for it at the exit after Ctrl-C or the time limit.
     std::thread::spawn(move || {
         let _ = sender.send(read_terminal_line(&mut std::io::stdin().lock()));
     });

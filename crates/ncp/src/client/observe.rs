@@ -38,9 +38,9 @@ pub enum Direction {
     Received,
 }
 
-/// One HTTP request of the transport. The header values are hidden by the
-/// rules of [`redact::header`]. The URL is as reqwest got it: the caller
-/// hides it before it shows it.
+/// One HTTP request of the transport. [`redact::header`] hides the header
+/// values. The URL is as reqwest got it: the caller hides it before it
+/// shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpExchange {
     pub method: &'static str,

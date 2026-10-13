@@ -349,9 +349,9 @@ impl Config {
         self.entries.contains_key(name)
     }
 
-    /// The view after a trust of a project file: each project entry
-    /// replaces the global entry of the same name as a whole, with no
-    /// merge of fields, as mise does for a tool.
+    /// After a trust, each project entry replaces the global entry of the
+    /// same name as a whole. There is no merge of fields, as in mise for a
+    /// tool.
     #[must_use]
     pub fn with_project(self, project: Self) -> Self {
         Self {
@@ -636,10 +636,10 @@ fn authority(url: &str) -> &str {
     rest.split(['/', '?', '#', '\\']).next().unwrap_or(rest)
 }
 
-/// The URL that the checks with no expansion use. A `${NAME}` in the path
-/// or the query becomes a literal, so the rules of the URL still apply. A
+/// The URL for the checks with no expansion. A `${NAME}` in the path or
+/// the query becomes a literal, so the rules of the URL still apply. A
 /// `${NAME}` in the scheme or the authority decides the scheme and the
-/// host: no rule of the URL applies before the expansion, and a fixed URL
+/// host. Then no rule of the URL applies before the expansion. A fixed URL
 /// stands in, so that the checks of `headers` and `oauth` still run.
 fn url_to_check(url: &str) -> String {
     let scheme = url.split_once("://").map_or("", |(scheme, _)| scheme);
@@ -940,8 +940,8 @@ fn strings(
     }
 }
 
-/// A map of values that expand only when the server starts. The syntax of
-/// each value is checked now.
+/// The values expand only when the server starts, but the parse checks
+/// their syntax now.
 fn template_map(
     object: &Map<String, Value>,
     field: &str,

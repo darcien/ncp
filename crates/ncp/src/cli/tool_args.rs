@@ -114,10 +114,10 @@ pub fn needs_schema(resolved: &Resolved) -> bool {
     }
 }
 
-/// Makes the arguments object from the pairs. A value is text, except when
-/// the input schema gives the property a type that is not `string`: then
-/// the value is read as JSON. A value that is not valid JSON stays text, so
-/// that the schema check names the problem.
+/// A value is text, except when the input schema gives the property a type
+/// that is not `string`. Then `ncp` reads the value as JSON. A value that
+/// is not valid JSON stays text, so that the schema check names the
+/// problem.
 #[must_use]
 pub fn coerce(resolved: &Resolved, schema: &JsonObject) -> JsonObject {
     match resolved {
@@ -150,10 +150,12 @@ fn reads_as_json(schema: &JsonObject, key: &str) -> bool {
 /// The limit of nested schemas to follow. A `$ref` can point to itself.
 const MAX_DEPTH: usize = 8;
 
-/// The JSON types that a property schema permits. The types come from
-/// `type`, from each branch of `anyOf`, `oneOf` and `allOf`, from a `$ref`
-/// into the same document, and from the values of `enum` and `const`.
-/// Tool SDKs write optional and nested values in these forms.
+/// The JSON types that a property schema permits. Tool SDKs write optional
+/// and nested values in these forms:
+/// - `type`
+/// - each branch of `anyOf`, `oneOf` and `allOf`
+/// - a `$ref` into the same document
+/// - the values of `enum` and `const`
 #[must_use]
 pub fn types<'a>(root: &'a JsonObject, property: &'a Value) -> BTreeSet<&'a str> {
     let mut found = BTreeSet::new();

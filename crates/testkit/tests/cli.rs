@@ -1840,8 +1840,8 @@ async fn the_scopes_of_a_403_stay_with_tokens_in_the_native_store() {
     step_up_keeps_the_scopes("step-up-native", true).await;
 }
 
-/// A call that gets a 403 for a new scope, then a login, then the call
-/// again, with the tokens in the file or in the native store.
+/// A call gets a 403 for a new scope. Then a login follows, then the call
+/// again. The tokens are in the file or in the native store.
 async fn step_up_keeps_the_scopes(name: &str, native: bool) {
     let auth = ncp_testkit::auth_server::serve_auth(AuthSettings {
         scopes_supported: vec!["a".into()],

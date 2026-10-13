@@ -1,8 +1,8 @@
 //! The command-line grammar.
 //!
 //! The server and the tool are two words. The tool word is optional in the
-//! grammar, so that `ncp` can give a better error than "missing argument":
-//! for example a joined `server.tool` word, or `key=value` in the place of
+//! grammar, so that `ncp` can give a better error than "missing argument".
+//! Examples are a joined `server.tool` word, or `key=value` in the place of
 //! the tool.
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -228,7 +228,7 @@ pub enum SecretCommand {
     },
     /// List the stored secrets: the name, the destination, the place and
     /// the servers that use each one. Shows no value. The servers come
-    /// from the global file and the project file of the current folder; a
+    /// from the global file and the project file of the current folder. A
     /// project in another folder can still use a secret that no server
     /// uses here.
     List,

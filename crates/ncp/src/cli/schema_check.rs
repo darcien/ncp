@@ -1,7 +1,7 @@
 //! The check of tool arguments against the input schema, before the call.
 //!
-//! The check runs with no network and no file access: a `$ref` to another
-//! document does not resolve, and the schema then counts as not usable.
+//! The check runs with no network and no file access. Thus a `$ref` to
+//! another document does not resolve, and the schema is not usable.
 
 use rmcp::model::JsonObject;
 use serde_json::Value;

@@ -1,10 +1,15 @@
 //! The project file: a `.mcp.json` that a repository gives. The user did
-//! not write it, and a commit can change it, so it has no effect until the
-//! user trusts its exact bytes at its path, as the paranoid mode of mise.
+//! not write it, and a commit can change it. Thus it has no effect until
+//! the user trusts its exact bytes at its path, as in the paranoid mode of
+//! mise.
 //!
-//! Pure functions: the search over the folder entries that the caller
-//! gives, the trust state from the records, the gate of a server name, and
-//! the entries to show before a trust. The I/O is in `cli::project_file`.
+//! Pure functions:
+//! - the search over the folder entries that the caller gives
+//! - the trust state from the records
+//! - the gate of a server name
+//! - the entries to show before a trust
+//!
+//! The I/O is in `cli::project_file`.
 
 use std::{
     os::unix::ffi::OsStrExt,
@@ -125,10 +130,10 @@ impl Project {
     }
 }
 
-/// True when the gate in the lookup of a server name stops the name: it is
-/// a key of a project file that is not trusted. An ignored file stops only
-/// a name that the global file does not have, because then the global
-/// entry runs. A name that the project file does not have passes.
+/// The gate stops a name that is a key of a project file that is not
+/// trusted. An ignored file stops only a name that the global file does
+/// not have, because then the global entry runs. A name that the project
+/// file does not have passes.
 #[must_use]
 pub fn stops(project: &Project, name: &str, in_global: bool) -> bool {
     project.has(name)

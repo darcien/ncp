@@ -51,10 +51,9 @@ pub const TOOLS_COMMAND: &str = "__complete-tools";
 /// The commands with a tool name as their second argument.
 const TOOL_COMMANDS: [(&str, &str); 2] = [("tool", "show"), ("tool", "call")];
 
-/// The bash lines that complete a tool name: when the words before the
-/// cursor, with no options and no option values, are the group, the
-/// command and the server. Word positions alone break when an option comes
-/// first.
+/// The bash lines complete a tool name when the words before the cursor
+/// are the group, the command and the server. The count leaves out
+/// options and option values, because an option can come first.
 const BASH_TOOLS: &str = concat!(
     "            if [[ ${cur} != -* ]] ; then\n",
     "                local ncp_words=() ncp_skip=0 ncp_word\n",
@@ -96,9 +95,8 @@ const ZSH_SERVER: &str = "server -- The server name from the configuration:";
 /// The help text of the tool argument, as clap writes it in the zsh script.
 const ZSH_TOOL: &str = "tool -- The tool name:";
 
-/// The script with the server names as the values of the server argument.
-/// clap writes no value list for an argument with no fixed choices, so
-/// the script runs [`SERVERS`] at that place.
+/// clap writes no value list for an argument with no fixed choices. Thus
+/// the script runs [`SERVERS`] for the values of the server argument.
 #[must_use]
 pub fn with_dynamic_names(shell: CompletionShell, script: &str) -> String {
     match shell {
@@ -232,11 +230,10 @@ fn is_plain_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
 }
 
-/// Writes the tool names of the server from the list cache, one on each
-/// line, also from an old list: a name is only a proposal. The list must
-/// be of the configured entry, so that a renamed or changed server gets no
-/// names of another one. Nothing goes out for an unknown server or with no
-/// cache.
+/// An old list also gives names, because a name is only a proposal. The
+/// list must be of the configured entry, so that a renamed or changed
+/// server gets no names of another one. An unknown server, or no cache,
+/// gives no names.
 pub fn tools(env: &Env, server: &str) {
     let names = Paths::from_env(env)
         .ok()

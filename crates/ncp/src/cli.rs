@@ -69,9 +69,9 @@ pub fn main() -> ExitCode {
 pub fn main_with(platform: Platform) -> ExitCode {
     let started = Instant::now();
     // The completion scripts run this at each tab. It is not part of the
-    // grammar, so that the scripts do not offer it, and it is fast and
-    // silent, also with no HOME or a broken configuration.
-    // `args_os`: `args` stops the program on a word that is not UTF-8.
+    // grammar, so that the scripts do not offer it. It must be fast and
+    // silent, also with no HOME or a broken configuration. `args` stops the
+    // program on a word that is not UTF-8, so this uses `args_os`.
     let word = |index| {
         std::env::args_os()
             .nth(index)

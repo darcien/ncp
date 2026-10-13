@@ -1,8 +1,7 @@
 //! Helpers for the tests that run the `ncp` binary.
 //!
-//! Each test runs the binary with a clean environment and its own `HOME`
-//! and XDG directories, and with no proxy. stdout is a pipe, so the output
-//! is JSON.
+//! Each test runs the binary with a clean environment, its own `HOME` and
+//! XDG directories, and no proxy. stdout is a pipe, so the output is JSON.
 
 // Each test file uses only some of the helpers.
 #![allow(dead_code)]

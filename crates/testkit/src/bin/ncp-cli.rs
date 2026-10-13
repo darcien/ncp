@@ -1,14 +1,14 @@
 //! The `ncp` command line, built in the test kit. Cargo gives the tests of
 //! a package only the paths of the binaries of that package. This binary
-//! runs the same code as `ncp`, with these changes, so that a test never
-//! uses the real Keychain, the real Secret Service, or a real browser:
+//! runs the same code as `ncp`, with these changes. Thus a test never uses
+//! the real Keychain, the real Secret Service, or a real browser.
 //!
 //! - The native store is the fake `security` program at the path in
 //!   `NCP_TEST_SECURITY_PROGRAM`, or no store when that variable is not set.
 //! - The browser is a fake. With `NCP_TEST_BROWSER=follow`, it sends a GET
-//!   to the URL, and then a GET to the `Location` of the answer, as a
-//!   browser does after a login that the user approves. With no value, no
-//!   browser is available.
+//!   to the URL, then a GET to the `Location` of the answer. A browser does
+//!   this after a login that the user approves. With no value, no browser
+//!   is available.
 //! - With `NCP_TEST_TTY=1`, a person answers questions on stdin, as on a
 //!   TTY.
 //! - With `NCP_TEST_CHANGE_BEFORE_RENAME=1`, the configuration file

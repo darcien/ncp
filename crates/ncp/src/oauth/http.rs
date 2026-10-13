@@ -2,7 +2,7 @@
 //! and refresh.
 //!
 //! rmcp sends each OAuth request through this client. It has the settings
-//! of the MCP client (proxy, `SSL_CERT_FILE`), and the observer gets each
+//! of the MCP client (proxy, `SSL_CERT_FILE`). The observer gets each
 //! request with its secrets hidden, so that `-vv` shows OAuth traffic too.
 
 use std::time::Duration;

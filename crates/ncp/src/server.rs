@@ -161,9 +161,10 @@ pub fn is_secure_url(url: &Url) -> bool {
 }
 
 /// The origin of a URL: its scheme, host and port (RFC 6454), in the ASCII
-/// serialization of the WHATWG URL Standard. A stored value goes only to the
-/// origin in its key, so each URL of one origin must give the same text: a
-/// lower-case host, `xn--` labels, IPv6 in brackets and no default port.
+/// serialization of the WHATWG URL Standard. A stored value goes only to
+/// the origin in its key. Thus each URL of one origin must give the same
+/// text: a lower-case host, `xn--` labels, IPv6 in brackets and no default
+/// port.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Origin(String);
 
@@ -192,9 +193,9 @@ impl Origin {
     }
 
     /// The origin of a URL as the file writes it, before `${NAME}`
-    /// expansion. The text up to the first `/`, `?` or `#` after `://` must
-    /// have no `${`, because a value from the environment could change the
-    /// host. The origin must also be the origin of the expanded URL, so the
+    /// expansion. A value from the environment could change the host. Thus
+    /// the text up to the first `/`, `?` or `#` after `://` must have no
+    /// `${`. The origin must also be the origin of the expanded URL, so the
     /// key and the request can never disagree.
     ///
     /// # Errors
@@ -411,7 +412,8 @@ mod tests {
             let literal = Origin::of_written(written, &expanded).unwrap();
             assert_eq!(literal, Origin::of(&expanded).unwrap(), "{written} {value}");
         }
-        // A text that the URL parser reads with another host is refused.
+        // The origin refuses a text that the URL parser reads with another
+        // host.
         let other = Url::parse("https://other/").unwrap();
         assert!(Origin::of_written("https://h/", &other).is_err());
     }

@@ -2,8 +2,8 @@
 //!
 //! A change of the storage model or of the signing method changes only this
 //! module. Automated tests use the memory store, the file store, or the
-//! `security` store with a fake program, never a native store: the macOS
-//! Keychain shows a prompt that an agent cannot accept.
+//! `security` store with a fake program. They never use a native store,
+//! because the macOS Keychain shows a prompt that an agent cannot accept.
 
 mod file;
 mod memory;

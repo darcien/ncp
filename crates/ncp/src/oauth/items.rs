@@ -1,11 +1,12 @@
 //! The stored OAuth items of a server.
 //!
-//! Two items for each server (design 2.4): the tokens (`oauth/<server>/tokens`)
-//! and the client credentials (`oauth/<server>/client`). The tokens item is
-//! the JSON of rmcp `StoredCredentials`, because rmcp reads it back. The
-//! client item records the issuer that registered the client, so that a new
-//! issuer causes a new registration: a client of one authorization server
-//! is not valid at another one.
+//! Each server has two items (design 2.4): the tokens
+//! (`oauth/<server>/tokens`) and the client credentials
+//! (`oauth/<server>/client`). The tokens item is the JSON of rmcp
+//! `StoredCredentials`, because rmcp reads it back. The client item records
+//! the issuer that registered the client. A client of one authorization
+//! server is not valid at another one, so a new issuer causes a new
+//! registration.
 
 use std::fmt;
 

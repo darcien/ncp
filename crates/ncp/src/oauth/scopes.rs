@@ -1,10 +1,11 @@
-//! The scopes of a login request (design B79), as MCP 2026-07-28,
-//! basic/authorization, selects them: "Scope Selection Strategy" for the
-//! initial selection, and "Step-Up Authorization Flow" for the union with
-//! the scopes of the last request and of a `403 insufficient_scope`.
+//! The scopes of a login request (design B79), from MCP 2026-07-28,
+//! basic/authorization:
+//! - "Scope Selection Strategy" gives the initial selection.
+//! - "Step-Up Authorization Flow" adds the scopes of the last request and
+//!   of a `403 insufficient_scope`.
 //!
-//! The granted scopes of the old tokens never go into a request: the user
-//! can grant more than the request on the consent page, and a new request
+//! The granted scopes of the old tokens never go into a request. On the
+//! consent page, the user can grant more than the request. A new request
 //! must not ask for all of it again by default.
 
 use rmcp::transport::WWWAuthenticateParams;
@@ -39,10 +40,9 @@ pub fn with_offline_access(scopes: Vec<String>, supported: Option<&[String]>) ->
 }
 
 /// The scopes of a login: the initial selection, the scopes that the last
-/// login requested, and the scopes of a `403` since then. A new login
-/// re-authorizes, and the spec keeps the earlier scopes in a
-/// re-authorization, so that the user does not lose a permission that a
-/// step-up gave.
+/// login requested, and the scopes of a `403` since then. A new login is a
+/// re-authorization, and the spec keeps the earlier scopes in it. Thus the
+/// user does not lose a permission that a step-up gave.
 #[must_use]
 pub fn for_login(
     initial: &[String],

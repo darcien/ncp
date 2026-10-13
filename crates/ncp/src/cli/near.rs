@@ -19,9 +19,8 @@ fn distance(a: &str, b: &str) -> usize {
         .unwrap_or_default()
 }
 
-/// The known name that is nearest to the unknown name, when it is near
-/// enough: at most one edit for each three characters, and at least one.
-/// A case difference only is always near.
+/// A name is near enough with at most one edit for each three characters,
+/// and at least one edit. A name that differs only in case is always near.
 #[must_use]
 pub fn nearest<'a>(unknown: &str, known: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
     let limit = (unknown.chars().count() / 3).max(1);

@@ -1,8 +1,9 @@
 //! The tokens item of one server as the credential store of rmcp.
 //!
 //! rmcp reads the tokens before each request. A read of the native store
-//! starts a program (macOS) or a D-Bus call (Linux), so this adapter keeps
-//! a copy in memory: the store gets one read for each run, and each write.
+//! starts a program (macOS) or a D-Bus call (Linux). Thus this adapter
+//! keeps a copy in memory. The store gets one read for each run, and each
+//! write.
 //! A refresh writes the new tokens back to the place that they came from
 //! (design 2.4).
 
@@ -77,10 +78,9 @@ impl TokenStore {
         }
     }
 
-    /// The adapter with a lock for each refresh. Two processes that refresh
-    /// the same tokens at the same time would use one refresh token twice;
-    /// with rotation, the second refresh then fails, and the user must log
-    /// in again.
+    /// Two processes that refresh the same tokens at the same time would
+    /// use one refresh token twice. With rotation, the second refresh then
+    /// fails, and the user must log in again.
     #[must_use]
     pub fn with_refresh_lock(self, path: PathBuf) -> Self {
         Self {
@@ -166,9 +166,9 @@ pub fn parse_item(secret: &Secret) -> Result<TokensItem, items::ItemError> {
 }
 
 /// The mark of a failure of the credential file in the text of an rmcp
-/// error. rmcp keeps only a text, and the caller needs the kind: a file
-/// that fails is a local error, and a native store that fails is an
-/// authorization error with the file as the fix.
+/// error. rmcp keeps only a text, but the caller needs the kind. A file
+/// that fails is a local error. A native store that fails is an
+/// authorization error, and the file is the fix.
 const FILE_FAILED: &str = "local: ";
 
 fn store_error(error: &StoreError) -> AuthError {
@@ -289,9 +289,10 @@ impl RmcpStore for TokenStore {
         let Some(path) = self.refresh_lock.clone() else {
             return Ok(None);
         };
-        // A lock file that cannot be made (for example a home that is read
-        // only) must not stop a refresh of tokens in the native store: the
-        // lock only orders refreshes. A wait past the limit is an error.
+        // `ncp` cannot make a lock file in a home that is read only. That
+        // must not stop a refresh of tokens in the native store, because
+        // the lock only puts refreshes in order. A wait past the limit is
+        // an error.
         let lock = store::run_blocking(store::CALL_LIMIT, move || match lock_tokens(&path) {
             Ok(lock) => Ok(Some(lock)),
             Err(error) if error.kind() == std::io::ErrorKind::TimedOut => Err(StoreError::Io {

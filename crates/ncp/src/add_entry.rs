@@ -1,10 +1,10 @@
-//! The entry of `server add`, from its arguments. Pure functions: the
-//! rules of docs/design/server-add.md section 4.1 and rule 12, and the
-//! checks of the loader with no expansion.
+//! The entry of `server add`, from its arguments. Pure functions for the
+//! rules of docs/design/server-add.md (section 4.1 and rule 12), and for
+//! the checks of the loader with no expansion.
 //!
-//! An error never holds the text of a `--header` or an `--env` flag that
-//! is not a valid name, because the user can give a secret there by
-//! mistake. It names the position of the flag.
+//! The user can give a secret in a `--header` or an `--env` flag by
+//! mistake. Thus an error names the position of a flag that is not
+//! valid, and never its text.
 
 use std::collections::BTreeSet;
 
@@ -35,8 +35,7 @@ pub struct Request {
     pub secret: Option<SecretName>,
 }
 
-/// The entry: its fields in the order that the file gets (`type` first),
-/// the entry as the loader reads it, and its server with no expansion.
+/// The fields are in the order that the file gets, with `type` first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     pub fields: Vec<(String, Value)>,

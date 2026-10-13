@@ -26,8 +26,8 @@ pub struct Use<'a> {
     pub destination: Result<Destination, OriginError>,
 }
 
-/// The destination of the `env` or `headers` values of an entry: no
-/// destination for stdio, else the origin of the URL as the file writes it.
+/// A stdio entry has no destination. An http entry has the origin of the
+/// URL as the file writes it.
 ///
 /// # Errors
 ///

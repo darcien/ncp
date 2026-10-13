@@ -141,8 +141,8 @@ impl CredentialKey {
         }
     }
 
-    /// The key of an account, or `None` for an account that `ncp` does not
-    /// make, for example from an older version or a part of a long value.
+    /// Gives `None` for an account that `ncp` does not make, for example
+    /// from an older version, or a part of a long value.
     ///
     /// A name has no `/` and no `:`, and an origin in normal form has no
     /// path. Thus the first `/` after `://` ends the origin, and a stdio

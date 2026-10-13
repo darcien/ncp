@@ -132,9 +132,9 @@ fn lines(input: &[u8]) -> Vec<&[u8]> {
     lines
 }
 
-/// Splits a line into words, as the real program does: a double quote at
-/// the start of a word quotes it up to the next double quote, and a
-/// backslash keeps the next character as it is.
+/// Splits a line into words, as the real program does. A double quote at
+/// the start of a word quotes it up to the next double quote. A backslash
+/// keeps the next character as it is.
 fn split_line(line: &str) -> Vec<String> {
     let mut chars = line.chars().peekable();
     let mut words = Vec::new();

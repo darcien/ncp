@@ -1,8 +1,9 @@
 //! The HTTP client and the Streamable HTTP transport.
 //!
 //! `ncp` gives rmcp its own `reqwest::Client`. The client reads the proxy
-//! variables, uses the system root certificates or, when it is set, only
-//! the roots in `SSL_CERT_FILE`, and keeps connections for the next request.
+//! variables and keeps connections for the next request. It uses the
+//! system root certificates, or only the roots in `SSL_CERT_FILE` when
+//! that variable is set.
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -54,14 +55,14 @@ pub fn builder() -> reqwest::ClientBuilder {
 /// The client of the MCP connection. The observer gets the time of each
 /// DNS lookup and each new connection.
 ///
-/// The client follows no redirect: the headers of an entry can hold
-/// credentials, and reqwest removes only the standard credential headers
-/// at a redirect to another host. rmcp has the same default, so that
+/// The client follows no redirect, because the headers of an entry can
+/// hold credentials. At a redirect to another host, reqwest removes only
+/// the standard credential headers. rmcp has the same default, so that
 /// custom headers do not go to the target of a redirect.
 ///
-/// rmcp keeps only the text of a transport error, with no cause. The notes
-/// get the new location of a redirect and a certificate of an unknown
-/// issuer, so that the error can name them.
+/// rmcp keeps only the text of a transport error, with no cause. Thus the
+/// notes keep the new location of a redirect and a certificate of an
+/// unknown issuer, so that the error can name them.
 ///
 /// # Errors
 ///
@@ -261,8 +262,8 @@ fn with_cert_file(
     Ok(builder.tls_certs_only(roots))
 }
 
-/// The expanded headers of the entry. A value from `${NAME}` is marked
-/// sensitive, so debug output hides it.
+/// A value from `${NAME}` gets the sensitive mark, so debug output hides
+/// it.
 fn headers(
     config: &BTreeMap<String, Expanded>,
 ) -> Result<HashMap<HeaderName, HeaderValue>, HttpError> {

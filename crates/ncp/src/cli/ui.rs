@@ -113,8 +113,8 @@ impl Ui {
         self.stderr(text);
     }
 
-    /// Text goes out with control characters as escapes. JSON lines are
-    /// escaped already.
+    /// Text goes out with control characters as escapes. JSON lines have
+    /// their escapes already.
     fn stderr(self, text: &str) {
         match self.format {
             Format::Text => stderr(&printable(text)),
@@ -191,13 +191,12 @@ pub fn write_stdout(text: &str) -> Result<(), Failure> {
     }
 }
 
-/// The text with each control character as an escape, except new line,
-/// tab, and the carriage return of a CRLF line end. A server or a
-/// configuration file can contain terminal escape sequences, which can
-/// change the terminal title, write the clipboard, or hide lines. The
-/// characters that change the direction of text or have no width also
-/// show as escapes: they can put the parts of a URL or a message in a
-/// different order on the screen.
+/// Each control character becomes an escape, except new line, tab, and the
+/// carriage return of a CRLF line end. A server or a configuration file
+/// can contain terminal escape sequences. These can change the terminal
+/// title, write the clipboard, or hide lines. The characters that change
+/// the direction of text or have no width also become escapes. They can
+/// put the parts of a URL or a message in a different order on the screen.
 #[must_use]
 pub fn printable(text: &str) -> Cow<'_, str> {
     let unsafe_char = |c: char| (c.is_control() && c != '\n' && c != '\t') || invisible_format(c);
@@ -221,14 +220,16 @@ pub fn printable(text: &str) -> Cow<'_, str> {
 }
 
 /// A Unicode character that changes the order of text, has no width, or
-/// looks like a space: bidirectional marks, embeddings, overrides and
-/// isolates, zero-width characters, the soft hyphen, the byte order mark,
-/// line and paragraph separators, Hangul fillers, the supplementary
-/// variation selectors and tag characters. Text in tag characters is
-/// invisible, and a server can hide instructions in it. The variation
-/// selectors U+FE00 to U+FE0F stay: many emoji have one. The zero width
-/// joiner U+200D stays too: it joins the parts of many emoji, and it does
-/// not change the order of text.
+/// looks like a space:
+/// - bidirectional marks, embeddings, overrides and isolates
+/// - zero-width characters, the soft hyphen and the byte order mark
+/// - line and paragraph separators, and Hangul fillers
+/// - the supplementary variation selectors and tag characters
+///
+/// Text in tag characters is invisible, and a server can hide instructions
+/// in it. The variation selectors U+FE00 to U+FE0F stay, because many
+/// emoji have one. The zero width joiner U+200D stays too. It joins the
+/// parts of many emoji, and it does not change the order of text.
 fn invisible_format(c: char) -> bool {
     matches!(
         c,
@@ -315,9 +316,9 @@ pub fn json_line(value: &Value) -> String {
     format!("{}\n", escape_raw_controls(value.to_string()))
 }
 
-/// JSON text with DEL, the C1 control characters and the invisible
-/// characters of `printable` as `\uXXXX` escapes (a surrogate pair above
-/// U+FFFF), which keeps it valid JSON.
+/// DEL, the C1 control characters and the invisible characters of
+/// `printable` become `\uXXXX` escapes, with a surrogate pair above
+/// U+FFFF. The text stays valid JSON.
 fn escape_raw_controls(text: String) -> String {
     let escaped = |c: char| is_raw_control(c) || invisible_format(c);
     if text.chars().any(escaped) {

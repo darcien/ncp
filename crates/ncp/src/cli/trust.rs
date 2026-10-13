@@ -18,8 +18,8 @@ use crate::project::{self, Project};
 /// # Errors
 ///
 /// Returns a usage failure with `--config-file`, with no project file, or
-/// with a file that `ncp` does not use; a failure when a record cannot be
-/// written.
+/// with a file that `ncp` does not use. Returns a failure when `ncp`
+/// cannot write a record.
 pub fn command(context: &Context<'_>, args: &TrustArgs) -> Result<(), Failure> {
     let project = match project_file::find(&context.paths, context.env, !context.named_config) {
         ProjectFile::Read(project) => project,

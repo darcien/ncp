@@ -155,9 +155,9 @@ pub fn change(paths: &Paths, project: &Project, change: Change) -> Result<Trust,
     Ok(trust_state(paths, &project.file, &project.digest))
 }
 
-/// Trusts the bytes that `ncp` wrote to the project file, and removes an
-/// ignored record of an old file at the path: the user saw the old bytes,
-/// or there were none, and gave the change (project-config rule 9).
+/// Trusts the bytes that `ncp` wrote, and removes an ignored record of an
+/// old file at the path. The user saw the old bytes, or there were none,
+/// and gave the change (project-config rule 9).
 ///
 /// # Errors
 ///

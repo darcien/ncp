@@ -67,8 +67,9 @@ struct Asker {
     limit: Duration,
 }
 
-/// Text of the server in a block: escapes, and each line after the first
-/// indented, so that no line can look like a question or a note of `ncp`.
+/// Text of the server in a block, with escapes. Each line after the first
+/// is indented, so that no line can look like a question or a note of
+/// `ncp`.
 fn block(text: &str) -> String {
     ui::printable(&ui::indented(text)).into_owned()
 }
@@ -400,12 +401,12 @@ fn unanswered(stop: Stop, context: &Context<'_>, server: &str) -> Failure {
     }
 }
 
-/// Runs the request, and while the server asks for input that a person at
-/// the TTY can give, asks and runs it again with the answers (MCP
-/// 2026-07-28, multi-round requests). Else the `input_required` result
-/// goes back to the caller, which writes it with exit 5: with no TTY, for
-/// a request that `ncp` cannot answer (sampling, roots), and after the
-/// last round.
+/// The server can ask for input that a person at the TTY can give. Then
+/// `ncp` asks, and runs the request again with the answers (MCP
+/// 2026-07-28, multi-round requests). In other cases the `input_required` result goes
+/// back to the caller, which writes it with exit 5. These cases are: no
+/// TTY, a request that `ncp` cannot answer (sampling, roots), and the end
+/// of the last round.
 ///
 /// # Errors
 ///

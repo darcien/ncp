@@ -4,9 +4,9 @@
 //! Version detection: `ncp` probes with `server/discover` in its own
 //! timeout. When the server does not know `server/discover`, or the probe
 //! times out, `ncp` connects again on a new transport with `initialize`.
-//! `ncp` does not use the rmcp `Auto` mode: when a slow server answers the
-//! probe late, the late answer arrives on the same transport and the
-//! handshake fails (see docs/research/early-tests.md).
+//! `ncp` does not use the rmcp `Auto` mode. With that mode, a late answer
+//! of a slow server arrives on the same transport, and the handshake
+//! fails (see docs/research/early-tests.md).
 //!
 //! Time limits: a client SHOULD set a timeout for each request (MCP
 //! 2025-11-25, basic/lifecycle, "Timeouts"). The whole connect has one
@@ -616,7 +616,7 @@ async fn race<T>(
 }
 
 /// Only a client with a person at a TTY declares elicitation in form and
-/// URL mode, because a server must not ask a client with no one to answer.
+/// URL mode. A server must not ask a client that has no one to answer.
 fn client_info(elicitation: bool) -> ClientConfig {
     let mut capabilities = ClientCapabilities::default();
     if elicitation {

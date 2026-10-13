@@ -48,15 +48,17 @@ pub fn entry(text: &str, name: &str) -> Result<Option<Value>, EditError> {
 }
 
 /// Adds the entry at the end of `mcpServers`, with the indent of the
-/// entries next to it. An empty text is a new file. `None`: the file has
-/// the same entry already, so a retry after a failure passes (rule 3 of
-/// docs/design/server-add.md).
+/// entries next to it. An empty text is a new file. `None` means that the
+/// file has the same entry already. Thus a retry after a failure passes
+/// (rule 3 of docs/design/server-add.md).
 ///
 /// # Errors
 ///
-/// Returns an error when the text does not parse, has a duplicate key on
-/// the path of the edit, has another entry of the name, or the self-check
-/// fails.
+/// Returns an error when:
+/// - the text does not parse
+/// - the path of the edit has a duplicate key
+/// - the file has another entry of the name
+/// - the self-check fails
 pub fn add(
     text: &str,
     name: &str,
@@ -92,9 +94,11 @@ pub fn add(
 ///
 /// # Errors
 ///
-/// Returns an error when the text does not parse, has no entry of the
-/// name, has a duplicate key on the path of the edit, or the self-check
-/// fails.
+/// Returns an error when:
+/// - the text does not parse
+/// - the file has no entry of the name
+/// - the path of the edit has a duplicate key
+/// - the self-check fails
 pub fn remove(text: &str, name: &str) -> Result<String, EditError> {
     let (old, root, object) = tree(text)?;
     let servers = single(&object, SERVERS_KEY)?

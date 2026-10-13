@@ -1,10 +1,13 @@
 //! A local OAuth authorization server for the tests of `ncp`. Tests never
 //! call a third-party server.
 //!
-//! The server serves the authorization server metadata (RFC 8414), an
-//! authorization endpoint that approves each valid request at once, a token
-//! endpoint with PKCE S256 (RFC 7636) and the refresh grant, and Dynamic
-//! Client Registration (RFC 7591). The issuer is a loopback `http` URL.
+//! The server serves:
+//! - the authorization server metadata (RFC 8414)
+//! - an authorization endpoint that approves each valid request at once
+//! - a token endpoint with PKCE S256 (RFC 7636) and the refresh grant
+//! - Dynamic Client Registration (RFC 7591)
+//!
+//! The issuer is a loopback `http` URL.
 //!
 //! [`AuthServer::settings`] changes the behavior while the server runs, and
 //! [`AuthServer::record`] shows what the server got.

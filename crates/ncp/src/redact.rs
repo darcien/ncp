@@ -2,8 +2,8 @@
 //!
 //! Verbose output must not show a secret, because logs and screens are
 //! often shared. It hides each value that `ncp` knows is a secret (design
-//! B43), and does not guess from a name: a guess hides some secrets and
-//! not others, and the user cannot know which. As in uv, a hidden value
+//! B43). It does not guess from a name, because a guess hides some secrets
+//! and not others, and the user cannot know which. As in uv, a hidden value
 //! shows as `****`, always with the same length. An empty value shows as
 //! empty. Thus the user can see if a value is set or empty, but never its
 //! length.
@@ -20,9 +20,9 @@ pub const HIDDEN: &str = "****";
 const SECRET_HEADERS: [&str; 2] = ["authorization", "proxy-authorization"];
 
 /// OAuth fields and form parameters that hold a token, a code or a client
-/// secret. The names are standard (RFC 6749, 7591, 7636, 8693), so the list
-/// is exact: a part such as `token` would also hide `token_type` and the
-/// endpoints of the metadata.
+/// secret. The names are standard (RFC 6749, 7591, 7636, 8693), so the
+/// list is exact. A part such as `token` would also hide `token_type` and
+/// the endpoints of the metadata.
 const OAUTH_SECRET_FIELDS: [&str; 12] = [
     "access_token",
     "refresh_token",
@@ -113,9 +113,9 @@ fn hide_query(query: &str) -> String {
         .join("&")
 }
 
-/// The text with each of the values hidden, also in its percent-encoded
-/// forms: a URL that a library makes from the server URL can hold a value
-/// of `${NAME}` in another place or encoding.
+/// Hides each value, also in its percent-encoded forms. A URL that a
+/// library makes from the server URL can hold a value of `${NAME}` in
+/// another place or encoding.
 #[must_use]
 pub fn values(text: &str, secrets: &[String]) -> String {
     let mut forms: Vec<String> = secrets

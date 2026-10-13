@@ -101,7 +101,7 @@ impl Context<'_> {
 pub struct Loaded {
     /// The view that runs: the global entries, and the entries of a
     /// trusted project file in place of global entries of the same names.
-    /// An entry of a project file that is not trusted is not in it, so no
+    /// An entry of a project file that is not trusted is not in it. Thus no
     /// command can start it, send to it, or read the store for it.
     pub config: Config,
     /// The global file.
@@ -140,8 +140,8 @@ impl Loaded {
 /// Reads the global file and searches for the project file. A missing
 /// global file gives an empty configuration: only `server add` makes it.
 /// With `search` false (`--config-file`), there is no project file. Only a
-/// trusted project file joins the view, and its `${NAME}` values expand
-/// only then: before the trust, no value of the environment goes into it.
+/// trusted project file joins the view, and only then its `${NAME}` values
+/// expand. Before the trust, no value of the environment goes into it.
 ///
 /// # Errors
 ///
@@ -191,11 +191,10 @@ fn trusted(loaded: Loaded, env: &Env) -> Result<Loaded, Failure> {
     })
 }
 
-/// Loads the configuration for a command. When the command names a server
-/// of a project file that is not trusted, and a person can answer, shows
-/// the entries and asks, as `mise` asks. A Yes trusts the bytes that `ncp`
-/// read; a No writes the ignored record. With no answer, `select` stops
-/// with the entries.
+/// The command can name a server of a project file that is not trusted.
+/// When a person can answer, `ncp` then shows the entries and asks, as
+/// `mise` asks. A Yes trusts the bytes that `ncp` read. A No writes the
+/// ignored record. With no answer, `select` stops with the entries.
 ///
 /// # Errors
 ///
@@ -337,8 +336,8 @@ pub fn select<'a>(loaded: &'a Loaded, name: &str, ui: Ui) -> Result<&'a Server, 
     Ok(server)
 }
 
-/// The failure of a name that the gate stops, with the entries of the
-/// file, so that the user or an agent can check them before `ncp trust`.
+/// The failure shows the entries of the file, so that the user or an agent
+/// can check them before `ncp trust`.
 fn blocked(name: &str, project: &Project, in_global: bool) -> Failure {
     let file = project.file.display();
     let state = match project.trust {
@@ -739,9 +738,9 @@ fn connect_failure(
     }
 }
 
-/// True for an answer `404` to the handshake: a URL with a wrong path,
-/// for example with no `/mcp`. rmcp keeps only the text of the status, as
-/// `HTTP 404`, so the check reads the text of the pinned version.
+/// A `404` to the handshake means a URL with a wrong path, for example
+/// with no `/mcp`. rmcp keeps only the text of the status, as `HTTP 404`.
+/// Thus the check reads the text of the pinned version.
 fn is_not_found(error: &ConnectError) -> bool {
     matches!(error, ConnectError::Handshake { .. }) && error.to_string().contains("HTTP 404")
 }
@@ -781,13 +780,13 @@ fn through_proxy(env: &Env, url: &crate::server::ServerUrl, failure: Failure) ->
     }
 }
 
-/// How a URL of the server shows in `-vv`: the server URL as the file
-/// writes it; each other URL, for example of OAuth, with its secrets
-/// hidden. An expanded value of the server URL can also be in an OAuth
-/// URL, for example in `resource`.
+/// In `-vv`, the server URL shows as the file writes it. Each other URL,
+/// for example of OAuth, shows with its secrets hidden. An expanded value
+/// of the server URL can also be in an OAuth URL, for example in
+/// `resource`.
 ///
 /// A text that is not a URL, for example a body or an error of a trace,
-/// gets only the hidden `${NAME}` values: rmcp puts the server URL into
+/// gets only the hidden `${NAME}` values. rmcp puts the server URL into
 /// OAuth bodies and errors, also percent-encoded.
 pub fn shown_url(server: &Server) -> impl Fn(&str) -> String + Send + Sync + 'static {
     let server = server.clone();
@@ -812,9 +811,9 @@ pub(super) fn hide_expanded_url(server: &Server, message: String) -> String {
     match (&server.transport, &server.target) {
         (Transport::Http(remote) | Transport::Sse(remote), Target::Remote { url }) => {
             let shown = crate::redact::url(url);
-            // The whole URL first, so that the URL as the file writes it
-            // shows; then each value in other places, for example in a URL
-            // that rmcp makes from it.
+            // Replace the whole URL first, so that the URL as the file
+            // writes it shows. Then hide each value in other places, for
+            // example in a URL that rmcp makes from it.
             let parts: Vec<&str> = message.split(remote.url.as_str()).collect();
             parts
                 .iter()
@@ -877,11 +876,11 @@ pub fn interrupted() -> Failure {
     Failure::new(Exit::Interrupted, "interrupted")
 }
 
-/// The store of the OAuth tokens failed, for example at the save of a
-/// refresh, or a read after the refresh lock found tokens of another
-/// server. A file that fails is a local error. A native store that fails
-/// (for example a locked keyring, design B51) is an authorization error:
-/// the file can keep the tokens.
+/// The store can fail at the save of a refresh. A read after the refresh
+/// lock can also find tokens of another server. A file that fails is a
+/// local error. A native store that fails, for example a locked keyring,
+/// is an authorization error, because the file can keep the tokens
+/// (design B51).
 fn token_store_failure(server: &Server, text: &str) -> Failure {
     if let Some(mismatch) = crate::oauth::store::binding_mismatch(text) {
         return super::auth::binding_failure(server, &mismatch);

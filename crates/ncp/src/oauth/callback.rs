@@ -33,10 +33,9 @@ impl fmt::Display for RedirectUri {
     }
 }
 
-/// The parts of a redirect that the token request needs. rmcp checks
-/// `state` against the stored PKCE verifier and `iss` against the metadata
-/// (RFC 9207 §2.4). `ncp` checks `state` too, so that a pasted URL of
-/// another login gives a clear error.
+/// rmcp checks `state` against the stored PKCE verifier, and `iss` against
+/// the metadata (RFC 9207 §2.4). `ncp` checks `state` too, so that a
+/// pasted URL of another login gives a clear error.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Callback {
     pub code: String,
@@ -110,9 +109,11 @@ fn describe(error: &str, description: Option<&str>) -> String {
 ///
 /// # Errors
 ///
-/// Returns an error when the URL is not for this redirect URI, when the
-/// authorization server sent an error (RFC 6749 §4.1.2.1), when a part is
-/// missing, or when `state` is not the state of this login.
+/// Returns an error when:
+/// - the URL is not for this redirect URI
+/// - the authorization server sent an error (RFC 6749 §4.1.2.1)
+/// - a part is missing
+/// - `state` is not the state of this login
 pub fn parse(
     text: &str,
     redirect: &RedirectUri,
@@ -138,10 +139,9 @@ pub fn parse(
         return Err(CallbackError::WrongState);
     }
     if let Some(error) = find("error") {
-        // rmcp checks `iss` only on a code. The text of an error response
-        // shows only after the check, because a mix-up attack can send
-        // an error with a false description (MCP 2026-07-28,
-        // authorization).
+        // rmcp checks `iss` only on a code. A mix-up attack can send an
+        // error with a false description (MCP 2026-07-28, authorization).
+        // Thus the text of an error response shows only after the check.
         check_issuer(find("iss"), expected)?;
         return Err(CallbackError::Refused {
             error,

@@ -256,8 +256,8 @@ pub fn parse(params: &Value) -> Result<Request, RequestError> {
     }
 }
 
-/// The choices of a list, or `None` when the list is empty or an item is
-/// not a choice: a field with no choice cannot get an answer.
+/// Gives `None` when the list is empty or an item is not a choice. A field
+/// with no choice cannot get an answer.
 fn choices(list: &Value) -> Option<Vec<Choice>> {
     let items = list.as_array().filter(|items| !items.is_empty())?;
     items
@@ -299,9 +299,9 @@ fn single_choices(property: &Value) -> Option<Vec<Choice>> {
 fn field(name: &str, property: &Value, required: bool) -> Result<Field, RequestError> {
     let number = |key: &str| property.get(key).and_then(Value::as_f64);
     let kind = match property.get("type").and_then(Value::as_str) {
-        // A list that is empty, or whose items do not all have a value,
-        // is not a list that ncp can show; free text would send a value
-        // that is not in it.
+        // `ncp` cannot show a list that is empty, or a list with an item
+        // that has no value. Free text would send a value that is not in
+        // the list.
         Some("string") if property.get("oneOf").is_some() || property.get("enum").is_some() => {
             single_choices(property)
                 .map(Kind::Choice)

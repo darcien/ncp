@@ -1,6 +1,7 @@
-//! Live tests: `ncp` with the login Keychain, a real browser and a login at
-//! a real server, and on a host that is thrown away, with the system proxy.
-//! They change the state of the machine, so they are ignored by default.
+//! Live tests of `ncp` with the login Keychain, a real browser and a login
+//! at a real server. One test sets the system proxy on a host that is
+//! thrown away. The tests change the state of the machine, so they are
+//! ignored by default.
 //! See `docs/live-tests.md`.
 
 // Test code can use unwrap: a panic is a test failure.

@@ -72,8 +72,8 @@ fn cpu_time() -> Option<Duration> {
     Some(time(usage.user_time()) + time(usage.system_time()))
 }
 
-/// The connect time with no DNS time. reqwest looks up the name inside
-/// its connector, so each lookup is in the time of a connect too.
+/// reqwest looks up the name inside its connector. Thus the connect time
+/// includes each lookup, and this function takes the DNS time out.
 fn connect_without_dns(record: &Record) -> Option<Duration> {
     record
         .connect

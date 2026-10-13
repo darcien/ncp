@@ -453,9 +453,9 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
         };
         let prepared = match cached {
             Some(tools) => {
-                // The server can have changed within the time of the list
-                // (the spec permits a fetch again): a list from the cache
-                // that does not fit gets one live list.
+                // The server can change within the time of the list, and
+                // the spec permits a new fetch. Thus a cached list that does
+                // not fit gets one live list.
                 if let Ok(prepared) =
                     prepare_call(context, name, Some(tools), &input, tool_name, &call)
                 {
@@ -523,10 +523,10 @@ fn prepare_call(
     Ok((tool, arguments))
 }
 
-/// True when a call needs the tool list first: from `2026-07-28` an HTTP
-/// client mirrors the parameters with `x-mcp-header` into `Mcp-Param-*`
-/// headers, and rmcp knows these parameters only from a listed tool
-/// (SEP-2243). A tool that the list does not show stays callable.
+/// From `2026-07-28`, an HTTP client copies the parameters with
+/// `x-mcp-header` into `Mcp-Param-*` headers (SEP-2243). rmcp knows these
+/// parameters only from a listed tool, so the call needs the tool list
+/// first. A tool that the list does not show stays callable.
 fn mirrors_parameters(server: &Server, connection: &Connection) -> bool {
     matches!(server.transport, crate::config::Transport::Http(_))
         && connection.protocol_version().uses_discover()
@@ -590,8 +590,8 @@ async fn resource_list(context: &Context<'_>, word: &str) -> Result<(), Failure>
     )
 }
 
-/// The failure of a request that names a thing by name or URI: "invalid
-/// params" or "resource not found" is a usage error with the command that
+/// For a request that names a thing by name or URI, "invalid params" or
+/// "resource not found" is a usage error. The hint is the command that
 /// lists the names.
 fn named_failure(server: &Server, method: &str, error: &RequestError, list: &str) -> Failure {
     let name = server.name.as_str();

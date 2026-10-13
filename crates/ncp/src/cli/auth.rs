@@ -470,9 +470,9 @@ pub(super) async fn stored_login(
     let metadata = discover(&manager, challenge)
         .await
         .map_err(|failure| failure.server(name))?;
-    // The issuer of the configured client is checked before rmcp reads the
-    // tokens, because rmcp removes the tokens of another issuer, and before
-    // any refresh sends the secret.
+    // Check the issuer of the configured client before rmcp reads the
+    // tokens, because rmcp removes the tokens of another issuer. The check
+    // also comes before a refresh sends the secret.
     let configured = remote
         .oauth_client
         .as_ref()
@@ -640,8 +640,8 @@ pub(super) async fn find_tokens(
     TokenPlaces::open(context).await.find(context, server).await
 }
 
-/// A native store that cannot answer stays marked as down, so that the
-/// search for the next server does not wait for the store limit again.
+/// A native store that cannot answer stays marked as down. Thus the search
+/// for the next server does not wait for the store limit again.
 pub(super) struct TokenPlaces {
     native: Option<Arc<dyn CredentialStore>>,
     down: Option<crate::store::StoreError>,
@@ -1252,13 +1252,13 @@ enum Found {
     Kept,
 }
 
-/// The tokens are keyed by the server name, so they go only when their
-/// binding is the URL of the entry (`resource`), and its issuer when the
-/// entry names one (docs/design/server-add.md section 6). With no URL to
-/// compare, they stay. The client item goes with them when it is for the
-/// issuer of the tokens. A store that cannot answer gives only a warning:
-/// the remove of the entry must not depend on the store, and the binding
-/// stops the use of the old tokens.
+/// The server name is the key of the tokens. Thus the tokens go only when
+/// their binding is the URL of the entry (`resource`). When the entry
+/// names an issuer, the issuer must also match (docs/design/server-add.md
+/// section 6). With no URL to compare, the tokens stay. The client item
+/// goes with them when it is for the issuer of the tokens. A store that
+/// cannot answer gives only a warning. The remove of the entry must not
+/// depend on the store, and the binding stops the use of the old tokens.
 pub(super) async fn remove_bound_items(
     context: &Context<'_>,
     server: &ServerName,

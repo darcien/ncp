@@ -1,14 +1,17 @@
 //! The adapter between the official MCP conformance suite and `ncp`.
 //!
 //! The suite starts this program with the URL of its server as the last
-//! argument, and with the scenario in `MCP_CONFORMANCE_SCENARIO`, the
-//! protocol version in `MCP_CONFORMANCE_PROTOCOL_VERSION` and extra data in
-//! `MCP_CONFORMANCE_CONTEXT`. The adapter maps the scenario to `ncp`
-//! commands, so that the suite tests the command line as a black box.
+//! argument. These variables give the rest:
+//! - `MCP_CONFORMANCE_SCENARIO`: the scenario
+//! - `MCP_CONFORMANCE_PROTOCOL_VERSION`: the protocol version
+//! - `MCP_CONFORMANCE_CONTEXT`: extra data
 //!
-//! The adapter runs `ncp-cli`, the build of `ncp` in the test kit, in a
-//! temporary home with the file credential store and the fake browser,
-//! which follows the redirect of the authorization server.
+//! The adapter maps the scenario to `ncp` commands, so that the suite
+//! tests the command line as a black box.
+//!
+//! The adapter runs `ncp-cli`, the build of `ncp` in the test kit. It uses
+//! a temporary home with the file credential store and the fake browser.
+//! The fake browser follows the redirect of the authorization server.
 //!
 //! By default the adapter acts as a person at a TTY who answers each
 //! question. With `NCP_CONFORMANCE_AGENT` set, it acts as an agent: no TTY
@@ -144,9 +147,9 @@ fn arguments(tool: &Value) -> Value {
 }
 
 /// The calls of the scenario: the `toolCalls` of the context, else one
-/// call of each listed tool. The schema scenario asks for the input schema
-/// of its focal tool, as `ncp tool list` shows it, back through its echo
-/// tool: thus it checks that `ncp` keeps each keyword.
+/// call of each listed tool. The schema scenario sends the input schema of
+/// its focal tool, as `ncp tool list` shows it, back through its echo
+/// tool. Thus it checks that `ncp` keeps each keyword.
 fn calls(scenario: &str, context: &Value, tools: &Value) -> Vec<(String, Value)> {
     if scenario == "json-schema-2020-12-preservation" {
         let listed = tools.as_array().cloned().unwrap_or_default();

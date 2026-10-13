@@ -72,8 +72,8 @@ pub enum Access {
 ///
 /// A private list must not be shared across authorization contexts (MCP
 /// 2026-07-28, server/utilities/caching). The cache has no copy of a
-/// credential, so it cannot see a changed one: a private list is kept only
-/// from an http server with no credential.
+/// credential, so it cannot see a changed one. Thus `ncp` keeps a private
+/// list only from an http server with no credential.
 #[must_use]
 pub fn keep_for(ttl_ms: Option<u64>, private: bool, access: Access) -> Option<u64> {
     let ttl = ttl_ms.filter(|ttl| *ttl > 0)?;

@@ -8,9 +8,9 @@
 //! uses the same method. The cost: a process of the same user can read the
 //! items of `ncp` through `security` with no prompt.
 //!
-//! The value goes to `security -i` through stdin and never in a process
-//! argument, because each user of the machine can see the arguments of a
-//! process. All calls block. An async caller runs them through
+//! The value goes to `security -i` through stdin, never in a process
+//! argument. Each user of the machine can see the arguments of a process.
+//! All calls block. An async caller runs them through
 //! [`super::run_blocking`].
 //!
 //! `security -i` reads one command line of at most 4095 bytes, and some
@@ -61,7 +61,7 @@ const USER_CANCELED: i32 = 128;
 
 /// The time that one run of the program gets. It is shorter than the
 /// limit of each store call, so that `ncp` stops the program before the
-/// caller gives up: a program that stays could show a dialog after the
+/// caller gives up. A program that stays could show a dialog after the
 /// exit of `ncp`, or write an item late.
 pub const PROGRAM_LIMIT: Duration = Duration::from_secs(55);
 
@@ -204,7 +204,7 @@ impl CredentialStore for SecurityStore {
             .iter()
             .try_for_each(|(part, text)| self.add(part, text, deadline))?;
         // The head is the commit point. A head that `ncp` writes after it
-        // reports a failure would change the value after the failure, so
+        // reports a failure would change the value after the failure. Thus
         // the save stops while the head can still finish in time.
         if deadline.saturating_duration_since(Instant::now()) < self.limit / HEAD_RESERVE {
             return Err(StoreError::NoAnswer(self.limit));
@@ -327,7 +327,7 @@ impl SecurityStore {
     /// Removes the parts of older saves, and the parts of saves that
     /// stopped before their head, so that no old token data stays. A
     /// generation that is younger than the limit of a save can belong to a
-    /// save that still runs, so it stays until a later save. A failure here
+    /// save that still runs. It stays until a later save. A failure here
     /// keeps the new value, and the next save removes the rest.
     fn remove_other_parts(&self, account: &str, keep: &[(String, String)], deadline: Instant) {
         let Ok(accounts) = self.accounts(deadline) else {
@@ -378,7 +378,7 @@ struct SavePlan {
 }
 
 /// Cuts the encoded value into parts when its command does not fit one
-/// line. The parts and the head have no second encoding: the encoded text
+/// line. The parts and the head need no second encoding. The encoded text
 /// has only printable ASCII and no quote, and a head starts with a mark
 /// that no encoded value has.
 fn save_plan(account: &str, value: &str, generation: &str) -> Result<SavePlan, StoreError> {
