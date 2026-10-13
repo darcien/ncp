@@ -12,8 +12,8 @@
 //!   is available.
 //! - With `NCP_TEST_TTY=1`, a person answers questions on stdin, as on a
 //!   TTY.
-//! - With `NCP_TEST_CHANGE_BEFORE_RENAME=1`, the configuration file
-//!   changes just before `ncp` renames its new copy over it.
+//! - With `NCP_TEST_CHANGE_BEFORE_RENAME=1`, the configuration file changes
+//!   immediately before `ncp` renames its new copy over it.
 
 use std::{
     io::{BufRead, BufReader, Write},
@@ -81,7 +81,7 @@ fn fake_tty() -> bool {
 }
 
 /// With `NCP_TEST_CHANGE_BEFORE_RENAME=1`, another tool changes the
-/// configuration file just before `ncp` renames its new copy over it.
+/// configuration file immediately before `ncp` renames its new copy over it.
 fn change_before_rename(path: &std::path::Path) {
     if std::env::var_os("NCP_TEST_CHANGE_BEFORE_RENAME").is_some()
         && let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(path)

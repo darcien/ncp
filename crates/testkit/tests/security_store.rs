@@ -196,8 +196,8 @@ fn removes_the_old_parts_after_each_save() {
 fn keeps_the_parts_of_a_save_that_can_still_run() {
     let dir = keychain("running-save");
     let store = store(&dir);
-    // Another process has written the parts of its save, and not yet its
-    // head. Its generation is young: the time now, in hexadecimal.
+    // Another process wrote the parts of its save, and not yet its head. Its
+    // generation is young: the time now, in hexadecimal.
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()

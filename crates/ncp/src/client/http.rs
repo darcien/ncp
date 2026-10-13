@@ -228,12 +228,11 @@ pub fn configured(env: &Env, observer: &Observer) -> Result<reqwest::ClientBuild
     with_cert_file(builder, env)
 }
 
-/// Replaces the system roots with the roots in the file that
-/// `SSL_CERT_FILE` names, on each OS, as uv does. On Linux, the system
-/// store reads the variable in place of the system roots, so a merge would
-/// give a different rule on each OS. A file that `ncp` cannot use is an
-/// error, because a silent fallback gives a TLS error that does not name
-/// the cause.
+/// Replaces the system roots with the roots in the file that `SSL_CERT_FILE`
+/// names, on each OS, as uv does. On Linux, the system store reads the variable
+/// in place of the system roots, so a merge gives a different rule on each OS.
+/// A file that `ncp` cannot use is an error, because a silent fallback gives a
+/// TLS error that does not name the cause.
 fn with_cert_file(
     builder: reqwest::ClientBuilder,
     env: &Env,

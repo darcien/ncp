@@ -714,8 +714,8 @@ fn connect_failure(
     };
     let failure =
         Failure::new(exit, hide_expanded_url(server, message)).server(server.name.as_str());
-    // The log of the server is on stderr already; the command gives the
-    // rest of the reason.
+    // The log of the server is on stderr already. The command gives the rest of
+    // the reason.
     let failure = if let ConnectError::Exited { .. } = error {
         failure.hint(format!(
             "run the command in a shell to see why: {}",
@@ -902,10 +902,10 @@ fn server_error(method: &str, data: &rmcp::ErrorData) -> Failure {
     ))
 }
 
-/// The failure of a request that needs the user to open pages first, or
-/// `None` when the error names no page. Only a page that is safe to open
-/// goes into the failure; the others show the reason that `ncp` refuses
-/// them, and not their URL.
+/// The failure of a request that needs the user to open pages first, or `None`
+/// when the error names no page. Only a page that is safe to open goes into the
+/// failure. The others show the reason that `ncp` refuses them, and not their
+/// URL.
 fn page_failure(method: &str, data: &rmcp::ErrorData) -> Option<Failure> {
     let found = crate::elicit::pages(data.data.as_ref());
     if found.is_empty() {

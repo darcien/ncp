@@ -94,7 +94,7 @@ impl Asker {
     }
 
     /// One line from stdin, read on its own thread: a blocking read on the
-    /// runtime would stop the time limits and delay the exit.
+    /// runtime stops the time limits and delays the exit.
     async fn line(&self) -> Result<String, Stop> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         std::thread::spawn(move || {

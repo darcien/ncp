@@ -25,10 +25,10 @@ pub fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     replace(path, bytes, 0o600, || Ok(()))
 }
 
-/// Replaces the file with a new file of the mode, in the same folder, so
-/// that a failed write cannot leave a partial file. `before_rename` runs
-/// last, for example to check that nobody changed the old file; its error
-/// stops the rename.
+/// Replaces the file with a new file of the mode, in the same folder, so that a
+/// failed write cannot leave a partial file. `before_rename` runs last, for
+/// example to check that nobody changed the old file. Its error stops the
+/// rename.
 ///
 /// # Errors
 ///

@@ -681,8 +681,8 @@ enum Access {
 struct OAuthAccess {
     auth: auth_server::AuthState,
     step_up: Option<StepUp>,
-    /// The handshake and the stream requests need no token; the other
-    /// requests do. Some real servers work this way.
+    /// The handshake and the stream requests need no token. The other requests
+    /// need one. Some real servers work this way.
     open_handshake: bool,
 }
 

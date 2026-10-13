@@ -9,8 +9,7 @@
 //! The cache keeps an `initialize` result also when it came from a probe
 //! timeout. Thus a server that does not answer `server/discover` costs the
 //! timeout once, and not at each run. When the handshake with the cached
-//! version fails, the client probes again, because the server can have
-//! changed.
+//! version fails, the client probes again, because the server can change.
 
 use std::{collections::BTreeMap, fmt};
 

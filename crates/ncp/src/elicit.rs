@@ -18,9 +18,9 @@ pub struct Page {
     pub url: String,
 }
 
-/// The pages in the data of a `URLElicitationRequiredError`. A page that
-/// is safe to open (`safe_url`) has its URL in normal form; another page
-/// gives the reason that `ncp` refuses it. An item with no URL is left out.
+/// The pages in the data of a `URLElicitationRequiredError`. A page that is
+/// safe to open (`safe_url`) has its URL in normal form. Another page gives the
+/// reason that `ncp` refuses it. An item with no URL is left out.
 #[must_use]
 pub fn pages(data: Option<&Value>) -> Vec<Result<Page, String>> {
     data.and_then(|data| data.get("elicitations"))
@@ -299,9 +299,8 @@ fn single_choices(property: &Value) -> Option<Vec<Choice>> {
 fn field(name: &str, property: &Value, required: bool) -> Result<Field, RequestError> {
     let number = |key: &str| property.get(key).and_then(Value::as_f64);
     let kind = match property.get("type").and_then(Value::as_str) {
-        // `ncp` cannot show a list that is empty, or a list with an item
-        // that has no value. Free text would send a value that is not in
-        // the list.
+        // `ncp` cannot show a list that is empty, or a list with an item that
+        // has no value. Free text can send a value that is not in the list.
         Some("string") if property.get("oneOf").is_some() || property.get("enum").is_some() => {
             single_choices(property)
                 .map(Kind::Choice)

@@ -1301,7 +1301,7 @@ async fn trace_output_shows_messages_and_requests_with_secrets_hidden() {
     let home = Home::new("trace")
         .set("WEB_TOKEN", "t0ken")
         .set("API_KEY", "k3y");
-    // A value from ${NAME} is a secret; a literal value shows as it is.
+    // A value from ${NAME} is a secret. A literal value shows as it is.
     let url = format!("{}?api_key=${{API_KEY}}&page=2", fixture.url);
     home.configure(&json!({"web": {"type": "http", "url": url,
         "headers": {"Authorization": "Bearer ${WEB_TOKEN}", "X-Org": "acme"}}}));
@@ -2825,7 +2825,7 @@ fn elicitation_request_of_a_legacy_server_asks_on_the_tty() {
 fn elicitation_lets_the_user_change_a_field_before_the_answer_goes_out() {
     let home = Home::new("elicit-change").set("NCP_TEST_TTY", "1");
     home.configure(&json!({"fx": stdio("modern")}));
-    // age takes the default, name is Ada; then change field 2 to Grace.
+    // age takes the default, and name is Ada. Then field 2 changes to Grace.
     let run = home.run_with_stdin(
         &["tool", "call", "fx", "elicit", "text=x"],
         // Whole words count: "change" is not "cancel".
@@ -3019,7 +3019,7 @@ fn a_request_that_needs_a_page_gives_exit_5_with_the_pages() {
     assert_eq!(run.code(), 5, "{}", run.describe());
     let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
     assert!(stderr.contains("a page of login.example.test"), "{stderr}");
-    // A real TTY echoes the new line of the answer; a pipe does not.
+    // A real TTY echoes the new line of the answer. A pipe does not.
     let last: Value = serde_json::from_str(&stderr[stderr.rfind("{\"error\"").unwrap()..]).unwrap();
     assert_eq!(
         last["error"]["hint"],

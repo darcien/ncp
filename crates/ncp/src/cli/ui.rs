@@ -73,8 +73,8 @@ impl Ui {
     ) -> Result<(), Failure> {
         match self.format {
             Format::Text => write_stdout(&printable(&text())),
-            // JSON on a TTY comes only from `--output-format json`; a
-            // person reads it, so it is pretty (design section 4).
+            // JSON on a TTY comes only from `--output-format json`. A person
+            // reads it, so it is pretty (design section 4).
             Format::Json if std::io::stdout().is_terminal() => {
                 write_stdout(&format!("{}\n", escape_raw_controls(pretty_json(&json()))))
             }
@@ -344,9 +344,9 @@ fn escape_raw_controls(text: String) -> String {
     }
 }
 
-/// A message of a note with each line after the first indented. A message
-/// can come from a server, and a line of its own could look like a note of
-/// `ncp`; an indented line cannot. A message of `ncp` keeps its lines.
+/// A message of a note with each line after the first indented. A message can
+/// come from a server, and a line of its own can look like a note of `ncp`. An
+/// indented line cannot. A message of `ncp` keeps its lines.
 #[must_use]
 pub fn indented(message: &str) -> String {
     message

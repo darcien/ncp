@@ -152,8 +152,8 @@ pub enum ResourceCommand {
         /// The server name from the configuration
         server: String,
     },
-    /// Read one resource. The text goes to stdout as it is; with
-    /// --output-format json, the MCP result.
+    /// Read one resource. The text goes to stdout as it is. With
+    /// --output-format json, the MCP result goes to stdout.
     Read {
         /// The server name from the configuration
         server: String,

@@ -78,9 +78,9 @@ impl TokenStore {
         }
     }
 
-    /// Two processes that refresh the same tokens at the same time would
-    /// use one refresh token twice. With rotation, the second refresh then
-    /// fails, and the user must log in again.
+    /// Two processes that refresh the same tokens at the same time use one
+    /// refresh token twice. With rotation, the second refresh then fails, and
+    /// the user must log in again.
     #[must_use]
     pub fn with_refresh_lock(self, path: PathBuf) -> Self {
         Self {
@@ -216,9 +216,9 @@ pub fn binding_mismatch(text: &str) -> Option<items::BindingMismatch> {
     }
 }
 
-/// The lock of the tokens of one server: a refresh, a login and a logout
-/// hold it, so that one of them cannot undo another. It blocks; an async
-/// caller runs it on a blocking thread.
+/// The lock of the tokens of one server: a refresh, a login and a logout hold
+/// it, so that one of them cannot undo another. It blocks. An async caller runs
+/// it on a blocking thread.
 ///
 /// # Errors
 ///
@@ -281,9 +281,9 @@ impl RmcpStore for TokenStore {
         Ok(())
     }
 
-    /// Holds the lock of the tokens through the refresh and its save. The
-    /// copy in memory can be old after the wait, so the next load reads the
-    /// store: another process can have refreshed the tokens.
+    /// Holds the lock of the tokens through the refresh and its save. Another
+    /// process can refresh the tokens in the wait. Then the copy in memory is
+    /// old, so the next load reads the store.
     async fn acquire_refresh_guard(&self) -> Result<Option<CredentialRefreshGuard>, AuthError> {
         let Some(path) = self.refresh_lock.clone() else {
             return Ok(None);

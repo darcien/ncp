@@ -146,7 +146,7 @@ fn locked_keyring_gives_an_error_within_the_time_limit() {
     runtime.shutdown_timeout(Duration::from_millis(100));
     // The list shows no prompt: it fails at once for a locked item.
     assert!(matches!(keys, Err(StoreError::Denied(_))), "{keys:?}");
-    // A save needs an unlock. With no prompt program it fails at once; with
+    // A save needs an unlock. With no prompt program, it fails at once. With
     // one, it stops at the time limit.
     assert!(saved.is_err(), "a locked keyring must not take the value");
     assert!(

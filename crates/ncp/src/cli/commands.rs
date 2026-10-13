@@ -387,7 +387,7 @@ async fn tool_show(context: &Context<'_>, word: &str, tool: Option<&str>) -> Res
     let name = server.name.as_str();
     let tool_name = tool_word(name, tool)?;
     // A cached list that misses the tool gets a live list: the server can
-    // have changed within the time of the list.
+    // change within the time of the list.
     let cached =
         cached_tools(context, server).and_then(|tools| find_tool(name, tools, tool_name).ok());
     let tool = match cached {
@@ -445,7 +445,8 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
     let name = server.name.as_str();
     with_connection(context, server, async |connection| {
         // rmcp mirrors parameters only for a tool that it listed in this
-        // session, so that case lists again; else a fresh cache serves.
+        // session, so that case lists again. In other cases, a fresh cache
+        // serves.
         let cached = if needs_tool && !mirrors_parameters(server, connection) {
             cached_tools(context, server)
         } else {
@@ -640,8 +641,8 @@ async fn resource_read(context: &Context<'_>, word: &str, uri: &str) -> Result<(
 }
 
 /// The one content of a resource as bytes: the text, or the decoded blob.
-/// Several contents have no raw form: their borders and types would be
-/// lost.
+/// Several contents have no raw form, because the bytes alone lose their
+/// borders and types.
 fn raw_contents(result: &Value) -> Result<Vec<u8>, Failure> {
     let contents = result
         .get("contents")
@@ -770,11 +771,10 @@ fn print_call_help() -> Result<(), Failure> {
     ui::write_stdout(&help)
 }
 
-/// The spec says that a server answers an unknown tool or bad arguments
-/// with "invalid params" (MCP 2025-11-25, server/tools, "Error Handling").
-/// That is a usage error. When `ncp` knows the tool from the list, `tool
-/// show` gives the fix; else the tool can be unknown, and `tool list`
-/// gives the fix.
+/// The spec says that a server answers an unknown tool or bad arguments with
+/// "invalid params" (MCP 2025-11-25, server/tools, "Error Handling"). That is a
+/// usage error. When `ncp` knows the tool from the list, `tool show` gives the
+/// fix. In other cases the tool can be unknown, and `tool list` gives the fix.
 fn call_failure(server: &Server, tool: &str, listed: bool, error: &RequestError) -> Failure {
     let name = server.name.as_str();
     match error {

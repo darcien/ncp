@@ -19,9 +19,9 @@ pub const HIDDEN: &str = "****";
 const SECRET_HEADERS: [&str; 2] = ["authorization", "proxy-authorization"];
 
 /// OAuth fields and form parameters that hold a token, a code or a client
-/// secret. The names are standard (RFC 6749, 7591, 7636, 8693), so the
-/// list is exact. A part such as `token` would also hide `token_type` and
-/// the endpoints of the metadata.
+/// secret. The names are standard (RFC 6749, 7591, 7636, 8693), so the list is
+/// exact. A part such as `token` also hides `token_type` and the endpoints of
+/// the metadata.
 const OAUTH_SECRET_FIELDS: [&str; 12] = [
     "access_token",
     "refresh_token",

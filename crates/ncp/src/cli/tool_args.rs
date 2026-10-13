@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use rmcp::model::JsonObject;
 
-/// One `key=value` pair. The value is text; the schema decides the type.
+/// One `key=value` pair. The value is text, and the schema decides the type.
 pub type Pair = (String, String);
 
 /// The arguments after `ncp` read stdin: the input of the schema rule.
@@ -98,7 +98,7 @@ fn pair(word: &str) -> Result<Pair, ArgumentError> {
     if key.is_empty() {
         return Err(ArgumentError::EmptyKey(word.to_string()));
     }
-    // An older form: a key that ends in `:` would go out with a wrong name.
+    // An older form: a key that ends in `:` goes out with a wrong name.
     if key.ends_with(':') {
         return Err(ArgumentError::JsonPair(word.to_string()));
     }

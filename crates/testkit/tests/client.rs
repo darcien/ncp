@@ -460,7 +460,7 @@ async fn sends_cancel_request_when_request_passes_its_time_limit() {
 #[tokio::test]
 async fn stops_stdio_server_with_stop_steps_when_connect_passes_its_limit() {
     // The server ignores closed stdin, so only SIGTERM after the first wait
-    // stops it. A kill with no stop steps would take no time.
+    // stops it. A kill with no stop steps takes no time.
     let mut setup = Setup::new(stdio(&["slow-30000", "linger"], &[]));
     setup.connect_limit = Duration::from_millis(300);
     let start = Instant::now();

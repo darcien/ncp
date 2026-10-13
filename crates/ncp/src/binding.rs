@@ -1,7 +1,7 @@
-//! Where a stored value may go. Each `${NAME}` in a field that can
-//! read the store is a use, and each use has the destination of its field.
-//! A stored value goes only to the destination in its key, so these pure
-//! functions decide each key that `ncp` reads or writes.
+//! Where a stored value can go. Each `${NAME}` in a field that can read the
+//! store is a use, and each use has the destination of its field. A stored
+//! value goes only to the destination in its key, so these pure functions
+//! decide each key that `ncp` reads or writes.
 
 use crate::{
     config::{self, PreRegisteredClient, Server, Transport},

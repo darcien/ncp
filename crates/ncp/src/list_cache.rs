@@ -1,7 +1,7 @@
 //! The cache of tool lists, one file for each server.
 //!
 //! From `2026-07-28` a list result can carry `ttlMs`: the time that a client
-//! may treat it as fresh. Within that time `ncp` can show and use the tools
+//! can treat it as fresh. Within that time `ncp` can show and use the tools
 //! with no server start. `ncp` does not keep a list with no `ttlMs`. The cache
 //! is a cache: `ncp` works the same with no cache, and ignores a file that does
 //! not load.

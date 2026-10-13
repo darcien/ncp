@@ -800,9 +800,9 @@ async fn other_place(
     }
 }
 
-/// Calls read the native store first, so an old item there would hide the
-/// new tokens in the file. A failure gives only a warning, because the
-/// login worked.
+/// Calls read the native store first. Thus an old item there hides the new
+/// tokens in the file. A failure gives only a warning, because the login
+/// worked.
 async fn remove_old_tokens(
     context: &Context<'_>,
     name: &ServerName,
@@ -1165,8 +1165,8 @@ async fn from_listener(
     }
 }
 
-/// The read is on its own thread, because a blocking read on the runtime
-/// would delay the exit of `ncp` by the shutdown limit.
+/// The read is on its own thread, because a blocking read on the runtime delays
+/// the exit of `ncp` by the shutdown limit.
 async fn pasted_line() -> Option<String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
@@ -1256,9 +1256,11 @@ enum Found {
 /// their binding is the URL of the entry (`resource`). When the entry
 /// names an issuer, the issuer must also match (docs/design/server-add.md
 /// section 6). With no URL to compare, the tokens stay. The client item
-/// goes with them when it is for the issuer of the tokens. A store that
-/// cannot answer gives only a warning. The remove of the entry must not
-/// depend on the store, and the binding stops the use of the old tokens.
+/// goes with them when it is for the issuer of the tokens.
+///
+/// A store that cannot answer gives only a warning. The remove of the
+/// entry must not depend on the store, and the binding stops the use of
+/// the old tokens.
 pub(super) async fn remove_bound_items(
     context: &Context<'_>,
     server: &ServerName,

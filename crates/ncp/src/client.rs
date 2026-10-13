@@ -885,7 +885,7 @@ impl Connection {
         let mut items = Vec::new();
         let mut hints: Option<CacheHints> = None;
         let mut cursor = None;
-        // A server that gives a cursor again would make the loop endless.
+        // A server that gives a cursor again makes the loop endless.
         let mut seen = std::collections::HashSet::new();
         loop {
             let params = PaginatedRequestParams::default().with_cursor(cursor);
@@ -958,9 +958,8 @@ impl Connection {
                 ("request timeout", RequestError::Timeout(limits.timeout))
             }
         };
-        // The request has ended for the user. A failed or slow cancel
-        // request does not change that result, and its progress no longer
-        // shows.
+        // The request ended for the user. A failed or slow cancel request does
+        // not change that result, and its progress no longer shows.
         drop(active);
         let _ = tokio::time::timeout(CANCEL_LIMIT, handle.cancel(Some(reason.into()))).await;
         Err(error)

@@ -145,10 +145,12 @@ pub fn project_rows(project: &Project) -> Vec<Row> {
 /// One line for each server, for the user to check before a trust. A
 /// stdio line has the full command, `cwd` and the names of the `env`
 /// variables. An HTTP line has the URL, and each `${NAME}` with the host
-/// that gets it. No value of `env` or of a header shows, because it can be
-/// a literal secret. The output can go into the transcript of an agent.
-/// Each word from the file is a shell word, so that a word cannot look
-/// like two parts. `table` escapes each cell.
+/// that gets it.
+///
+/// No value of `env` or of a header shows, because it can be a literal
+/// secret. The output can go into the transcript of an agent. Each word
+/// from the file is a shell word, so that a word cannot look like two
+/// parts. `table` escapes each cell.
 #[must_use]
 pub fn project_entries(entries: &[UnexpandedEntry]) -> String {
     let rows: Vec<Vec<String>> = entries
@@ -194,9 +196,9 @@ pub fn project_entries(entries: &[UnexpandedEntry]) -> String {
     })
 }
 
-/// The URL as the client sends it. The parse removes tabs and encodes
-/// spaces, which could make one URL look like two parts. A URL with
-/// `${NAME}` shows as a shell word.
+/// The URL as the client sends it. The parse removes tabs and encodes spaces,
+/// which can make one URL look like two parts. A URL with `${NAME}` shows as a
+/// shell word.
 fn shown_url(url: &str) -> String {
     match url::Url::parse(url) {
         Ok(parsed) if !url.contains("${") => parsed.to_string(),

@@ -192,11 +192,11 @@ impl Origin {
         }
     }
 
-    /// The origin of a URL as the file writes it, before `${NAME}`
-    /// expansion. A value from the environment could change the host. Thus
-    /// the text up to the first `/`, `?` or `#` after `://` must have no
-    /// `${`. The origin must also be the origin of the expanded URL, so the
-    /// key and the request can never disagree.
+    /// The origin of a URL as the file writes it, before `${NAME}` expansion. A
+    /// value from the environment can change the host. Thus the text up to the
+    /// first `/`, `?` or `#` after `://` must have no `${`. The origin must
+    /// also be the origin of the expanded URL, so the key and the request can
+    /// never disagree.
     ///
     /// # Errors
     ///

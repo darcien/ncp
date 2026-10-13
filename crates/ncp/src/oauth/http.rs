@@ -22,8 +22,8 @@ use crate::{
     redact,
 };
 
-/// The largest response body. An OAuth response is small; a larger body is
-/// an error of the server.
+/// The largest response body. An OAuth response is small. A larger body is an
+/// error of the server.
 const MAX_BODY: usize = 1024 * 1024;
 
 /// The limit of one OAuth request when rmcp gives none.

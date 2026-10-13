@@ -612,8 +612,8 @@ fn sends(object: &Map<String, Value>, url: &str) -> Vec<(String, String)> {
     headers.chain(secret).collect()
 }
 
-/// The host that gets a value. With `${` in the authority, the host as
-/// the file writes it: a parse would change the case of a variable name.
+/// The host that gets a value. With `${` in the authority, the host as the file
+/// writes it: a parse changes the case of a variable name.
 fn host_of(url: &str) -> String {
     let authority = authority(url);
     if authority.contains("${") {

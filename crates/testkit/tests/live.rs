@@ -308,10 +308,10 @@ fn routes(run: &Run) -> Vec<String> {
 /// example a CI runner. The test changes the proxy of the whole machine.
 const DISPOSABLE_HOST: &str = "NCP_DISPOSABLE_HOST";
 
-/// `ncp` reads the manual HTTPS proxy of the system settings when the
-/// scheme has no variable (design C5). The request goes through the tunnel
-/// of a local proxy to a local HTTPS server. The other tests cover the
-/// order and the label; this test covers the read of the system settings.
+/// `ncp` reads the manual HTTPS proxy of the system settings when the scheme
+/// has no variable (design C5). The request goes through the tunnel of a local
+/// proxy to a local HTTPS server. The other tests cover the order and the
+/// label. This test covers the read of the system settings.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "changes the HTTPS proxy of the whole machine"]
 async fn system_proxy_carries_a_request_when_no_variable_is_set() {

@@ -45,7 +45,7 @@ fn http_line(
 ) -> String {
     let url = shown_url(&exchange.url);
     let outcome = hide_url_in(&exchange.outcome, &exchange.url, &url);
-    // A status line holds no value; an error can hold a URL.
+    // A status line holds no value. An error can hold a URL.
     let outcome = if outcome.starts_with("error") {
         shown_url(&outcome)
     } else {

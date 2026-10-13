@@ -226,12 +226,12 @@ pub(super) fn store_is_down(error: &StoreError) -> bool {
     )
 }
 
-/// The value of one key: the native store first, then the file. A native
-/// store that is down does not stop the search, because the file can have
-/// the item. Its error replaces the store, so that the next name does not
-/// wait for the time limit again. An error of one item stops the search,
-/// because a value from the file would then replace a newer value. No item
-/// of another destination is a fallback.
+/// The value of one key: the native store first, then the file. A native store
+/// that is down does not stop the search, because the file can have the item.
+/// Its error replaces the store, so that the next name does not wait for the
+/// time limit again. An error of one item stops the search, because then a
+/// value from the file can replace a newer value. No item of another
+/// destination is a fallback.
 async fn find(
     context: &Context<'_>,
     server: &Server,
@@ -613,9 +613,9 @@ enum Unread {
 
 /// Reads the value from stdin. When a person can answer (stdin and stderr are a
 /// TTY), `ncp` does not show the input. A TTY on stdin with no TTY on stderr is
-/// an error: the question would not show, and the terminal would echo the
-/// value. Each read has the limit of `--timeout`. One new line at the end is
-/// not part of the value, because `echo` and a pasted line add it.
+/// an error. In that case the question does not show, and the terminal echoes
+/// the value. Each read has the limit of `--timeout`. One new line at the end
+/// is not part of the value, because `echo` and a pasted line add it.
 async fn read_value(
     context: &Context<'_>,
     name: &str,
@@ -651,9 +651,8 @@ async fn read_value(
     Ok(Secret::new(line.to_string()))
 }
 
-/// The read runs on its own thread, not on the runtime. A read on the
-/// runtime cannot stop, and the exit after the time limit would wait for
-/// it.
+/// The read runs on its own thread, not on the runtime. A read on the runtime
+/// cannot stop, and the exit after the time limit waits for it.
 async fn read_piped(context: &Context<'_>) -> Result<String, Unread> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
@@ -694,13 +693,13 @@ fn stty(args: &[&str]) -> std::io::Result<String> {
 /// come back after each end: the line, an error, the time limit or Ctrl-C.
 /// Thus the shell of the user works again.
 ///
-/// The terminal is in non-canonical mode: in canonical mode macOS keeps
-/// only 1024 bytes of a line, and a longer token would never end. Thus
-/// `ncp` does the backspace itself.
+/// The terminal is in non-canonical mode: in canonical mode macOS keeps only
+/// 1024 bytes of a line, and a longer token never ends. Thus `ncp` does the
+/// backspace itself.
 async fn read_hidden_line(context: &Context<'_>, prompt: &str) -> Result<String, Unread> {
     let saved = stty(&["-g"]).map_err(Unread::Failed)?;
     eprint!("{prompt}");
-    // Fail closed: with no echo control, the value would show.
+    // Fail closed: with no echo control, the value shows.
     stty(&["-echo", "-icanon", "min", "1", "time", "0"]).map_err(Unread::Failed)?;
     let (sender, receiver) = tokio::sync::oneshot::channel();
     // The read runs on its own thread, so that the runtime does not wait
@@ -775,14 +774,14 @@ async fn secrets_in(
     }
 }
 
-/// The stored items with their places. `failed` has each place that could
-/// not answer: the list can then miss items.
+/// The stored items with their places. `failed` has each place that did not
+/// answer: the list can then miss items.
 struct Stored {
     items: BTreeMap<(SecretName, Destination), Vec<&'static str>>,
     failed: Vec<(CredentialPlace, StoreError)>,
 }
 
-/// A warning for each place that could not answer (B30).
+/// A warning for each place that did not answer (B30).
 fn warn_unlisted(context: &Context<'_>, failed: &[(CredentialPlace, StoreError)]) {
     for (place, error) in failed {
         context.ui.warning(
@@ -1073,10 +1072,10 @@ enum Listed {
     One,
 }
 
-/// What `secret delete` removes: the destinations, the configuration file
-/// that `ncp` read to choose them, and the native store for the removal.
-/// `unlisted` has the places that could not list their items: they gave
-/// their warning, and `ncp` does not ask them again.
+/// What `secret delete` removes: the destinations, the configuration file that
+/// `ncp` read to choose them, and the native store for the removal. `unlisted`
+/// has the places that did not list their items: they gave their warning, and
+/// `ncp` does not ask them again.
 struct Choice {
     destinations: Vec<Destination>,
     config_file: Option<std::path::PathBuf>,
@@ -1085,8 +1084,8 @@ struct Choice {
 }
 
 /// The destinations to remove. With no flag, a place that cannot answer stops
-/// the delete: an item there could be a second destination. `ncp` does not ask
-/// a native store that cannot list again, so that the delete does not wait for
+/// the delete: an item there can be a second destination. `ncp` does not ask a
+/// native store that cannot list again, so that the delete does not wait for
 /// its limit once more.
 async fn chosen(
     context: &Context<'_>,
@@ -1271,8 +1270,8 @@ async fn delete(context: &Context<'_>, name: &str, removal: Removal) -> Result<(
         native,
         unlisted,
     } = chosen(context, &name, removal).await?;
-    // A place that could not list, or that is down, gives one warning, and
-    // the delete does not ask it again.
+    // A place that did not list, or that is down, gives one warning, and the
+    // delete does not ask it again.
     let mut stores = [
         (CredentialPlace::Native, Some(native)),
         (CredentialPlace::File, Some(Ok(file(context)))),
@@ -1290,9 +1289,8 @@ async fn delete(context: &Context<'_>, name: &str, removal: Removal) -> Result<(
             let Some(store) = slot else {
                 continue;
             };
-            // One call that removes and tells if the item was there: a
-            // second call could pass the limit and remove the item after
-            // the exit.
+            // One call that removes and tells if the item was there: a second
+            // call can pass the limit and remove the item after the exit.
             let result = match store {
                 Ok(store) => {
                     let wanted = key.clone();

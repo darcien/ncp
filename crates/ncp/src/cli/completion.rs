@@ -222,7 +222,7 @@ pub fn servers(env: &Env) {
 /// the spec names for tool names. A tool name comes from a server, and a
 /// shell reads the list of names as words again.
 fn is_plain_name(name: &str) -> bool {
-    // A name that starts with `-` would read as an option.
+    // A shell reads a name that starts with `-` as an option.
     !name.is_empty()
         && !name.starts_with('-')
         && name

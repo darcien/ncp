@@ -64,9 +64,8 @@ pub struct Failure {
     /// Set for a `401` on a connection with no token, with the challenge
     /// of the answer: a stored login can answer it.
     pub login_challenge: Option<String>,
-    /// The pages that the server asks the user to open before it can
-    /// answer. A person at a TTY can open them; an agent gets them in the
-    /// JSON error.
+    /// The pages that the server asks the user to open before it can answer. A
+    /// person at a TTY can open them. An agent gets them in the JSON error.
     pub pages: Box<[crate::elicit::Page]>,
     /// The destination of a stored value that no place has. Boxed,
     /// as `hints` and `pages` are.

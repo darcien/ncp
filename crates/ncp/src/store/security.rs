@@ -59,10 +59,10 @@ const NO_SUCH_KEYCHAIN: i32 = 50;
 const AUTH_FAILED: i32 = 51;
 const USER_CANCELED: i32 = 128;
 
-/// The time that one run of the program gets. It is shorter than the
-/// limit of each store call, so that `ncp` stops the program before the
-/// caller gives up. A program that stays could show a dialog after the
-/// exit of `ncp`, or write an item late.
+/// The time that one run of the program gets. It is shorter than the limit of
+/// each store call, so that `ncp` stops the program before the caller gives up.
+/// A program that stays can show a dialog after the exit of `ncp`, or write an
+/// item late.
 pub const PROGRAM_LIMIT: Duration = Duration::from_secs(55);
 
 #[derive(Debug, Clone)]
@@ -204,8 +204,8 @@ impl CredentialStore for SecurityStore {
             .iter()
             .try_for_each(|(part, text)| self.add(part, text, deadline))?;
         // The head is the commit point. A head that `ncp` writes after it
-        // reports a failure would change the value after the failure. Thus
-        // the save stops while the head can still finish in time.
+        // reports a failure changes the value after the failure. Thus the save
+        // stops while the head can still finish in time.
         if deadline.saturating_duration_since(Instant::now()) < self.limit / HEAD_RESERVE {
             return Err(StoreError::NoAnswer(self.limit));
         }
@@ -440,11 +440,11 @@ fn generation_time(account: &str, part: &str) -> Option<u128> {
     u128::from_str_radix(time, 16).ok()
 }
 
-/// The accounts of the generic password items of service `ncp` in the
-/// output of `dump-keychain`. Each item starts with a `keychain:` line, and
-/// has one attribute on each line, for example `"acct"<blob>="secret/A"`.
-/// A value with bytes that are not printable shows as hexadecimal digits;
-/// `ncp` makes no such account, so such a value is left out.
+/// The accounts of the generic password items of service `ncp` in the output of
+/// `dump-keychain`. Each item starts with a `keychain:` line, and has one
+/// attribute on each line, for example `"acct"<blob>="secret/A"`. A value with
+/// bytes that are not printable shows as hexadecimal digits. `ncp` makes no
+/// such account, so such a value is left out.
 fn ncp_accounts(dump: &str) -> Vec<String> {
     let attribute = |line: &str, name: &str| {
         line.trim_start()

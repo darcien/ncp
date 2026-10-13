@@ -76,7 +76,7 @@ impl fmt::Display for SecretName {
     }
 }
 
-/// The party that may get a stored value.
+/// The party that can get a stored value.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Destination {
     /// A `headers` value goes to the origin of its entry, and a client
@@ -263,8 +263,8 @@ mod tests {
 
     #[test]
     fn no_account_is_another_account_and_a_slash() {
-        // The clean-up of the parts of a long value removes the accounts
-        // under `ACCOUNT/`; it must never find another item there.
+        // The clean-up of the parts of a long value removes the accounts under
+        // `ACCOUNT/`. It must never find another item there.
         let accounts = [
             secret(Destination::Stdio, "https"),
             secret(Destination::Stdio, "A"),

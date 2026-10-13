@@ -23,8 +23,8 @@ use crate::config::UnexpandedEntry;
 /// The name of the project file. Claude Code and VS Code read it.
 pub const FILE_NAME: &str = ".mcp.json";
 
-/// The largest project file that `ncp` reads. An `mcpServers` map is small;
-/// the limit stops a read of a large file that a folder can hold.
+/// The largest project file that `ncp` reads. An `mcpServers` map is small. The
+/// limit stops a read of a large file that a folder can hold.
 pub const MAX_BYTES: u64 = 1 << 20;
 
 /// Where the search of the project file ended.
@@ -36,12 +36,12 @@ pub enum Search {
     Stopped(PathBuf),
 }
 
-/// Searches from `start` up for the folder with `.mcp.json`. The search
-/// stops after a folder with `.git`, at the home folder, and at the root
-/// folder. It never reads `~/.mcp.json`: a file there would apply to each
-/// folder below it. `has` tells if a folder has an entry of that name. It
-/// reads only the folder entries, never the content of a `.git` file,
-/// which a downloaded folder can forge.
+/// Searches from `start` up for the folder with `.mcp.json`. The search stops
+/// after a folder with `.git`, at the home folder, and at the root folder. It
+/// never reads `~/.mcp.json`: a file there applies to each folder below it.
+/// `has` tells if a folder has an entry of that name. It reads only the folder
+/// entries, never the content of a `.git` file, which a downloaded folder can
+/// forge.
 pub fn search(start: &Path, home: Option<&Path>, has: impl Fn(&Path, &str) -> bool) -> Search {
     let mut last = start;
     for folder in start.ancestors() {

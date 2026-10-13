@@ -113,9 +113,9 @@ pub fn spawn(
 }
 
 /// Gives each stderr line of the server to `write`, until the server closes
-/// stderr. A line that is not UTF-8 must not stop the reader: the server
-/// would then get an error on its next write. A long line comes in parts of
-/// the limit, cut between characters.
+/// stderr. A line that is not UTF-8 must not stop the reader: then the server
+/// gets an error on its next write. A long line comes in parts of the limit,
+/// cut between characters.
 async fn log_lines(
     stderr: tokio::process::ChildStderr,
     format: Arc<dyn Fn(&str) -> String + Send + Sync>,

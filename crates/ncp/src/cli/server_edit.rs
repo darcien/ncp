@@ -411,9 +411,9 @@ async fn lock(context: &Context<'_>) -> Result<private_file::Lock, Failure> {
     }
 }
 
-/// The file that the new bytes go to. A symlink stays: its target gets
-/// them. A symlink to a missing file is an error, because a rename would
-/// put a file in the place of the link.
+/// The file that the new bytes go to. A symlink stays: its target gets them. A
+/// symlink to a missing file is an error, because a rename puts a file in the
+/// place of the link.
 fn real_path(file: &Path) -> Result<PathBuf, Failure> {
     match fs::canonicalize(file) {
         Ok(real) => Ok(real),
