@@ -4,7 +4,8 @@
 //! the real Keychain, the real Secret Service, or a real browser.
 //!
 //! - The native store is the fake `security` program at the path in
-//!   `NCP_TEST_SECURITY_PROGRAM`, or no store when that variable is not set.
+//!   `NCP_TEST_SECURITY_PROGRAM`, or no store when that variable does not
+//!   exist.
 //! - The browser is a fake. With `NCP_TEST_BROWSER=follow`, it sends a GET
 //!   to the URL, then a GET to the `Location` of the answer. A browser does
 //!   this after a login that the user approves. With no value, no browser

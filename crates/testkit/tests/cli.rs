@@ -568,7 +568,7 @@ async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
             "deleted": [{"destination": other, "credentialStores": ["file"]}]})
     );
 
-    // After a URL change, the old item is unused.
+    // After a URL change, no entry uses the old item.
     home.configure(&json!({"web": {"type": "http", "url": other_url, "headers": header}}));
     let run = home.run(&["secret", "delete", "K", "--unused"]);
     assert_eq!(run.code(), 0, "{}", run.describe());

@@ -289,10 +289,9 @@ impl RmcpStore for TokenStore {
         let Some(path) = self.refresh_lock.clone() else {
             return Ok(None);
         };
-        // `ncp` cannot make a lock file in a home that is read only. That
-        // must not stop a refresh of tokens in the native store, because
-        // the lock only puts refreshes in order. A wait past the limit is
-        // an error.
+        // `ncp` cannot make a lock file in a read-only home folder. That must
+        // not stop a refresh of tokens in the native store, because the lock
+        // only puts refreshes in order. A wait past the limit is an error.
         let lock = store::run_blocking(store::CALL_LIMIT, move || match lock_tokens(&path) {
             Ok(lock) => Ok(Some(lock)),
             Err(error) if error.kind() == std::io::ErrorKind::TimedOut => Err(StoreError::Io {

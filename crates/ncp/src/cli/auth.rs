@@ -342,9 +342,9 @@ async fn login(
     Ok(server.name.clone())
 }
 
-/// What the redirect of the login must have: its state, and the issuer of
-/// the metadata in `iss` (RFC 9207 §2.4). The metadata says if `iss` is
-/// required.
+/// What the redirect of the login must have: its state, and the issuer of the
+/// metadata in `iss` (RFC 9207 §2.4). The metadata says if `iss` must be
+/// present.
 fn expected_redirect(state: String, metadata: &AuthorizationMetadata) -> callback::Expected {
     callback::Expected {
         state,

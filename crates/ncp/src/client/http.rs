@@ -1,9 +1,9 @@
 //! The HTTP client and the Streamable HTTP transport.
 //!
 //! `ncp` gives rmcp its own `reqwest::Client`. The client reads the proxy
-//! variables and keeps connections for the next request. It uses the
-//! system root certificates, or only the roots in `SSL_CERT_FILE` when
-//! that variable is set.
+//! variables and keeps connections for the next request. It uses the system
+//! root certificates, or only the roots in `SSL_CERT_FILE` when that variable
+//! has a value.
 
 use std::{
     collections::{BTreeMap, HashMap},

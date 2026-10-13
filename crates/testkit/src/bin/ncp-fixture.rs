@@ -6,9 +6,9 @@
 //!
 //! The two options test the stop steps of the client.
 //!
-//! When `NCP_FIXTURE_PID_FILE` is set, the server writes its process ID to
-//! that file at start. A test of the command line uses it to check that
-//! `ncp` stopped the server.
+//! When `NCP_FIXTURE_PID_FILE` has a value, the server writes its process ID to
+//! that file at start. A test of the command line uses it to check that `ncp`
+//! stopped the server.
 
 use std::process::ExitCode;
 

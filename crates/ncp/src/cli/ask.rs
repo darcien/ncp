@@ -281,9 +281,9 @@ pub(super) fn has_punycode_label(host: &str) -> bool {
 }
 
 impl Asker {
-    /// Asks to open each page that the server needs, as a URL-mode
-    /// question. `ncp` does not run the request again: the server can need
-    /// time, and the person knows when the page is done.
+    /// Asks to open each page that the server needs, as a URL-mode question.
+    /// `ncp` does not run the request again: the server can need time, and the
+    /// person knows when the work on the page is complete.
     async fn open_pages(&self, failure: Failure) -> Failure {
         let mut opened = false;
         for page in &failure.pages {

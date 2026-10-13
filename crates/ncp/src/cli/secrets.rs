@@ -1196,9 +1196,9 @@ async fn chosen(
     }
 }
 
-/// An invalid entry, or an entry of a project file that is not trusted,
-/// can name the secret. Then `ncp` cannot know that an item is unused, so
-/// `--unused` stops.
+/// An invalid entry, or an entry of an untrusted project file, can name the
+/// secret. Then `ncp` cannot know that no entry uses an item, so `--unused`
+/// stops.
 async fn strict_config(
     context: &Context<'_>,
     name: &SecretName,
@@ -1236,8 +1236,8 @@ async fn strict_config(
     Ok(loaded)
 }
 
-/// The reason when only an entry of a project file that is not trusted
-/// names `${NAME}`: the entry, the file and its state.
+/// The reason when only an entry of an untrusted project file names `${NAME}`:
+/// the entry, the file and its state.
 fn untrusted_use(
     loaded: &session::Loaded,
     name: &SecretName,

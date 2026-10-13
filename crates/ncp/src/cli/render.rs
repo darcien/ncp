@@ -366,10 +366,10 @@ fn hint_marks(tool: &Tool) -> Vec<&'static str> {
     .collect()
 }
 
-/// Each annotation hint with its value, and the default of the spec when
-/// the server sets none: an absent hint must not look safe. The
-/// destructive and idempotent hints have a meaning only when the tool is
-/// not read-only (MCP 2025-11-25, server/tools, `ToolAnnotations`).
+/// Each annotation hint with its value, and the default of the spec when the
+/// server sets none: an absent hint must not look safe. The destructive and
+/// idempotent hints have a meaning only when `readOnlyHint` is false (MCP
+/// 2025-11-25, server/tools, `ToolAnnotations`).
 fn annotation_lines(tool: &Tool) -> String {
     let annotations = tool.annotations.clone().unwrap_or_default();
     let read_only = annotations.read_only_hint;

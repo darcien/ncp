@@ -1,12 +1,11 @@
 //! Hidden values in diagnostic output.
 //!
-//! Verbose output must not show a secret, because logs and screens are
-//! often shared. It hides each value that `ncp` knows is a secret (design
-//! B43). It does not guess from a name, because a guess hides some secrets
-//! and not others, and the user cannot know which. As in uv, a hidden value
-//! shows as `****`, always with the same length. An empty value shows as
-//! empty. Thus the user can see if a value is set or empty, but never its
-//! length.
+//! Verbose output must not show a secret, because logs and screens are often
+//! shared. It hides each value that `ncp` knows is a secret (design B43). It
+//! does not guess from a name, because a guess hides some secrets and not
+//! others, and the user cannot know which. As in uv, a hidden value shows as
+//! `****`, always with the same length. An empty value shows as empty. Thus the
+//! user can see if a value exists or is empty, but never its length.
 
 use std::fmt::Write as _;
 

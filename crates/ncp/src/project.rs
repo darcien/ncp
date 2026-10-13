@@ -130,10 +130,9 @@ impl Project {
     }
 }
 
-/// The gate stops a name that is a key of a project file that is not
-/// trusted. An ignored file stops only a name that the global file does
-/// not have, because then the global entry runs. A name that the project
-/// file does not have passes.
+/// The gate stops a name that is a key of an untrusted project file. An ignored
+/// file stops only a name that the global file does not have, because then the
+/// global entry runs. A name that the project file does not have passes.
 #[must_use]
 pub fn stops(project: &Project, name: &str, in_global: bool) -> bool {
     project.has(name)

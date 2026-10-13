@@ -422,8 +422,8 @@ fn shown(value: &Value) -> String {
     }
 }
 
-/// The value of an answer. An empty answer gives the default, or no value
-/// for a field that is not required.
+/// The value of an answer. An empty answer gives the default, or no value for
+/// an optional field.
 ///
 /// # Errors
 ///

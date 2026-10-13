@@ -90,9 +90,9 @@ async fn server_list(context: &Context<'_>) -> Result<(), Failure> {
     Ok(())
 }
 
-/// The rows of `server list`: the entries that run, then the entries of a
-/// project file that is not trusted, with their state. Nothing else
-/// happens for them (design rule 8).
+/// The rows of `server list`: the entries that run, then the entries of an
+/// untrusted project file, with their state. Nothing else happens for them
+/// (design rule 8).
 fn list_rows(loaded: &Loaded) -> Vec<render::Row> {
     let place = |name: &str| match loaded.project_of(name) {
         Some(project) => (project.file.clone(), Some(Trust::Trusted)),

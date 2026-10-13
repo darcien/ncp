@@ -122,7 +122,7 @@ mod tests {
     use super::*;
     use crate::server::ServerName;
 
-    /// A new, empty directory for one test.
+    /// A new, empty folder for one test.
     fn scratch_dir(test: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("ncp-test-{}-{test}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);

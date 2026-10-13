@@ -99,10 +99,10 @@ impl Context<'_> {
 
 /// The configuration and where it comes from.
 pub struct Loaded {
-    /// The view that runs: the global entries, and the entries of a
-    /// trusted project file in place of global entries of the same names.
-    /// An entry of a project file that is not trusted is not in it. Thus no
-    /// command can start it, send to it, or read the store for it.
+    /// The view that runs: the global entries, and the entries of a trusted
+    /// project file in place of global entries of the same names. An entry of
+    /// an untrusted project file is not in it. Thus no command can start it,
+    /// send to it, or read the store for it.
     pub config: Config,
     /// The global file.
     pub path: PathBuf,
@@ -191,10 +191,10 @@ fn trusted(loaded: Loaded, env: &Env) -> Result<Loaded, Failure> {
     })
 }
 
-/// The command can name a server of a project file that is not trusted.
-/// When a person can answer, `ncp` then shows the entries and asks, as
-/// `mise` asks. A Yes trusts the bytes that `ncp` read. A No writes the
-/// ignored record. With no answer, `select` stops with the entries.
+/// The command can name a server of an untrusted project file. When a person
+/// can answer, `ncp` then shows the entries and asks, as `mise` asks. A Yes
+/// trusts the bytes that `ncp` read. A No writes the ignored record. With no
+/// answer, `select` stops with the entries.
 ///
 /// # Errors
 ///
@@ -750,8 +750,8 @@ fn is_not_found(error: &ConnectError) -> bool {
 pub const UNKNOWN_ISSUER: &str =
     "the certificate of the server has an issuer that no trusted root names";
 
-/// The hint for a certificate of an unknown issuer when `SSL_CERT_FILE` is
-/// set: the file replaces the system roots (design B50).
+/// The hint for a certificate of an unknown issuer when `SSL_CERT_FILE` has a
+/// value: the file replaces the system roots (design B50).
 #[must_use]
 pub fn with_tls_hint(env: &Env, notes: &client::http::Notes, failure: Failure) -> Failure {
     if notes.unknown_issuer && env.contains_key("SSL_CERT_FILE") {

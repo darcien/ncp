@@ -115,8 +115,8 @@ pub enum Command {
     /// entries. Before the trust, its servers do not run. Each change of
     /// the file needs a new trust.
     Trust(TrustArgs),
-    /// Print the completion script for a shell. Server names complete from
-    /// the configuration.
+    /// Show the completion script for a shell. Server names complete from the
+    /// configuration.
     GenerateShellCompletion {
         /// The shell
         #[arg(value_enum)]
@@ -189,8 +189,8 @@ pub enum AuthCommand {
     Login {
         /// The server name from the configuration
         server: String,
-        /// Do not open a browser: print the URL, and read the redirect URL
-        /// from stdin.
+        /// Do not open a browser: show the URL, and read the redirect URL from
+        /// stdin.
         #[arg(long)]
         no_browser: bool,
         /// The place for the tokens.

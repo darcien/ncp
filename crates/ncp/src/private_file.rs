@@ -1,5 +1,5 @@
-//! Files that only the user can open: mode `0600`, in a directory with mode
-//! `0700` when `ncp` makes the directory.
+//! Files that only the user can open: mode `0600`, in a folder with mode `0700`
+//! when `ncp` makes the folder.
 //!
 //! A write goes to a new file that replaces the old file, so a failed write
 //! cannot leave a partial file.
@@ -11,11 +11,11 @@ use std::{
     path::Path,
 };
 
-/// Makes the missing parent directories with mode `0700`.
+/// Makes the missing parent folders with mode `0700`.
 ///
 /// # Errors
 ///
-/// Returns an error when `ncp` cannot write a directory or the file.
+/// Returns an error when `ncp` cannot write a folder or the file.
 pub fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let parent = path.parent().unwrap_or(Path::new("."));
     DirBuilder::new()
@@ -100,9 +100,9 @@ pub struct Lock {
 /// The time between two tries to get a lock.
 const LOCK_STEP: std::time::Duration = std::time::Duration::from_millis(20);
 
-/// Gets an exclusive lock on the lock file, and waits for it at most the
-/// limit. The lock file is empty, with mode `0600`, in a directory with mode
-/// `0700`. The call blocks: an async caller runs it on a blocking thread.
+/// Gets an exclusive lock on the lock file, and waits for it at most the limit.
+/// The lock file is empty, with mode `0600`, in a folder with mode `0700`. The
+/// call blocks: an async caller runs it on a blocking thread.
 ///
 /// # Errors
 ///

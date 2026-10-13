@@ -74,7 +74,7 @@ impl fmt::Display for Route {
     }
 }
 
-/// The first variable of the list that is set, also when it is empty, as
+/// The first variable of the list that exists, also when it is empty, as
 /// reqwest reads them. A value that reqwest does not take as a proxy, for
 /// example `ftp://p:1`, names no proxy.
 fn first_set<'a>(env: &'a Env, names: &[&'static str]) -> Option<(&'static str, &'a str)> {
@@ -172,7 +172,7 @@ mod tests {
         url::Url::parse(text).unwrap()
     }
 
-    /// The value of the first variable that is set, as hyper-util reads it.
+    /// The value of the first variable that exists, as hyper-util reads it.
     fn value(env: &Env, names: &[&str]) -> String {
         names
             .iter()
