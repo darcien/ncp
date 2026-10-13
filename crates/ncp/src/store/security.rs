@@ -348,11 +348,13 @@ impl SecurityStore {
 
 #[derive(Debug, PartialEq, Eq)]
 enum Item {
-    /// The whole stored value.
     Whole(String),
     /// The head of a value in parts. The parts are the items
     /// `ACCOUNT/GENERATION/0` up to `ACCOUNT/GENERATION/{count - 1}`.
-    Head { generation: String, count: usize },
+    Head {
+        generation: String,
+        count: usize,
+    },
 }
 
 fn parse_item(account: &str, text: &str) -> Result<Item, StoreError> {

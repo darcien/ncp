@@ -82,7 +82,6 @@ pub struct GlobalOptions {
     pub config_file: Option<std::path::PathBuf>,
 }
 
-/// The output format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum OutputFormat {
     /// Text for people
@@ -139,7 +138,6 @@ pub struct TrustArgs {
     pub ignore: bool,
 }
 
-/// A shell with a completion script.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum CompletionShell {
     Bash,
@@ -269,7 +267,6 @@ The single quotes keep ${NAME} from the shell. A stored value goes only to
 its origin, and the entries with the same origin share it. --env NAME
 writes ${NAME}; --env NAME=VALUE writes VALUE into the file as it is.";
 
-/// The arguments of `server add`: a URL, or a command after `--`.
 #[derive(Debug, Args)]
 pub struct AddArgs {
     /// The server name: letters, digits, - and _
@@ -304,7 +301,6 @@ pub struct AddArgs {
     pub command: Vec<String>,
 }
 
-/// The place for a new value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum CredentialPlace {
     /// The macOS Keychain or the Linux Secret Service

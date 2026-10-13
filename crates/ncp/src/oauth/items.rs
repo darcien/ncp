@@ -24,7 +24,6 @@ pub const REQUIRED_SCOPES: &str = "ncp_required_scopes";
 /// requested, for the union of a step-up (design B79). rmcp ignores it.
 pub const REQUESTED_SCOPES: &str = "ncp_requested_scopes";
 
-/// The scope fields of `ncp` in the tokens item.
 pub const SCOPE_FIELDS: [&str; 2] = [REQUIRED_SCOPES, REQUESTED_SCOPES];
 
 /// The field of the tokens item that keeps the binding of the tokens

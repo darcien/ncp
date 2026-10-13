@@ -133,7 +133,6 @@ impl TokenStore {
 /// The tokens item: the tokens of rmcp and the fields of `ncp`.
 pub struct TokensItem {
     pub tokens: StoredCredentials,
-    /// The scope fields of `ncp`, by field name.
     pub scope_fields: Map<String, Value>,
     /// `None` when the item has no binding or a binding that is not valid.
     pub binding: Option<items::TokenBinding>,
