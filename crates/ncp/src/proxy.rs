@@ -74,9 +74,9 @@ impl fmt::Display for Route {
     }
 }
 
-/// The first variable of the list that exists, also when it is empty, as
-/// reqwest reads them. A value that reqwest does not take as a proxy, for
-/// example `ftp://p:1`, names no proxy.
+// The first variable of the list that exists, also when it is empty, as
+// reqwest reads them. A value that reqwest does not take as a proxy, for
+// example `ftp://p:1`, names no proxy.
 fn first_set<'a>(env: &'a Env, names: &[&'static str]) -> Option<(&'static str, &'a str)> {
     names
         .iter()
@@ -84,7 +84,7 @@ fn first_set<'a>(env: &'a Env, names: &[&'static str]) -> Option<(&'static str, 
         .filter(|(_, value)| names_a_proxy(value))
 }
 
-/// True when the matcher of reqwest takes the value as a proxy.
+// True when the matcher of reqwest takes the value as a proxy.
 fn names_a_proxy(value: &str) -> bool {
     let probe = http::Uri::from_static("http://probe.invalid/");
     Matcher::builder()
@@ -105,13 +105,13 @@ pub fn route(env: &Env, target: &url::Url) -> Route {
     route_with(env, target, Matcher::from_system, Matcher::from_env)
 }
 
-/// The route from the matcher of reqwest. The source is a variable when the
-/// matcher of the variables alone gives the same proxy. Else the proxy comes
-/// from the system settings: reqwest reads them for a scheme with no
-/// variable of its own, before `ALL_PROXY`. When the system settings give
-/// the same proxy as the variable, the variable shows as the source. Both
-/// matchers read the process environment, which is the same environment in
-/// `ncp`.
+// The route from the matcher of reqwest. The source is a variable when the
+// matcher of the variables alone gives the same proxy. Else the proxy comes
+// from the system settings: reqwest reads them for a scheme with no
+// variable of its own, before `ALL_PROXY`. When the system settings give
+// the same proxy as the variable, the variable shows as the source. Both
+// matchers read the process environment, which is the same environment in
+// `ncp`.
 fn route_with(
     env: &Env,
     target: &url::Url,
@@ -172,7 +172,7 @@ mod tests {
         url::Url::parse(text).unwrap()
     }
 
-    /// The value of the first variable that exists, as hyper-util reads it.
+    // The value of the first variable that exists, as hyper-util reads it.
     fn value(env: &Env, names: &[&str]) -> String {
         names
             .iter()
@@ -180,10 +180,10 @@ mod tests {
             .unwrap_or_default()
     }
 
-    /// The matcher of reqwest with an HTTPS proxy in the system settings, or
-    /// none. It copies `Matcher::from_system` of hyper-util: the settings
-    /// give the proxy of a scheme with no value in its variable, before
-    /// `ALL_PROXY`. The tests thus check the label, not the order of reqwest.
+    // The matcher of reqwest with an HTTPS proxy in the system settings, or
+    // none. It copies `Matcher::from_system` of hyper-util: the settings
+    // give the proxy of a scheme with no value in its variable, before
+    // `ALL_PROXY`. The tests thus check the label, not the order of reqwest.
     fn matcher(env: &Env, system_https: &str) -> Matcher {
         let https = Some(value(env, &HTTPS))
             .filter(|https| !https.is_empty())
@@ -196,8 +196,8 @@ mod tests {
             .build()
     }
 
-    /// The route with no proxy in the system settings, so that the
-    /// settings of the host do not change the result.
+    // The route with no proxy in the system settings, so that the
+    // settings of the host do not change the result.
     fn route(env: &Env, target: &url::Url) -> Route {
         route_with_system(env, target, "")
     }

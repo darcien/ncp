@@ -24,8 +24,8 @@ const FIXTURE: &str = env!("CARGO_BIN_EXE_ncp-fixture");
 /// The name of the test secret in the Keychain.
 const SECRET: &str = "NCP_LIVE_CHECK";
 
-/// The `ncp` binary of the `ncp` package: the native store and the real
-/// browser. `mise run live` builds it before the tests.
+// The `ncp` binary of the `ncp` package: the native store and the real
+// browser. `mise run live` builds it before the tests.
 fn ncp() -> PathBuf {
     let dir = std::env::current_exe().unwrap();
     let path = dir.parent().unwrap().parent().unwrap().join("ncp");
@@ -33,8 +33,8 @@ fn ncp() -> PathBuf {
     path
 }
 
-/// A home with the real `HOME`, so that `/usr/bin/security` finds the
-/// login Keychain. The XDG folders stay in the test home.
+// A home with the real `HOME`, so that `/usr/bin/security` finds the
+// login Keychain. The XDG folders stay in the test home.
 fn live_home(test: &str) -> Home {
     Home::new(test)
         .unset("HOME")
@@ -45,8 +45,8 @@ fn run(home: &Home, program: &Path, args: &[&str], stdin: &str) -> Run {
     home.run_program(program, args, stdin)
 }
 
-/// A login that the person sees and answers: stdin and stderr are the
-/// terminal, and the output is text, as for a user. Gives the result line.
+// A login that the person sees and answers: stdin and stderr are the
+// terminal, and the output is text, as for a user. Gives the result line.
 fn login_with_person(home: &Home, args: &[&str]) -> String {
     let output = home
         .command(&ncp())
@@ -88,8 +88,8 @@ impl Drop for Cleanup<'_> {
     }
 }
 
-/// Items that `/usr/bin/security` made trust that program, not `ncp`. Two
-/// binaries stand for an update, which gives `ncp` a new code identity.
+// Items that `/usr/bin/security` made trust that program, not `ncp`. Two
+// binaries stand for an update, which gives `ncp` a new code identity.
 #[test]
 #[ignore = "uses the login Keychain"]
 fn keychain_gives_a_secret_to_a_new_binary_with_no_dialog() {
@@ -143,8 +143,8 @@ fn authorization_values(run: &Run) -> Vec<String> {
 /// server name in their key, so the name must not be one of the user.
 const LIVE_SERVER: &str = "ncp-live-cf";
 
-/// The user approved this server on 2026-10-11, for the manual tests of
-/// `server add`.
+// The user approved this server on 2026-10-11, for the manual tests of
+// `server add`.
 #[test]
 #[ignore = "needs a browser and a Cloudflare account"]
 fn oauth_login_with_a_browser_keeps_the_tokens_in_the_native_store() {
@@ -206,7 +206,7 @@ fn oauth_login_with_a_browser_keeps_the_tokens_in_the_native_store() {
 
 const NETWORKSETUP: &str = "/usr/sbin/networksetup";
 
-/// The value of a `key: value` line of `scutil` or `networksetup`.
+// The value of a `key: value` line of `scutil` or `networksetup`.
 fn field<'a>(text: &'a str, key: &str) -> Option<&'a str> {
     text.lines()
         .filter_map(|line| line.split_once(':'))
@@ -219,8 +219,8 @@ fn output_of(program: &str, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-/// The port of the HTTPS proxy of the system settings, when it is on and
-/// at 127.0.0.1.
+// The port of the HTTPS proxy of the system settings, when it is on and
+// at 127.0.0.1.
 fn system_https_proxy() -> Option<u16> {
     let text = output_of("/usr/sbin/scutil", &["--proxy"]);
     let on = field(&text, "HTTPSEnable") == Some("1");
@@ -230,8 +230,8 @@ fn system_https_proxy() -> Option<u16> {
         .filter(|_| on && local)
 }
 
-/// The network services that are on. The first line of the list is a
-/// note, and a service that is off starts with `*`.
+// The network services that are on. The first line of the list is a
+// note, and a service that is off starts with `*`.
 fn network_services() -> Vec<String> {
     output_of(NETWORKSETUP, &["-listallnetworkservices"])
         .lines()
@@ -241,7 +241,7 @@ fn network_services() -> Vec<String> {
         .collect()
 }
 
-/// `sudo` with no question: the host must have `sudo` with no password.
+// `sudo` with no question: the host must have `sudo` with no password.
 fn sudo(args: &[&str]) -> bool {
     Command::new("/usr/bin/sudo")
         .arg("-n")
@@ -308,10 +308,10 @@ fn routes(run: &Run) -> Vec<String> {
 /// example a CI runner. The test changes the proxy of the whole machine.
 const DISPOSABLE_HOST: &str = "NCP_DISPOSABLE_HOST";
 
-/// `ncp` reads the manual HTTPS proxy of the system settings when the scheme
-/// has no variable (design C5). The request goes through the tunnel of a local
-/// proxy to a local HTTPS server. The other tests cover the order and the
-/// label. This test covers the read of the system settings.
+// `ncp` reads the manual HTTPS proxy of the system settings when the scheme
+// has no variable (design C5). The request goes through the tunnel of a local
+// proxy to a local HTTPS server. The other tests cover the order and the
+// label. This test covers the read of the system settings.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "changes the HTTPS proxy of the whole machine"]
 async fn system_proxy_carries_a_request_when_no_variable_is_set() {

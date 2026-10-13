@@ -124,7 +124,7 @@ fn answer_of<'a>(request: &'a CallToolRequestParams, key: &str) -> Option<&'a se
         .and_then(|answers| answers.get(key))
 }
 
-/// A multi-round form question with a request state.
+// A multi-round form question with a request state.
 fn elicit_form(request: &CallToolRequestParams) -> Result<CallToolResponse, ErrorData> {
     match answer_of(request, "q") {
         // The client must echo the state as it is.
@@ -147,8 +147,8 @@ fn elicit_form(request: &CallToolRequestParams) -> Result<CallToolResponse, Erro
     }
 }
 
-/// A multi-round question with one choice. The title holds control
-/// characters, as a hostile server can send.
+// A multi-round question with one choice. The title holds control
+// characters, as a hostile server can send.
 fn elicit_choice(request: &CallToolRequestParams) -> CallToolResponse {
     if let Some(answer) = answer_of(request, "c") {
         return text_result(answer.to_string());
@@ -168,8 +168,8 @@ fn elicit_choice(request: &CallToolRequestParams) -> CallToolResponse {
     ))
 }
 
-/// A multi-round URL question for the URL, or a sampling request for the
-/// text "sampling".
+// A multi-round URL question for the URL, or a sampling request for the
+// text "sampling".
 fn elicit_url(request: &CallToolRequestParams, url: &str) -> CallToolResponse {
     if let Some(answer) = answer_of(request, "u") {
         return text_result(answer.to_string());
@@ -187,7 +187,7 @@ fn elicit_url(request: &CallToolRequestParams, url: &str) -> CallToolResponse {
     ))
 }
 
-/// A form question as a request of the server, as before 2026-07-28.
+// A form question as a request of the server, as before 2026-07-28.
 async fn elicit_legacy(
     context: &RequestContext<RoleServer>,
 ) -> Result<CallToolResponse, ErrorData> {
@@ -209,8 +209,8 @@ async fn elicit_legacy(
     ))
 }
 
-/// The error that asks the user to open a page. The text "unsafe" gives a
-/// page that ncp must not open, and "none" gives no page.
+// The error that asks the user to open a page. The text "unsafe" gives a
+// page that ncp must not open, and "none" gives no page.
 fn needs_page(text: &str) -> ErrorData {
     let url = match text {
         "unsafe" => Some("javascript:alert(1)"),
@@ -830,8 +830,8 @@ async fn serve_connection(
 
 type FixtureResponse = http::Response<BoxBody<Bytes, Infallible>>;
 
-/// The `WWW-Authenticate` value of a `401`, with the `scope` of the
-/// settings when they have one.
+// The `WWW-Authenticate` value of a `401`, with the `scope` of the
+// settings when they have one.
 fn login_challenge(oauth: &OAuthAccess, error: &str, metadata: &str) -> String {
     let scope = oauth
         .auth
@@ -1033,9 +1033,9 @@ async fn answer_proxy_request(
     }
 }
 
-/// The first line of a request head, after a read of the whole head. A
-/// client sends nothing more before the answer to a `CONNECT`, so the
-/// buffer has no bytes of the tunnel.
+// The first line of a request head, after a read of the whole head. A
+// client sends nothing more before the answer to a `CONNECT`, so the
+// buffer has no bytes of the tunnel.
 async fn read_head(reader: &mut (impl tokio::io::AsyncBufRead + Unpin)) -> Option<String> {
     use tokio::io::AsyncBufReadExt;
     let mut first = String::new();

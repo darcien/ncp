@@ -113,8 +113,8 @@ impl Ui {
         self.stderr(text);
     }
 
-    /// Text goes out with control characters as escapes. JSON lines have
-    /// their escapes already.
+    // Text goes out with control characters as escapes. JSON lines have
+    // their escapes already.
     fn stderr(self, text: &str) {
         match self.format {
             Format::Text => stderr(&printable(text)),
@@ -219,17 +219,17 @@ pub fn printable(text: &str) -> Cow<'_, str> {
     }
 }
 
-/// A Unicode character that changes the order of text, has no width, or
-/// looks like a space:
-/// - bidirectional marks, embeddings, overrides and isolates
-/// - zero-width characters, the soft hyphen and the byte order mark
-/// - line and paragraph separators, and Hangul fillers
-/// - the supplementary variation selectors and tag characters
-///
-/// Text in tag characters is invisible, and a server can hide instructions
-/// in it. The variation selectors U+FE00 to U+FE0F stay, because many
-/// emoji have one. The zero width joiner U+200D stays too. It joins the
-/// parts of many emoji, and it does not change the order of text.
+// A Unicode character that changes the order of text, has no width, or
+// looks like a space:
+// - bidirectional marks, embeddings, overrides and isolates
+// - zero-width characters, the soft hyphen and the byte order mark
+// - line and paragraph separators, and Hangul fillers
+// - the supplementary variation selectors and tag characters
+//
+// Text in tag characters is invisible, and a server can hide instructions
+// in it. The variation selectors U+FE00 to U+FE0F stay, because many
+// emoji have one. The zero width joiner U+200D stays too. It joins the
+// parts of many emoji, and it does not change the order of text.
 fn invisible_format(c: char) -> bool {
     matches!(
         c,
@@ -257,7 +257,7 @@ fn invisible_format(c: char) -> bool {
 
 const PROGRESS_STEP: std::time::Duration = std::time::Duration::from_millis(200);
 
-/// A number of a progress notification: with no decimals when it is whole.
+// A number of a progress notification: with no decimals when it is whole.
 fn amount(value: f64) -> String {
     if value.fract() == 0.0 && value.abs() < 1e15 {
         format!("{value:.0}")
@@ -316,9 +316,9 @@ pub fn json_line(value: &Value) -> String {
     format!("{}\n", escape_raw_controls(value.to_string()))
 }
 
-/// DEL, the C1 control characters and the invisible characters of
-/// `printable` become `\uXXXX` escapes, with a surrogate pair above
-/// U+FFFF. The text stays valid JSON.
+// DEL, the C1 control characters and the invisible characters of
+// `printable` become `\uXXXX` escapes, with a surrogate pair above
+// U+FFFF. The text stays valid JSON.
 fn escape_raw_controls(text: String) -> String {
     let escaped = |c: char| is_raw_control(c) || invisible_format(c);
     if text.chars().any(escaped) {

@@ -25,8 +25,8 @@ const INSTALL_HINT: &str = "run `mise run interop:install`";
 /// The servers of the TypeScript SDK v1 speak this version only.
 const LEGACY_VERSION: &str = "2025-11-25";
 
-/// The `node` program on the `PATH` of the test. `ncp` gives a stdio
-/// server no `PATH`, so the entry needs an absolute path.
+// The `node` program on the `PATH` of the test. `ncp` gives a stdio
+// server no `PATH`, so the entry needs an absolute path.
 fn node() -> PathBuf {
     std::env::var_os("PATH")
         .iter()
@@ -36,7 +36,7 @@ fn node() -> PathBuf {
         .unwrap_or_else(|| panic!("no node on PATH: {INSTALL_HINT}"))
 }
 
-/// The entry point of the server, from the `bin` field of its package.
+// The entry point of the server, from the `bin` field of its package.
 fn server_entry() -> PathBuf {
     let package = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../harness/interop/node_modules/@modelcontextprotocol/server-everything");
@@ -75,9 +75,9 @@ fn stdio_server() -> Server {
     }
 }
 
-/// Starts the server over Streamable HTTP on a free port. The server
-/// has no host option, so it listens on all interfaces. `ncp` connects
-/// over loopback, the only host where `ncp` accepts plain HTTP.
+// Starts the server over Streamable HTTP on a free port. The server
+// has no host option, so it listens on all interfaces. `ncp` connects
+// over loopback, the only host where `ncp` accepts plain HTTP.
 fn http_server() -> Server {
     let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .unwrap()
@@ -115,7 +115,7 @@ fn wait_for_port(server: &mut Server, port: u16) {
     }
 }
 
-/// A home with the server under the name `every`.
+// A home with the server under the name `every`.
 fn home_with(test: &str, server: &Server) -> Home {
     let home = Home::new(&format!("interop-{}-{test}", server.transport));
     home.configure(&json!({"every": server.entry}));
@@ -140,8 +140,8 @@ fn text_of(result: &Value) -> &str {
     result["content"][0]["text"].as_str().unwrap()
 }
 
-/// The first contact falls back to the legacy version without a wait for
-/// the probe timeout, and the second contact uses the cached protocol version.
+// The first contact falls back to the legacy version without a wait for
+// the probe timeout, and the second contact uses the cached protocol version.
 fn falls_back_to_the_legacy_version_and_caches_it(server: &Server) {
     let home = home_with("version", server);
     let first = home.run(&["server", "show", "every", "--timings"]);
@@ -168,9 +168,9 @@ fn lists_tools_resources_and_prompts(server: &Server) {
     assert!(names(&prompts, "prompts").contains(&"args-prompt".to_owned()));
 }
 
-/// The server registers some tools only for a client capability. With no
-/// TTY, `ncp` declares no elicitation, and it never declares sampling or
-/// roots.
+// The server registers some tools only for a client capability. With no
+// TTY, `ncp` declares no elicitation, and it never declares sampling or
+// roots.
 fn declares_no_client_capability_without_a_tty(server: &Server) {
     let home = home_with("capabilities", server);
     let tools = names(&ok(&home.run(&["tool", "list", "every"])), "tools");

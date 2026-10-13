@@ -38,7 +38,7 @@ fn fake_native(limit: Duration) -> Result<Arc<dyn CredentialStore>, StoreError> 
     }
 }
 
-/// One plain HTTP GET. Returns the `Location` header of the answer.
+// One plain HTTP GET. Returns the `Location` header of the answer.
 fn get(url: &str) -> std::io::Result<Option<String>> {
     let url = url::Url::parse(url).map_err(std::io::Error::other)?;
     let host = url.host_str().unwrap_or_default();
@@ -80,8 +80,8 @@ fn fake_tty() -> bool {
     std::env::var_os("NCP_TEST_TTY").is_some()
 }
 
-/// With `NCP_TEST_CHANGE_BEFORE_RENAME=1`, another tool changes the
-/// configuration file immediately before `ncp` renames its new copy over it.
+// With `NCP_TEST_CHANGE_BEFORE_RENAME=1`, another tool changes the
+// configuration file immediately before `ncp` renames its new copy over it.
 fn change_before_rename(path: &std::path::Path) {
     if std::env::var_os("NCP_TEST_CHANGE_BEFORE_RENAME").is_some()
         && let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(path)

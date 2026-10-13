@@ -196,9 +196,9 @@ pub fn project_entries(entries: &[UnexpandedEntry]) -> String {
     })
 }
 
-/// The URL as the client sends it. The parse removes tabs and encodes spaces,
-/// which can make one URL look like two parts. A URL with `${NAME}` shows as a
-/// shell word.
+// The URL as the client sends it. The parse removes tabs and encodes spaces,
+// which can make one URL look like two parts. A URL with `${NAME}` shows as a
+// shell word.
 fn shown_url(url: &str) -> String {
     match url::Url::parse(url) {
         Ok(parsed) if !url.contains("${") => parsed.to_string(),
@@ -206,7 +206,7 @@ fn shown_url(url: &str) -> String {
     }
 }
 
-/// A path on one line: a folder name can hold a new line.
+// A path on one line: a folder name can hold a new line.
 fn path_text(path: &Path) -> String {
     super::ui::printable(&super::ui::one_line(&path.display().to_string())).into_owned()
 }
@@ -350,8 +350,8 @@ pub fn tool_list(tools: &[Tool]) -> String {
     table(&rows)
 }
 
-/// The annotations that the server set to true. The spec tells clients to
-/// treat annotations as untrusted, so each mark says "hint".
+// The annotations that the server set to true. The spec tells clients to
+// treat annotations as untrusted, so each mark says "hint".
 fn hint_marks(tool: &Tool) -> Vec<&'static str> {
     let Some(annotations) = &tool.annotations else {
         return Vec::new();
@@ -368,10 +368,10 @@ fn hint_marks(tool: &Tool) -> Vec<&'static str> {
     .collect()
 }
 
-/// Each annotation hint with its value, and the default of the spec when the
-/// server sets none: an absent hint must not look safe. The destructive and
-/// idempotent hints have a meaning only when `readOnlyHint` is false (MCP
-/// 2025-11-25, server/tools, `ToolAnnotations`).
+// Each annotation hint with its value, and the default of the spec when the
+// server sets none: an absent hint must not look safe. The destructive and
+// idempotent hints have a meaning only when `readOnlyHint` is false (MCP
+// 2025-11-25, server/tools, `ToolAnnotations`).
 fn annotation_lines(tool: &Tool) -> String {
     let annotations = tool.annotations.clone().unwrap_or_default();
     let read_only = annotations.read_only_hint;
@@ -550,7 +550,7 @@ pub fn call_result(result: &Value) -> String {
     content.iter().map(content_line).collect()
 }
 
-/// One content block as a line: text as it is, other kinds as a summary.
+// One content block as a line: text as it is, other kinds as a summary.
 fn content_line(block: &Value) -> String {
     let field = |key: &str| block.get(key).and_then(Value::as_str).unwrap_or("?");
     let line = match field("type") {

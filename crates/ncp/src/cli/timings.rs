@@ -59,8 +59,8 @@ impl Timings {
     }
 }
 
-/// The CPU time of `ncp` (user and system), all threads. `None` when the
-/// system cannot give it.
+// The CPU time of `ncp` (user and system), all threads. `None` when the
+// system cannot give it.
 fn cpu_time() -> Option<Duration> {
     use nix::sys::resource::{UsageWho, getrusage};
     let usage = getrusage(UsageWho::RUSAGE_SELF).ok()?;
@@ -72,8 +72,8 @@ fn cpu_time() -> Option<Duration> {
     Some(time(usage.user_time()) + time(usage.system_time()))
 }
 
-/// reqwest looks up the name inside its connector. Thus the connect time
-/// includes each lookup, and this function takes the DNS time out.
+// reqwest looks up the name inside its connector. Thus the connect time
+// includes each lookup, and this function takes the DNS time out.
 fn connect_without_dns(record: &Record) -> Option<Duration> {
     record
         .connect
@@ -85,7 +85,7 @@ pub fn ms(duration: Duration) -> f64 {
     (duration.as_secs_f64() * 10_000.0).round() / 10.0
 }
 
-/// The steps in their order, with the JSON name and the text name.
+// The steps in their order, with the JSON name and the text name.
 fn steps(
     record: &Record,
     total: Duration,

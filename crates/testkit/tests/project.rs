@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 const FIXTURE: &str = env!("CARGO_BIN_EXE_ncp-fixture");
 
-/// A stdio entry that writes the marker file when it starts.
+// A stdio entry that writes the marker file when it starts.
 fn marked(home: &Home) -> (Value, PathBuf) {
     let marker = home.root.join("started");
     let entry = json!({"command": FIXTURE, "args": ["modern"],
@@ -426,8 +426,8 @@ async fn a_trusted_project_header_gets_its_value_from_the_environment_and_the_st
     assert_eq!(run.code(), 0, "{}", run.describe());
 }
 
-/// A local port that counts no request: a test checks that nothing
-/// connects to it.
+// A local port that counts no request: a test checks that nothing
+// connects to it.
 fn silent_port() -> (std::net::TcpListener, String) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();

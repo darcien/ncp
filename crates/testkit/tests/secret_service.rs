@@ -95,8 +95,8 @@ async fn unlocked_keyring_keeps_and_lists_secrets() {
     assert_eq!(load(&store).await.unwrap(), None);
 }
 
-/// A runtime that does not wait for a blocked store call at its end. A
-/// test runtime waits for its blocking threads with no limit.
+// A runtime that does not wait for a blocked store call at its end. A
+// test runtime waits for its blocking threads with no limit.
 fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

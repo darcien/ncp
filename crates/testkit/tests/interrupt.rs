@@ -91,7 +91,7 @@ fn is_alive(pid: &str) -> bool {
     signal(pid.trim().parse().unwrap(), "-0")
 }
 
-/// Sends SIGINT to `ncp`, and gives its exit code and the time to the exit.
+// Sends SIGINT to `ncp`, and gives its exit code and the time to the exit.
 fn interrupt(mut child: Child) -> (i32, Duration, String) {
     assert!(signal(child.id(), "-INT"));
     let start = Instant::now();

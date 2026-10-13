@@ -468,9 +468,9 @@ async fn initialize(
     .await
 }
 
-/// After the deadline, a stdio server gets the stop steps and no cancel
-/// request, because a client MUST NOT cancel `initialize` (MCP 2025-11-25,
-/// basic/utilities/cancellation).
+// After the deadline, a stdio server gets the stop steps and no cancel
+// request, because a client MUST NOT cancel `initialize` (MCP 2025-11-25,
+// basic/utilities/cancellation).
 async fn handshake(
     launch: &Launch<'_>,
     lifecycle: ClientLifecycleMode,
@@ -579,7 +579,7 @@ async fn handshake(
     })
 }
 
-/// The command as the file has it, because an expanded value must not show.
+// The command as the file has it, because an expanded value must not show.
 fn configured_command(server: &Server) -> String {
     match &server.target {
         Target::Stdio { command, .. } => command.clone(),
@@ -615,8 +615,8 @@ async fn race<T>(
     }
 }
 
-/// Only a client with a person at a TTY declares elicitation in form and
-/// URL mode. A server must not ask a client that has no one to answer.
+// Only a client with a person at a TTY declares elicitation in form and
+// URL mode. A server must not ask a client that has no one to answer.
 fn client_info(elicitation: bool) -> ClientConfig {
     let mut capabilities = ClientCapabilities::default();
     if elicitation {
@@ -637,9 +637,9 @@ fn version_of(service: &Service) -> Result<ProtocolVersion, ConnectError> {
     ProtocolVersion::parse(&text).map_err(|_| ConnectError::BadVersion(text))
 }
 
-/// A correlated JSON-RPC error to the probe means a legacy server. So does
-/// an answer that is not a discover result: a legacy server can answer an
-/// unknown method with an empty result.
+// A correlated JSON-RPC error to the probe means a legacy server. So does
+// an answer that is not a discover result: a legacy server can answer an
+// unknown method with an empty result.
 fn is_legacy_answer(error: &ClientInitializeError) -> bool {
     matches!(
         error,
@@ -874,8 +874,8 @@ impl Connection {
         }
     }
 
-    /// Each page is one request with its own limits, because the spec
-    /// applies the time limit to each request.
+    // Each page is one request with its own limits, because the spec
+    // applies the time limit to each request.
     async fn pages<T>(
         &self,
         limits: RequestLimits<'_>,
@@ -933,8 +933,8 @@ impl Connection {
         }
     }
 
-    /// On Ctrl-C or at the time limit, sends `notifications/cancelled` for
-    /// the request.
+    // On Ctrl-C or at the time limit, sends `notifications/cancelled` for
+    // the request.
     async fn request(
         &self,
         request: ClientRequest,

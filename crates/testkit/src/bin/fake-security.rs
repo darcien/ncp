@@ -96,8 +96,8 @@ fn failure_code(dir: &Path) -> Option<u8> {
         .map(|text| text.trim().parse().unwrap_or(FAILURE))
 }
 
-/// Runs each line of stdin. The exit code is the code of the last command,
-/// as in the real program.
+// Runs each line of stdin. The exit code is the code of the last command,
+// as in the real program.
 fn interactive(dir: &Path) -> u8 {
     let mut input = Vec::new();
     if io::stdin().read_to_end(&mut input).is_err() {
@@ -113,8 +113,8 @@ fn interactive(dir: &Path) -> u8 {
         })
 }
 
-/// Cuts the input as `fgets` does: a line ends after a new line, or when the
-/// buffer is full.
+// Cuts the input as `fgets` does: a line ends after a new line, or when the
+// buffer is full.
 fn lines(input: &[u8]) -> Vec<&[u8]> {
     let limit = LINE_BUFFER - 1;
     let mut rest = input;
@@ -132,9 +132,9 @@ fn lines(input: &[u8]) -> Vec<&[u8]> {
     lines
 }
 
-/// Splits a line into words, as the real program does. A double quote at
-/// the start of a word quotes it up to the next double quote. A backslash
-/// keeps the next character as it is.
+// Splits a line into words, as the real program does. A double quote at
+// the start of a word quotes it up to the next double quote. A backslash
+// keeps the next character as it is.
 fn split_line(line: &str) -> Vec<String> {
     let mut chars = line.chars().peekable();
     let mut words = Vec::new();
@@ -170,8 +170,8 @@ struct Options {
     show_password: bool,
 }
 
-/// Reads the options of a command. `-w` takes a value only for
-/// `add-generic-password`.
+// Reads the options of a command. `-w` takes a value only for
+// `add-generic-password`.
 fn parse_options(words: &[&str], password_has_value: bool) -> Option<Options> {
     match words {
         [] => Some(Options::default()),
@@ -342,8 +342,8 @@ fn dump(path: &Path) -> Result<(), Failed> {
     Ok(())
 }
 
-/// The real program shows a password with a byte that is not printable
-/// ASCII as hexadecimal digits.
+// The real program shows a password with a byte that is not printable
+// ASCII as hexadecimal digits.
 fn shown_password(password: &str) -> String {
     if password
         .bytes()

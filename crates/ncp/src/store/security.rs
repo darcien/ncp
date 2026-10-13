@@ -138,7 +138,7 @@ impl SecurityStore {
         })
     }
 
-    /// Waits for the program until the deadline, then stops it.
+    // Waits for the program until the deadline, then stops it.
     fn wait(&self, child: &mut Child, deadline: Instant) -> Result<ExitStatus, StoreError> {
         let failure =
             |error: io::Error| StoreError::Failure(format!("{}: {error}", self.program.display()));
@@ -285,8 +285,8 @@ impl SecurityStore {
         }
     }
 
-    /// Adds or replaces one item. Each item has its own run, so that `ncp`
-    /// knows each exit code.
+    // Adds or replaces one item. Each item has its own run, so that `ncp`
+    // knows each exit code.
     fn add(&self, account: &str, text: &str, deadline: Instant) -> Result<(), StoreError> {
         let output = self.run(&["-i"], Some(&add_line(account, text)), deadline)?;
         // The error does not show stderr: after a parse error, it can hold
@@ -314,8 +314,8 @@ impl SecurityStore {
         }
     }
 
-    /// The accounts of all `ncp` items. `dump-keychain` with no `-d` shows
-    /// the attributes of each item and no value, so it decrypts nothing.
+    // The accounts of all `ncp` items. `dump-keychain` with no `-d` shows
+    // the attributes of each item and no value, so it decrypts nothing.
     fn accounts(&self, deadline: Instant) -> Result<Vec<String>, StoreError> {
         let output = self.run(&["dump-keychain"], None, deadline)?;
         match output.status.code() {
@@ -324,11 +324,11 @@ impl SecurityStore {
         }
     }
 
-    /// Removes the parts of older saves, and the parts of saves that
-    /// stopped before their head, so that no old token data stays. A
-    /// generation that is younger than the limit of a save can belong to a
-    /// save that still runs. It stays until a later save. A failure here
-    /// keeps the new value, and the next save removes the rest.
+    // Removes the parts of older saves, and the parts of saves that
+    // stopped before their head, so that no old token data stays. A
+    // generation that is younger than the limit of a save can belong to a
+    // save that still runs. It stays until a later save. A failure here
+    // keeps the new value, and the next save removes the rest.
     fn remove_other_parts(&self, account: &str, keep: &[(String, String)], deadline: Instant) {
         let Ok(accounts) = self.accounts(deadline) else {
             return;
@@ -379,10 +379,10 @@ struct SavePlan {
     head: String,
 }
 
-/// Cuts the encoded value into parts when its command does not fit one
-/// line. The parts and the head need no second encoding. The encoded text
-/// has only printable ASCII and no quote, and a head starts with a mark
-/// that no encoded value has.
+// Cuts the encoded value into parts when its command does not fit one
+// line. The parts and the head need no second encoding. The encoded text
+// has only printable ASCII and no quote, and a head starts with a mark
+// that no encoded value has.
 fn save_plan(account: &str, value: &str, generation: &str) -> Result<SavePlan, StoreError> {
     let encoded = encode(value);
     if add_line(account, &encoded).len() <= MAX_LINE {
@@ -417,8 +417,8 @@ fn is_part_of(account: &str, other: &str) -> bool {
         .is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// A new generation for each save, so that the parts of two saves never
-/// mix: the time in nanoseconds and the process id.
+// A new generation for each save, so that the parts of two saves never
+// mix: the time in nanoseconds and the process id.
 fn new_generation() -> String {
     format!("{:x}-{:x}", nanos_now(), std::process::id())
 }
@@ -429,8 +429,8 @@ fn nanos_now() -> u128 {
         .map_or(0, |time| time.as_nanos())
 }
 
-/// The time of the generation of a part account `ACCOUNT/GEN/INDEX`, or
-/// `None` when the account has no generation of `ncp`.
+// The time of the generation of a part account `ACCOUNT/GEN/INDEX`, or
+// `None` when the account has no generation of `ncp`.
 fn generation_time(account: &str, part: &str) -> Option<u128> {
     let (generation, _) = part
         .strip_prefix(account)?
@@ -440,11 +440,11 @@ fn generation_time(account: &str, part: &str) -> Option<u128> {
     u128::from_str_radix(time, 16).ok()
 }
 
-/// The accounts of the generic password items of service `ncp` in the output of
-/// `dump-keychain`. Each item starts with a `keychain:` line, and has one
-/// attribute on each line, for example `"acct"<blob>="secret/A"`. A value with
-/// bytes that are not printable shows as hexadecimal digits. `ncp` makes no
-/// such account, so such a value is left out.
+// The accounts of the generic password items of service `ncp` in the output of
+// `dump-keychain`. Each item starts with a `keychain:` line, and has one
+// attribute on each line, for example `"acct"<blob>="secret/A"`. A value with
+// bytes that are not printable shows as hexadecimal digits. `ncp` makes no
+// such account, so such a value is left out.
 fn ncp_accounts(dump: &str) -> Vec<String> {
     let attribute = |line: &str, name: &str| {
         line.trim_start()
@@ -465,7 +465,7 @@ fn not_started(program: &Path, error: &io::Error) -> StoreError {
     StoreError::Unavailable(format!("cannot run {}: {error}", program.display()))
 }
 
-/// The command for `security -i` that adds or replaces an item.
+// The command for `security -i` that adds or replaces an item.
 fn add_line(account: &str, text: &str) -> String {
     format!(
         "add-generic-password -U -s {} -a {} -w {}\n",
@@ -475,10 +475,10 @@ fn add_line(account: &str, text: &str) -> String {
     )
 }
 
-/// Quotes a word for `security -i`. In a word that starts with a double
-/// quote, a double quote ends the word and a backslash keeps the next
-/// character as it is. A new line ends the command: an account has no new
-/// line, and an encoded value has none.
+// Quotes a word for `security -i`. In a word that starts with a double
+// quote, a double quote ends the word and a backslash keeps the next
+// character as it is. A new line ends the command: an account has no new
+// line, and an encoded value has none.
 fn quote(word: &str) -> String {
     let escaped = word.chars().fold(String::new(), |mut escaped, c| {
         if matches!(c, '"' | '\\') {
@@ -494,8 +494,8 @@ fn encode(value: &str) -> String {
     format!("{ENCODED}{}", STANDARD.encode(value))
 }
 
-/// Reads a stored value. A value with no mark is plain text, for example an
-/// item that a person added by hand.
+// Reads a stored value. A value with no mark is plain text, for example an
+// item that a person added by hand.
 fn decode(stored: &str) -> Result<Secret, StoreError> {
     let not_text = || StoreError::Failure("stored item is not UTF-8 text".into());
     match stored.strip_prefix(ENCODED) {
@@ -509,8 +509,8 @@ fn decode(stored: &str) -> Result<Secret, StoreError> {
     }
 }
 
-/// The first line of stderr. `find-generic-password` and
-/// `delete-generic-password` write no value to stderr.
+// The first line of stderr. `find-generic-password` and
+// `delete-generic-password` write no value to stderr.
 fn diagnostics(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr)
         .lines()

@@ -45,8 +45,8 @@ fn platform_store() -> keyring_core::Result<Arc<keyring_core::CredentialStore>> 
         .map(|store| store as Arc<keyring_core::CredentialStore>)
 }
 
-/// Maps a keyring error to a store error. Some variants hold the stored
-/// bytes, so their messages do not include them.
+// Maps a keyring error to a store error. Some variants hold the stored
+// bytes, so their messages do not include them.
 fn store_error(error: Error) -> StoreError {
     match error {
         Error::PlatformFailure(cause) => StoreError::Unavailable(cause.to_string()),

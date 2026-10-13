@@ -90,9 +90,9 @@ async fn server_list(context: &Context<'_>) -> Result<(), Failure> {
     Ok(())
 }
 
-/// The rows of `server list`: the entries that run, then the entries of an
-/// untrusted project file, with their state. Nothing else happens for them
-/// (design rule 8).
+// The rows of `server list`: the entries that run, then the entries of an
+// untrusted project file, with their state. Nothing else happens for them
+// (design rule 8).
 fn list_rows(loaded: &Loaded) -> Vec<render::Row> {
     let place = |name: &str| match loaded.project_of(name) {
         Some(project) => (project.file.clone(), Some(Trust::Trusted)),
@@ -129,7 +129,7 @@ fn list_rows(loaded: &Loaded) -> Vec<render::Row> {
     servers.chain(invalid).chain(waiting).collect()
 }
 
-/// A joined word gives the fix.
+// A joined word gives the fix.
 fn select<'a>(
     context: &Context<'_>,
     loaded: &'a Loaded,
@@ -150,10 +150,10 @@ fn show_fix(server: &str, tool: &str) -> String {
     )
 }
 
-/// Always closes the connection. A server can let a connect with no token
-/// in and answer `401` to a request. Then `work` runs once more on a
-/// connection with the stored login. This is safe, because the server did
-/// not do the first request.
+// Always closes the connection. A server can let a connect with no token
+// in and answer `401` to a request. Then `work` runs once more on a
+// connection with the stored login. This is safe, because the server did
+// not do the first request.
 async fn with_connection<T>(
     context: &Context<'_>,
     server: &Server,
@@ -177,8 +177,8 @@ async fn with_connection<T>(
     }
 }
 
-/// Exit 5 when the server asked a question that `ncp` refused (design
-/// B63): the result is not the answer to the request of the user.
+// Exit 5 when the server asked a question that `ncp` refused (design
+// B63): the result is not the answer to the request of the user.
 fn asked<T>(
     server: &Server,
     connection: &Connection,
@@ -257,9 +257,9 @@ fn has_instructions(connection: &Connection) -> bool {
         .is_some_and(|info| info.instructions.is_some())
 }
 
-/// Keeps the tools in the cache for the time of `list_cache::keep_for`. A list
-/// that `ncp` must not keep removes the old file. When `ncp` cannot write the
-/// cache, it gives a warning: `ncp` works the same with no cache.
+// Keeps the tools in the cache for the time of `list_cache::keep_for`. A list
+// that `ncp` must not keep removes the old file. When `ncp` cannot write the
+// cache, it gives a warning: `ncp` works the same with no cache.
 fn keep_tools(
     context: &Context<'_>,
     server: &Server,
@@ -292,8 +292,8 @@ fn keep_tools(
     }
 }
 
-/// The tools of the cache when they are fresh, so that the command needs
-/// no server start.
+// The tools of the cache when they are fresh, so that the command needs
+// no server start.
 fn cached_tools(context: &Context<'_>, server: &Server) -> Option<Vec<Tool>> {
     cached_list(context, server).map(|cached| cached.tools)
 }
@@ -360,7 +360,7 @@ fn find_tool(server: &str, tools: Vec<Tool>, name: &str) -> Result<Tool, Failure
         })
 }
 
-/// The tool word, or the failure that names the fix.
+// The tool word, or the failure that names the fix.
 fn tool_word<'a>(server: &str, tool: Option<&'a str>) -> Result<&'a str, Failure> {
     let missing = |message: String| {
         Failure::usage(message).hint(format!("ncp tool list {}", render::shell_word(server)))
@@ -497,9 +497,9 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
     .await
 }
 
-/// The tool and the arguments of a call: the tool from the list, the
-/// arguments with the schema rule, and the schema check unless
-/// `--no-validate`.
+// The tool and the arguments of a call: the tool from the list, the
+// arguments with the schema rule, and the schema check unless
+// `--no-validate`.
 fn prepare_call(
     context: &Context<'_>,
     server: &str,
@@ -524,10 +524,10 @@ fn prepare_call(
     Ok((tool, arguments))
 }
 
-/// From `2026-07-28`, an HTTP client copies the parameters with
-/// `x-mcp-header` into `Mcp-Param-*` headers (SEP-2243). rmcp knows these
-/// parameters only from a listed tool, so the call needs the tool list
-/// first. A tool that the list does not show stays callable.
+// From `2026-07-28`, an HTTP client copies the parameters with
+// `x-mcp-header` into `Mcp-Param-*` headers (SEP-2243). rmcp knows these
+// parameters only from a listed tool, so the call needs the tool list
+// first. A tool that the list does not show stays callable.
 fn mirrors_parameters(server: &Server, connection: &Connection) -> bool {
     matches!(server.transport, crate::config::Transport::Http(_))
         && connection.protocol_version().uses_discover()
@@ -542,8 +542,8 @@ fn offers(
         .is_some_and(|info| feature(&info.capabilities))
 }
 
-/// A list request that a server can lack: "method not found" gives an
-/// empty list, because the list is a part of a larger answer.
+// A list request that a server can lack: "method not found" gives an
+// empty list, because the list is a part of a larger answer.
 fn empty_when_missing<T>(result: Result<Vec<T>, RequestError>) -> Result<Vec<T>, RequestError> {
     match result {
         Err(RequestError::Service(ServiceError::McpError(data)))
@@ -591,9 +591,9 @@ async fn resource_list(context: &Context<'_>, word: &str) -> Result<(), Failure>
     )
 }
 
-/// For a request that names a thing by name or URI, "invalid params" or
-/// "resource not found" is a usage error. The hint is the command that
-/// lists the names.
+// For a request that names a thing by name or URI, "invalid params" or
+// "resource not found" is a usage error. The hint is the command that
+// lists the names.
 fn named_failure(server: &Server, method: &str, error: &RequestError, list: &str) -> Failure {
     let name = server.name.as_str();
     match error {
@@ -640,9 +640,9 @@ async fn resource_read(context: &Context<'_>, word: &str, uri: &str) -> Result<(
         .result(|| render::resource_contents(&value), || value.clone())
 }
 
-/// The one content of a resource as bytes: the text, or the decoded blob.
-/// Several contents have no raw form, because the bytes alone lose their
-/// borders and types.
+// The one content of a resource as bytes: the text, or the decoded blob.
+// Several contents have no raw form, because the bytes alone lose their
+// borders and types.
 fn raw_contents(result: &Value) -> Result<Vec<u8>, Failure> {
     let contents = result
         .get("contents")
@@ -670,7 +670,7 @@ fn raw_contents(result: &Value) -> Result<Vec<u8>, Failure> {
     })
 }
 
-/// An `input_required` result: on stdout, with exit 5, as for a tool call.
+// An `input_required` result: on stdout, with exit 5, as for a tool call.
 fn input_required(
     context: &Context<'_>,
     server: &str,
@@ -717,7 +717,7 @@ async fn prompt_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
     )
 }
 
-/// The arguments of a prompt: text only, as the spec gives them.
+// The arguments of a prompt: text only, as the spec gives them.
 fn prompt_arguments(words: &[String]) -> Result<JsonObject, Failure> {
     match tool_args::parse(words).map_err(|error| Failure::usage(error.to_string()))? {
         Input::Pairs(pairs) => Ok(pairs
@@ -771,10 +771,10 @@ fn print_call_help() -> Result<(), Failure> {
     ui::write_stdout(&help)
 }
 
-/// The spec says that a server answers an unknown tool or bad arguments with
-/// "invalid params" (MCP 2025-11-25, server/tools, "Error Handling"). That is a
-/// usage error. When `ncp` knows the tool from the list, `tool show` gives the
-/// fix. In other cases the tool can be unknown, and `tool list` gives the fix.
+// The spec says that a server answers an unknown tool or bad arguments with
+// "invalid params" (MCP 2025-11-25, server/tools, "Error Handling"). That is a
+// usage error. When `ncp` knows the tool from the list, `tool show` gives the
+// fix. In other cases the tool can be unknown, and `tool list` gives the fix.
 fn call_failure(server: &Server, tool: &str, listed: bool, error: &RequestError) -> Failure {
     let name = server.name.as_str();
     match error {

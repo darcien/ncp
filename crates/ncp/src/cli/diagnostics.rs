@@ -100,9 +100,9 @@ fn http_line(
     }
 }
 
-/// The text with the URL as the request used it replaced by the URL as it
-/// shows. An HTTP error names the URL that it got, and that URL can hold a
-/// `${NAME}` value or a key.
+// The text with the URL as the request used it replaced by the URL as it
+// shows. An HTTP error names the URL that it got, and that URL can hold a
+// `${NAME}` value or a key.
 fn hide_url_in(text: &str, url: &str, shown: &str) -> String {
     let parsed = url::Url::parse(url).map(|url| url.to_string());
     let text = text.replace(url, shown);
@@ -160,8 +160,8 @@ mod tests {
 
     use super::*;
 
-    /// As the closure of a session: a URL with its secrets hidden, and
-    /// other text as it is.
+    // As the closure of a session: a URL with its secrets hidden, and
+    // other text as it is.
     fn hidden(text: &str) -> String {
         if text.starts_with("http") && !text.contains(' ') {
             crate::redact::url(text)

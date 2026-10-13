@@ -179,9 +179,9 @@ pub fn with_dynamic_names(shell: CompletionShell, script: &str) -> String {
     }
 }
 
-/// The view that runs: the global file and a trusted project file. An entry of
-/// an untrusted project file gives no name (design rule 8), and the load writes
-/// nothing to stderr.
+// The view that runs: the global file and a trusted project file. An entry of
+// an untrusted project file gives no name (design rule 8), and the load writes
+// nothing to stderr.
 fn config(paths: &Paths, env: &Env) -> Option<crate::config::Config> {
     super::session::load_config(paths, env, true)
         .ok()
@@ -218,9 +218,9 @@ pub fn servers(env: &Env) {
     let _ = ui::write_stdout(&text);
 }
 
-/// True for a tool name that a shell cannot expand: the characters that
-/// the spec names for tool names. A tool name comes from a server, and a
-/// shell reads the list of names as words again.
+// True for a tool name that a shell cannot expand: the characters that
+// the spec names for tool names. A tool name comes from a server, and a
+// shell reads the list of names as words again.
 fn is_plain_name(name: &str) -> bool {
     // A shell reads a name that starts with `-` as an option.
     !name.is_empty()

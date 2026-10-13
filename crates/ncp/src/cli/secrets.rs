@@ -189,8 +189,8 @@ async fn values_of(
     Ok((values, stored))
 }
 
-/// The stop for a stored value of an entry with no literal origin. An
-/// environment value has no binding, so the fix is the URL, not an export.
+// The stop for a stored value of an entry with no literal origin. An
+// environment value has no binding, so the fix is the URL, not an export.
 fn not_literal(names: &[&str], error: &OriginError) -> Failure {
     Failure::usage(format!(
         "{} is not set, and ncp sends a stored value only to a literal origin: {error}",
@@ -226,12 +226,12 @@ pub(super) fn store_is_down(error: &StoreError) -> bool {
     )
 }
 
-/// The value of one key: the native store first, then the file. A native store
-/// that is down does not stop the search, because the file can have the item.
-/// Its error replaces the store, so that the next name does not wait for the
-/// time limit again. An error of one item stops the search, because then a
-/// value from the file can replace a newer value. No item of another
-/// destination is a fallback.
+// The value of one key: the native store first, then the file. A native store
+// that is down does not stop the search, because the file can have the item.
+// Its error replaces the store, so that the next name does not wait for the
+// time limit again. An error of one item stops the search, because then a
+// value from the file can replace a newer value. No item of another
+// destination is a fallback.
 async fn find(
     context: &Context<'_>,
     server: &Server,
@@ -265,8 +265,8 @@ async fn find(
     Err(miss(server, name, destination, native.as_ref().err()))
 }
 
-/// The message names only the current destination, because `ncp` reads no
-/// other item.
+// The message names only the current destination, because `ncp` reads no
+// other item.
 fn miss(
     server: &Server,
     name: &SecretName,
@@ -303,7 +303,7 @@ fn miss(
     failure.destination(destination.clone())
 }
 
-/// The error again, for a second use. A store error holds no secret.
+// The error again, for a second use. A store error holds no secret.
 fn clone_error(error: &StoreError) -> StoreError {
     match error {
         StoreError::Unavailable(text) => StoreError::Unavailable(text.clone()),
@@ -370,8 +370,8 @@ pub(super) fn place_text(place: CredentialPlace) -> &'static str {
     }
 }
 
-/// The entries that a destination is for, as text: "server linear", or
-/// "the issuer of server acme" for a client secret.
+// The entries that a destination is for, as text: "server linear", or
+// "the issuer of server acme" for a client secret.
 fn users_text(uses: &[Use<'_>]) -> String {
     uses.iter()
         .map(|item| match item.field {
@@ -395,9 +395,9 @@ pub(super) fn destination_json(destination: &Destination) -> serde_json::Value {
     json!(destination.origin().map(Origin::as_str))
 }
 
-/// The one destination that `secret set` (and `secret delete --server`)
-/// uses: the entries that name `${NAME}` in `env`, `headers` or
-/// `oauth.clientSecret`, or only the entry of `--server`.
+// The one destination that `secret set` (and `secret delete --server`)
+// uses: the entries that name `${NAME}` in `env`, `headers` or
+// `oauth.clientSecret`, or only the entry of `--server`.
 fn set_target<'a>(
     context: &Context<'_>,
     loaded: &'a session::Loaded,
@@ -442,9 +442,9 @@ fn set_target<'a>(
     })
 }
 
-/// No entry names `${NAME}` in a field that can read the store. A name in
-/// `command`, `args`, `cwd` or `url` comes only from the environment (B32),
-/// and an unset one makes the entry invalid.
+// No entry names `${NAME}` in a field that can read the store. A name in
+// `command`, `args`, `cwd` or `url` comes only from the environment (B32),
+// and an unset one makes the entry invalid.
 fn no_use(name: &SecretName, only: Option<&str>, loaded: &session::Loaded) -> Failure {
     if let Some(reason) = untrusted_use(loaded, name, only) {
         return Failure::usage(reason).hint("ncp trust");
@@ -540,8 +540,8 @@ async fn set(
 /// store.
 const COPY_CHECK_LIMIT: Duration = Duration::from_secs(5);
 
-/// Warnings when another place has a value for the key: `ncp` reads the
-/// environment first, then the native store, then the file.
+// Warnings when another place has a value for the key: `ncp` reads the
+// environment first, then the native store, then the file.
 async fn warn_about_copies(
     context: &Context<'_>,
     key: &CredentialKey,
@@ -611,11 +611,11 @@ enum Unread {
     Failed(std::io::Error),
 }
 
-/// Reads the value from stdin. When a person can answer (stdin and stderr are a
-/// TTY), `ncp` does not show the input. A TTY on stdin with no TTY on stderr is
-/// an error. In that case the question does not show, and the terminal echoes
-/// the value. Each read has the limit of `--timeout`. One new line at the end
-/// is not part of the value, because `echo` and a pasted line add it.
+// Reads the value from stdin. When a person can answer (stdin and stderr are a
+// TTY), `ncp` does not show the input. A TTY on stdin with no TTY on stderr is
+// an error. In that case the question does not show, and the terminal echoes
+// the value. Each read has the limit of `--timeout`. One new line at the end
+// is not part of the value, because `echo` and a pasted line add it.
 async fn read_value(
     context: &Context<'_>,
     name: &str,
@@ -651,8 +651,8 @@ async fn read_value(
     Ok(Secret::new(line.to_string()))
 }
 
-/// The read runs on its own thread, not on the runtime. A read on the runtime
-/// cannot stop, and the exit after the time limit waits for it.
+// The read runs on its own thread, not on the runtime. A read on the runtime
+// cannot stop, and the exit after the time limit waits for it.
 async fn read_piped(context: &Context<'_>) -> Result<String, Unread> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
@@ -689,13 +689,13 @@ fn stty(args: &[&str]) -> std::io::Result<String> {
     }
 }
 
-/// One line from the terminal, with the echo off. The terminal settings
-/// come back after each end: the line, an error, the time limit or Ctrl-C.
-/// Thus the shell of the user works again.
-///
-/// The terminal is in non-canonical mode: in canonical mode macOS keeps only
-/// 1024 bytes of a line, and a longer token never ends. Thus `ncp` does the
-/// backspace itself.
+// One line from the terminal, with the echo off. The terminal settings
+// come back after each end: the line, an error, the time limit or Ctrl-C.
+// Thus the shell of the user works again.
+//
+// The terminal is in non-canonical mode: in canonical mode macOS keeps only
+// 1024 bytes of a line, and a longer token never ends. Thus `ncp` does the
+// backspace itself.
 async fn read_hidden_line(context: &Context<'_>, prompt: &str) -> Result<String, Unread> {
     let saved = stty(&["-g"]).map_err(Unread::Failed)?;
     eprint!("{prompt}");
@@ -723,8 +723,8 @@ async fn read_hidden_line(context: &Context<'_>, prompt: &str) -> Result<String,
     read
 }
 
-/// Reads bytes until a new line, a carriage return or Ctrl-D. A backspace
-/// or DEL removes the last character.
+// Reads bytes until a new line, a carriage return or Ctrl-D. A backspace
+// or DEL removes the last character.
 fn read_terminal_line(input: &mut impl std::io::Read) -> std::io::Result<String> {
     let mut line: Vec<u8> = Vec::new();
     let mut byte = [0_u8; 1];
@@ -748,9 +748,9 @@ fn read_terminal_line(input: &mut impl std::io::Read) -> std::io::Result<String>
     String::from_utf8(line).map_err(|_| std::io::Error::other("the value is not UTF-8 text"))
 }
 
-/// The secret keys of a store, as (name, destination), and the error of a
-/// store that cannot answer. A host with no native store gives no error,
-/// because the user then keeps all values in the file.
+// The secret keys of a store, as (name, destination), and the error of a
+// store that cannot answer. A host with no native store gives no error,
+// because the user then keeps all values in the file.
 async fn secrets_in(
     context: &Context<'_>,
     store: &Opened,
@@ -781,7 +781,7 @@ struct Stored {
     failed: Vec<(CredentialPlace, StoreError)>,
 }
 
-/// A warning for each place that did not answer (B30).
+// A warning for each place that did not answer (B30).
 fn warn_unlisted(context: &Context<'_>, failed: &[(CredentialPlace, StoreError)]) {
     for (place, error) in failed {
         context.ui.warning(
@@ -1083,10 +1083,10 @@ struct Choice {
     unlisted: Vec<CredentialPlace>,
 }
 
-/// The destinations to remove. With no flag, a place that cannot answer stops
-/// the delete: an item there can be a second destination. `ncp` does not ask a
-/// native store that cannot list again, so that the delete does not wait for
-/// its limit once more.
+// The destinations to remove. With no flag, a place that cannot answer stops
+// the delete: an item there can be a second destination. `ncp` does not ask a
+// native store that cannot list again, so that the delete does not wait for
+// its limit once more.
 async fn chosen(
     context: &Context<'_>,
     name: &SecretName,
@@ -1195,9 +1195,9 @@ async fn chosen(
     }
 }
 
-/// An invalid entry, or an entry of an untrusted project file, can name the
-/// secret. Then `ncp` cannot know that no entry uses an item, so `--unused`
-/// stops.
+// An invalid entry, or an entry of an untrusted project file, can name the
+// secret. Then `ncp` cannot know that no entry uses an item, so `--unused`
+// stops.
 async fn strict_config(
     context: &Context<'_>,
     name: &SecretName,
@@ -1235,8 +1235,8 @@ async fn strict_config(
     Ok(loaded)
 }
 
-/// The reason when only an entry of an untrusted project file names `${NAME}`:
-/// the entry, the file and its state.
+// The reason when only an entry of an untrusted project file names `${NAME}`:
+// the entry, the file and its state.
 fn untrusted_use(
     loaded: &session::Loaded,
     name: &SecretName,

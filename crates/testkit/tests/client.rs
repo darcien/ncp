@@ -56,8 +56,8 @@ fn http_server(url: &str, headers: &[(&str, &str)]) -> Server {
     )
 }
 
-/// Tests use only local servers, and reqwest sends loopback requests to a
-/// proxy when the environment names one. Thus the test client has no proxy.
+// Tests use only local servers, and reqwest sends loopback requests to a
+// proxy when the environment names one. Thus the test client has no proxy.
 fn http() -> reqwest::Client {
     client::http::builder().no_proxy().build().unwrap()
 }

@@ -173,8 +173,8 @@ pub fn load_config(paths: &Paths, env: &Env, search: bool) -> Result<Loaded, Fai
     }
 }
 
-/// The view after the trust: the project entries join it, from the same
-/// bytes that the user checked.
+// The view after the trust: the project entries join it, from the same
+// bytes that the user checked.
 fn trusted(loaded: Loaded, env: &Env) -> Result<Loaded, Failure> {
     let ProjectFile::Read(project) = loaded.project else {
         return Ok(loaded);
@@ -234,8 +234,8 @@ pub async fn load(context: &Context<'_>, named: Option<&str>) -> Result<Loaded, 
     }
 }
 
-/// `-v` names the files, and a file that `ncp` does not use gives a
-/// warning.
+// `-v` names the files, and a file that `ncp` does not use gives a
+// warning.
 fn report_files(context: &Context<'_>, loaded: &Loaded) {
     let state = if loaded.exists {
         ""
@@ -336,8 +336,8 @@ pub fn select<'a>(loaded: &'a Loaded, name: &str, ui: Ui) -> Result<&'a Server, 
     Ok(server)
 }
 
-/// The failure shows the entries of the file, so that the user or an agent
-/// can check them before `ncp trust`.
+// The failure shows the entries of the file, so that the user or an agent
+// can check them before `ncp trust`.
 fn blocked(name: &str, project: &Project, in_global: bool) -> Failure {
     let file = project.file.display();
     let state = match project.trust {
@@ -434,9 +434,9 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
     Ok(connection)
 }
 
-/// The store read has its own limit of 60 s, so it comes first. The OAuth
-/// steps after it (discovery, a refresh) have the limit of the connect and
-/// Ctrl-C (design C7).
+// The store read has its own limit of 60 s, so it comes first. The OAuth
+// steps after it (discovery, a refresh) have the limit of the connect and
+// Ctrl-C (design C7).
 async fn stored_login(
     context: &Context<'_>,
     login: &super::auth::StoredLogin<'_>,
@@ -636,8 +636,8 @@ impl Prepared {
         }
     }
 
-    /// When `ncp` cannot write the cache, it gives only a warning, because
-    /// `ncp` works the same with no cache.
+    // When `ncp` cannot write the cache, it gives only a warning, because
+    // `ncp` works the same with no cache.
     fn save_version(self, context: &Context<'_>, server: &Server, version: &ProtocolVersion) {
         if !context.cache.writes() || self.cached.as_ref() == Some(version) {
             return;
@@ -738,9 +738,9 @@ fn connect_failure(
     }
 }
 
-/// A `404` to the handshake means a URL with a wrong path, for example
-/// with no `/mcp`. rmcp keeps only the text of the status, as `HTTP 404`.
-/// Thus the check reads the text of the pinned version.
+// A `404` to the handshake means a URL with a wrong path, for example
+// with no `/mcp`. rmcp keeps only the text of the status, as `HTTP 404`.
+// Thus the check reads the text of the pinned version.
 fn is_not_found(error: &ConnectError) -> bool {
     matches!(error, ConnectError::Handshake { .. }) && error.to_string().contains("HTTP 404")
 }
@@ -761,9 +761,9 @@ pub fn with_tls_hint(env: &Env, notes: &client::http::Notes, failure: Failure) -
     }
 }
 
-/// A request to a loopback host through a proxy on another host cannot
-/// reach the server, because no exception for loopback exists (design C5).
-/// The failure then names the route and the fix.
+// A request to a loopback host through a proxy on another host cannot
+// reach the server, because no exception for loopback exists (design C5).
+// The failure then names the route and the fix.
 fn through_proxy(env: &Env, url: &crate::server::ServerUrl, failure: Failure) -> Failure {
     let Ok(target) = url::Url::parse(url.as_str()) else {
         return failure;
@@ -833,8 +833,8 @@ pub(super) fn hide_expanded_url(server: &Server, message: String) -> String {
     }
 }
 
-/// The error and its causes, with no repeated text. Transport errors wrap
-/// each other, and the outer text often holds the inner text.
+// The error and its causes, with no repeated text. Transport errors wrap
+// each other, and the outer text often holds the inner text.
 fn causes(error: &(dyn std::error::Error + 'static)) -> String {
     std::iter::successors(Some(error), |error| error.source())
         .map(ToString::to_string)
@@ -847,9 +847,9 @@ fn causes(error: &(dyn std::error::Error + 'static)) -> String {
         .join(": ")
 }
 
-/// The hints of a `401` or `403` after a request with a stored header
-/// value. A new value comes first: after the user changes the key at one
-/// origin, the key at another origin can be old (B51).
+// The hints of a `401` or `403` after a request with a stored header
+// value. A new value comes first: after the user changes the key at one
+// origin, the key at another origin can be old (B51).
 fn with_secret_hints(failure: Failure, server: &Server, stored: &[SecretName]) -> Failure {
     if !matches!(server.transport, Transport::Http(_)) || stored.is_empty() {
         return failure;
@@ -876,11 +876,11 @@ pub fn interrupted() -> Failure {
     Failure::new(Exit::Interrupted, "interrupted")
 }
 
-/// The store can fail at the save of a refresh. A read after the refresh
-/// lock can also find tokens of another server. A file that fails is a
-/// local error. A native store that fails, for example a locked keyring,
-/// is an authorization error, because the file can keep the tokens
-/// (design B51).
+// The store can fail at the save of a refresh. A read after the refresh
+// lock can also find tokens of another server. A file that fails is a
+// local error. A native store that fails, for example a locked keyring,
+// is an authorization error, because the file can keep the tokens
+// (design B51).
 fn token_store_failure(server: &Server, text: &str) -> Failure {
     if let Some(mismatch) = crate::oauth::store::binding_mismatch(text) {
         return super::auth::binding_failure(server, &mismatch);
@@ -902,10 +902,10 @@ fn server_error(method: &str, data: &rmcp::ErrorData) -> Failure {
     ))
 }
 
-/// The failure of a request that needs the user to open pages first, or `None`
-/// when the error names no page. Only a page that is safe to open goes into the
-/// failure. The others show the reason that `ncp` refuses them, and not their
-/// URL.
+// The failure of a request that needs the user to open pages first, or `None`
+// when the error names no page. Only a page that is safe to open goes into the
+// failure. The others show the reason that `ncp` refuses them, and not their
+// URL.
 fn page_failure(method: &str, data: &rmcp::ErrorData) -> Option<Failure> {
     let found = crate::elicit::pages(data.data.as_ref());
     if found.is_empty() {

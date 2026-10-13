@@ -138,8 +138,8 @@ pub fn shut_down(runtime: tokio::runtime::Runtime) {
     runtime.shutdown_timeout(SHUTDOWN_LIMIT);
 }
 
-/// The environment of the process. A variable that is not UTF-8 cannot be
-/// a `${NAME}` value, and is left out.
+// The environment of the process. A variable that is not UTF-8 cannot be
+// a `${NAME}` value, and is left out.
 fn process_env() -> Env {
     std::env::vars_os()
         .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
@@ -201,9 +201,9 @@ async fn run(
     }
 }
 
-/// The configuration file that `--config-file` names. Unlike the default
-/// file, it must exist: a typing error in the path must not look like an
-/// empty configuration.
+// The configuration file that `--config-file` names. Unlike the default
+// file, it must exist: a typing error in the path must not look like an
+// empty configuration.
 fn named_config_file(path: &std::path::Path) -> Result<std::path::PathBuf, Failure> {
     let path = std::path::absolute(path)
         .map_err(|error| Failure::usage(format!("{}: {error}", path.display())))?;
@@ -217,10 +217,10 @@ fn named_config_file(path: &std::path::Path) -> Result<std::path::PathBuf, Failu
     }
 }
 
-/// Each stdio server runs in its own process group, so the SIGINT of the
-/// terminal does not reach it. Then `ncp` can send the cancel request and
-/// stop the server itself (MCP 2025-11-25, basic/utilities/cancellation).
-/// A store program stays in the group of `ncp`, so Ctrl-C stops it too.
+// Each stdio server runs in its own process group, so the SIGINT of the
+// terminal does not reach it. Then `ncp` can send the cancel request and
+// stop the server itself (MCP 2025-11-25, basic/utilities/cancellation).
+// A store program stays in the group of `ncp`, so Ctrl-C stops it too.
 fn interrupt_token() -> CancellationToken {
     let token = CancellationToken::new();
     // The handler is in place when this function returns, before the first
@@ -237,8 +237,8 @@ fn interrupt_token() -> CancellationToken {
     token
 }
 
-/// Help and version go to stdout with exit 0. A parse error is a usage
-/// error: clap text on a TTY, the JSON error object in a pipe.
+// Help and version go to stdout with exit 0. A parse error is a usage
+// error: clap text on a TTY, the JSON error object in a pipe.
 fn parse_failure(ui: Ui, error: &clap::Error) -> ExitCode {
     match (error.kind(), ui.format) {
         (ErrorKind::DisplayHelp | ErrorKind::DisplayVersion, _) | (_, Format::Text) => {

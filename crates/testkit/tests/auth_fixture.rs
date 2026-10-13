@@ -62,7 +62,7 @@ fn origin(server: &AuthServer) -> String {
     issuer.origin().ascii_serialization()
 }
 
-/// The query of the redirect after an authorization request.
+// The query of the redirect after an authorization request.
 async fn authorize(server: &AuthServer, client_id: &str, scope: &str) -> HashMap<String, String> {
     let challenge = challenge_of(VERIFIER);
     let query = form(&[
@@ -116,7 +116,7 @@ async fn exchange(server: &AuthServer, client_id: &str, code: &str) -> (u16, Val
     .await
 }
 
-/// A valid access token with the scope.
+// A valid access token with the scope.
 async fn login(server: &AuthServer, scope: &str) -> Value {
     let client = register(server).await;
     let client_id = client["client_id"].as_str().unwrap();

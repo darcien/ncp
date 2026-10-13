@@ -411,7 +411,7 @@ fn metadata(state: &AuthState) -> Response {
     json_response(http::StatusCode::OK, &body)
 }
 
-/// A loopback redirect URI matches with any port (RFC 8252 §7.3).
+// A loopback redirect URI matches with any port (RFC 8252 §7.3).
 fn same_redirect(registered: &str, given: &str) -> bool {
     let without_port = |text: &str| {
         url::Url::parse(text).ok().map(|mut url| {
@@ -506,7 +506,7 @@ fn authorize(state: &AuthState, query: &HashMap<String, String>) -> Response {
     redirect(redirect_uri, &parameters)
 }
 
-/// The client of a token request: `client_secret_basic` or the form.
+// The client of a token request: `client_secret_basic` or the form.
 fn client_credentials(
     headers: &http::HeaderMap,
     form: &HashMap<String, String>,

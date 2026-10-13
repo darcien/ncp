@@ -204,12 +204,12 @@ fn headers(flags: &[String]) -> Result<Map<String, Value>, AddError> {
         })
 }
 
-/// The characters of a field name: an RFC 9110 §5.6.2 token.
+// The characters of a field name: an RFC 9110 §5.6.2 token.
 fn is_token_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c)
 }
 
-/// `${NAME}` or `<scheme> ${NAME}`, and nothing more.
+// `${NAME}` or `<scheme> ${NAME}`, and nothing more.
 fn is_credential_template(value: &str) -> bool {
     let reference = match value.split_once(' ') {
         Some((scheme, _)) if scheme.is_empty() || !scheme.chars().all(is_token_char) => {
@@ -224,9 +224,9 @@ fn is_credential_template(value: &str) -> bool {
         .is_some_and(expand::is_variable_name)
 }
 
-/// `--env NAME` writes `"NAME": "${NAME}"`: the short form is the safe
-/// form, as `docker run -e NAME`. `--env NAME=VALUE` writes the value as
-/// the user gives it.
+// `--env NAME` writes `"NAME": "${NAME}"`: the short form is the safe
+// form, as `docker run -e NAME`. `--env NAME=VALUE` writes the value as
+// the user gives it.
 fn env(flags: &[String]) -> Result<Map<String, Value>, AddError> {
     flags
         .iter()

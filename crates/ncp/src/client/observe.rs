@@ -197,8 +197,8 @@ pub struct ObservedHttp<C> {
 }
 
 impl<C> ObservedHttp<C> {
-    /// Runs one request, and gives it to the observer with its headers,
-    /// its outcome and its time.
+    // Runs one request, and gives it to the observer with its headers,
+    // its outcome and its time.
     async fn observed<T, E: std::fmt::Display>(
         &self,
         method: &'static str,
@@ -229,8 +229,8 @@ impl<C> ObservedHttp<C> {
     }
 }
 
-/// The headers that the transport gives, hidden. reqwest adds `accept`,
-/// `content-type` and `content-length`.
+// The headers that the transport gives, hidden. reqwest adds `accept`,
+// `content-type` and `content-length`.
 fn shown_headers(
     session_id: Option<&str>,
     auth_header: Option<&str>,

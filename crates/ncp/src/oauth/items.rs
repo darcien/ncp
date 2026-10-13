@@ -217,8 +217,8 @@ pub fn rfc3339(seconds: u64) -> String {
     )
 }
 
-/// The date of a day count since 1970-01-01, for the proleptic Gregorian
-/// calendar (the `civil_from_days` algorithm of Howard Hinnant).
+// The date of a day count since 1970-01-01, for the proleptic Gregorian
+// calendar (the `civil_from_days` algorithm of Howard Hinnant).
 fn civil_from_days(days: u64) -> (u64, u64, u64) {
     let z = days + 719_468;
     let era = z / 146_097;

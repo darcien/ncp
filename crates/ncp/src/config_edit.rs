@@ -110,8 +110,8 @@ pub fn remove(text: &str, name: &str) -> Result<String, EditError> {
     finish(text, &root, &expected(old, name, None))
 }
 
-/// The old content with the one change: the entry of the name added, or
-/// removed with `None`.
+// The old content with the one change: the entry of the name added, or
+// removed with `None`.
 fn expected(mut old: Map<String, Value>, name: &str, entry: Option<Value>) -> Map<String, Value> {
     let mut servers = match old.remove(SERVERS_KEY) {
         Some(Value::Object(servers)) => servers,
@@ -125,14 +125,14 @@ fn expected(mut old: Map<String, Value>, name: &str, entry: Option<Value>) -> Ma
     old
 }
 
-/// A new file starts as an empty object.
+// A new file starts as an empty object.
 fn base(text: &str) -> &str {
     if text.trim().is_empty() { "{}\n" } else { text }
 }
 
-/// The old content, the tree, and its top-level object. The tree parses
-/// with the options of the loader, not with the defaults of the crate,
-/// which accept JSON5 forms.
+// The old content, the tree, and its top-level object. The tree parses
+// with the options of the loader, not with the defaults of the crate,
+// which accept JSON5 forms.
 fn tree(text: &str) -> Result<(Map<String, Value>, CstRootNode, CstObject), EditError> {
     let text = base(text);
     let old = config::parse_root(text)?;
@@ -142,7 +142,7 @@ fn tree(text: &str) -> Result<(Map<String, Value>, CstRootNode, CstObject), Edit
     Ok((old, root, object))
 }
 
-/// The one property of the name, or none. Two copies are an error.
+// The one property of the name, or none. Two copies are an error.
 fn single(
     object: &CstObject,
     name: &str,
@@ -157,8 +157,8 @@ fn single(
     }
 }
 
-/// The new text, after a parse that must give the expected content. A new
-/// file ends with a new line.
+// The new text, after a parse that must give the expected content. A new
+// file ends with a new line.
 fn finish(
     old: &str,
     root: &CstRootNode,

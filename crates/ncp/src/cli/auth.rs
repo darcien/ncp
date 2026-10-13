@@ -101,10 +101,10 @@ pub(super) async fn command(context: &Context<'_>, command: AuthCommand) -> Resu
     }
 }
 
-/// rmcp puts URLs that it makes from the server URL in its errors, so the
-/// failure hides each `${NAME}` value of the URL. The values come from the
-/// configuration of the login, because the file can change during a long
-/// wait for the browser.
+// rmcp puts URLs that it makes from the server URL in its errors, so the
+// failure hides each `${NAME}` value of the URL. The values come from the
+// configuration of the login, because the file can change during a long
+// wait for the browser.
 fn login_failure(
     context: &Context<'_>,
     (loaded, word): (&session::Loaded, &str),
@@ -159,9 +159,9 @@ fn auth_failure(step: &str, error: &AuthError) -> Failure {
     Failure::new(exit, format!("{step}: {error}"))
 }
 
-/// rmcp falls back to endpoints that it makes from the server URL. `ncp`
-/// refuses that fallback: the spec has it only for 2025-03-26, and it
-/// registers a client at a server that names no authorization server.
+// rmcp falls back to endpoints that it makes from the server URL. `ncp`
+// refuses that fallback: the spec has it only for 2025-03-26, and it
+// registers a client at a server that names no authorization server.
 async fn discover(
     manager: &AuthorizationManager,
     challenge: Option<&str>,
@@ -179,9 +179,9 @@ async fn discover(
     Ok(resolution.metadata)
 }
 
-/// The endpoints of the authorization server must use HTTPS, except on a
-/// loopback host (MCP 2025-11-25, basic/authorization, "Communication
-/// Security"). rmcp does not do this check.
+// The endpoints of the authorization server must use HTTPS, except on a
+// loopback host (MCP 2025-11-25, basic/authorization, "Communication
+// Security"). rmcp does not do this check.
 fn check_https(metadata: &AuthorizationMetadata) -> Result<(), Failure> {
     let endpoints = [
         Some(&metadata.authorization_endpoint),
@@ -203,8 +203,8 @@ fn is_secure(endpoint: &str) -> bool {
     url::Url::parse(endpoint).is_ok_and(|url| crate::server::is_secure_url(&url))
 }
 
-/// rmcp requires the issuer only when discovery can derive it. Without an
-/// issuer, the origin of the authorization endpoint names the server.
+// rmcp requires the issuer only when discovery can derive it. Without an
+// issuer, the origin of the authorization endpoint names the server.
 fn issuer_of(metadata: &AuthorizationMetadata) -> String {
     metadata.issuer.clone().unwrap_or_else(|| {
         url::Url::parse(&metadata.authorization_endpoint).map_or_else(
@@ -214,8 +214,8 @@ fn issuer_of(metadata: &AuthorizationMetadata) -> String {
     })
 }
 
-/// The native store must answer before the login starts, so that the user
-/// does not log in for nothing.
+// The native store must answer before the login starts, so that the user
+// does not log in for nothing.
 async fn place_store(
     context: &Context<'_>,
     server: &str,
@@ -342,9 +342,9 @@ async fn login(
     Ok(server.name.clone())
 }
 
-/// What the redirect of the login must have: its state, and the issuer of the
-/// metadata in `iss` (RFC 9207 §2.4). The metadata says if `iss` must be
-/// present.
+// What the redirect of the login must have: its state, and the issuer of the
+// metadata in `iss` (RFC 9207 §2.4). The metadata says if `iss` must be
+// present.
 fn expected_redirect(state: String, metadata: &AuthorizationMetadata) -> callback::Expected {
     callback::Expected {
         state,
@@ -357,7 +357,7 @@ fn expected_redirect(state: String, metadata: &AuthorizationMetadata) -> callbac
     }
 }
 
-/// The redirect uses a random loopback port (RFC 8252 §7.3).
+// The redirect uses a random loopback port (RFC 8252 §7.3).
 async fn listen() -> Result<(TcpListener, RedirectUri), Failure> {
     let failure = |error: std::io::Error| {
         Failure::protocol(format!("cannot listen for the redirect: {error}"))
@@ -374,8 +374,8 @@ fn refresh_lock(context: &Context<'_>, server: &ServerName) -> std::path::PathBu
         .with_file_name(format!("oauth-{}.lock", server.as_str()))
 }
 
-/// Gives `None` when `ncp` cannot make the lock file. This is not an error,
-/// because the lock only puts a refresh, a login and a logout in order.
+// Gives `None` when `ncp` cannot make the lock file. This is not an error,
+// because the lock only puts a refresh, a login and a logout in order.
 async fn hold_tokens_lock(
     context: &Context<'_>,
     server: &ServerName,
@@ -399,9 +399,9 @@ async fn hold_tokens_lock(
     }
 }
 
-/// A store that cannot keep the tokens has its own fix. A file that fails
-/// is a local error. A native store that fails, for example a locked
-/// Keychain, can give way to the file.
+// A store that cannot keep the tokens has its own fix. A file that fails
+// is a local error. A native store that fails, for example a locked
+// Keychain, can give way to the file.
 fn token_failure(error: &AuthError, name: &str, place: CredentialPlace) -> Failure {
     match error {
         AuthError::CredentialStoreError(text) => match crate::oauth::store::file_failure(text) {
@@ -565,8 +565,8 @@ pub(super) fn binding_failure(server: &Server, mismatch: &items::BindingMismatch
     .server(name)
 }
 
-/// A refresh reads and writes the tokens again, so `--timings` counts these
-/// calls in `credentialsMs`.
+// A refresh reads and writes the tokens again, so `--timings` counts these
+// calls in `credentialsMs`.
 fn credentials_timer(context: &Context<'_>) -> Option<crate::oauth::store::StoreTimer> {
     let timings = context.timings.clone()?;
     Some(Arc::new(move |elapsed| {
@@ -661,8 +661,8 @@ impl TokenPlaces {
         }
     }
 
-    /// A host with no native store has only the file, as for `secret list`
-    /// (design B36).
+    // A host with no native store has only the file, as for `secret list`
+    // (design B36).
     async fn open_for_status(context: &Context<'_>) -> Self {
         match Self::open(context).await {
             Self {
@@ -731,10 +731,10 @@ impl TokenPlaces {
     }
 }
 
-/// rmcp can parse the challenge too, but it adds the scopes of the
-/// protected resource metadata, and the spec gives the challenge priority
-/// (design B79). With no scope in the challenge, rmcp selects from the
-/// protected resource metadata.
+// rmcp can parse the challenge too, but it adds the scopes of the
+// protected resource metadata, and the spec gives the challenge priority
+// (design B79). With no scope in the challenge, rmcp selects from the
+// protected resource metadata.
 fn initial_scopes(
     manager: &AuthorizationManager,
     challenge: Option<&str>,
@@ -747,8 +747,8 @@ fn initial_scopes(
     scopes::with_offline_access(selected, metadata.scopes_supported.as_deref())
 }
 
-/// Tokens of another server or issuer give no scopes to this login (design
-/// B79).
+// Tokens of another server or issuer give no scopes to this login (design
+// B79).
 async fn login_scopes(
     context: &Context<'_>,
     server: &Server,
@@ -788,8 +788,8 @@ async fn login_scopes(
 /// that the user did not choose.
 const CLEANUP_LIMIT: Duration = Duration::from_secs(5);
 
-/// The native store gets the short limit, because the user did not choose
-/// it.
+// The native store gets the short limit, because the user did not choose
+// it.
 async fn other_place(
     context: &Context<'_>,
     chosen: CredentialPlace,
@@ -800,9 +800,9 @@ async fn other_place(
     }
 }
 
-/// Calls read the native store first. Thus an old item there hides the new
-/// tokens in the file. A failure gives only a warning, because the login
-/// worked.
+// Calls read the native store first. Thus an old item there hides the new
+// tokens in the file. A failure gives only a warning, because the login
+// worked.
 async fn remove_old_tokens(
     context: &Context<'_>,
     name: &ServerName,
@@ -835,10 +835,10 @@ async fn remove_old_tokens(
     Ok(())
 }
 
-/// The order is from the spec (design B67): the configured
-/// `oauth.clientId`, then the stored client of the same issuer, then a new
-/// registration. A Client ID Metadata Document needs a stable HTTPS URL,
-/// so it comes with the first release.
+// The order is from the spec (design B67): the configured
+// `oauth.clientId`, then the stored client of the same issuer, then a new
+// registration. A Client ID Metadata Document needs a stable HTTPS URL,
+// so it comes with the first release.
 async fn client_request(
     context: &Context<'_>,
     server: &Server,
@@ -898,8 +898,8 @@ async fn client_request(
     })
 }
 
-/// The page that tells how to register a client (RFC 8414 §2
-/// `service_documentation`), only when it is safe to show.
+// The page that tells how to register a client (RFC 8414 §2
+// `service_documentation`), only when it is safe to show.
 fn registration_page(metadata: &AuthorizationMetadata) -> Option<String> {
     metadata
         .additional_fields
@@ -931,9 +931,9 @@ fn no_registration(name: &str, metadata: &AuthorizationMetadata) -> Failure {
     ))
 }
 
-/// Pre-registered credentials are bound to their issuer (MCP 2026-07-28,
-/// client registration, "Authorization Server Binding"). The compare is
-/// exact, as for the `iss` parameter (RFC 9207 §2.4).
+// Pre-registered credentials are bound to their issuer (MCP 2026-07-28,
+// client registration, "Authorization Server Binding"). The compare is
+// exact, as for the `iss` parameter (RFC 9207 §2.4).
 fn check_issuer(
     name: &str,
     client: &PreRegisteredClient,
@@ -975,8 +975,8 @@ fn check_issuer(
     .server(name))
 }
 
-/// For an entry with a client secret and no issuer, the failure names the
-/// issuer of the server.
+// For an entry with a client secret and no issuer, the failure names the
+// issuer of the server.
 async fn select<'a>(
     context: &Context<'_>,
     loaded: &'a session::Loaded,
@@ -1003,8 +1003,8 @@ async fn select<'a>(
 /// so that a slow server cannot hide the usage error behind that limit.
 const ISSUER_LOOKUP_LIMIT: Duration = Duration::from_secs(10);
 
-/// Discovery sends no secret, so the lookup is safe before `ncp` knows the
-/// issuer.
+// Discovery sends no secret, so the lookup is safe before `ncp` knows the
+// issuer.
 async fn with_server_issuer(
     context: &Context<'_>,
     failure: Failure,
@@ -1060,8 +1060,8 @@ fn state_of(url: &str) -> Option<String> {
         .map(|(_, value)| value.into_owned())
 }
 
-/// JSON output gives `{"login": {"server", "url"}}`, so that an agent can
-/// give the URL to a person.
+// JSON output gives `{"login": {"server", "url"}}`, so that an agent can
+// give the URL to a person.
 fn show_url(context: &Context<'_>, server: &str, url: &str, read_stdin: bool) {
     let paste = if read_stdin {
         "\nAfter the login, the browser goes to a page on 127.0.0.1. If that \
@@ -1093,8 +1093,8 @@ fn page(status: &str, message: &str) -> String {
 const REQUEST_LINE_LIMIT: Duration = Duration::from_secs(5);
 const MAX_REQUEST_LINE: u64 = 16 * 1024;
 
-/// Gives a result only for a redirect of this login. Another request gets
-/// `404` or `400`, and the wait continues.
+// Gives a result only for a redirect of this login. Another request gets
+// `404` or `400`, and the wait continues.
 async fn redirect_of(
     mut stream: tokio::net::TcpStream,
     redirect: &RedirectUri,
@@ -1136,8 +1136,8 @@ async fn redirect_of(
 const NOT_FOUND: &[u8] =
     b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
 
-/// Each connection gets its own task, so that a slow connection cannot
-/// block another one.
+// Each connection gets its own task, so that a slow connection cannot
+// block another one.
 async fn from_listener(
     listener: TcpListener,
     redirect: &RedirectUri,
@@ -1165,8 +1165,8 @@ async fn from_listener(
     }
 }
 
-/// The read is on its own thread, because a blocking read on the runtime delays
-/// the exit of `ncp` by the shutdown limit.
+// The read is on its own thread, because a blocking read on the runtime delays
+// the exit of `ncp` by the shutdown limit.
 async fn pasted_line() -> Option<String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
@@ -1179,7 +1179,7 @@ async fn pasted_line() -> Option<String> {
     receiver.await.ok().flatten()
 }
 
-/// A pasted URL is for this login, so each error in it ends the login.
+// A pasted URL is for this login, so each error in it ends the login.
 async fn wait_for_redirect(
     listener: TcpListener,
     redirect: &RedirectUri,
@@ -1325,8 +1325,8 @@ async fn remove_bound(
     Ok(Found::Removed)
 }
 
-/// A native store that cannot answer gives only a warning, so that the
-/// file copy still goes away.
+// A native store that cannot answer gives only a warning, so that the
+// file copy still goes away.
 async fn remove_everywhere(
     context: &Context<'_>,
     name: &str,

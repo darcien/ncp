@@ -90,8 +90,8 @@ pub fn url(text: &str) -> String {
     format!("{scheme}://{authority}{tail}{fragment}")
 }
 
-/// The query with the value of each OAuth secret parameter hidden, for
-/// example the `code` of a redirect.
+// The query with the value of each OAuth secret parameter hidden, for
+// example the `code` of a redirect.
 fn hide_query(query: &str) -> String {
     query
         .split('&')
@@ -144,8 +144,8 @@ pub fn values(text: &str, secrets: &[String]) -> String {
         .fold(text.to_string(), |text, form| text.replace(form, HIDDEN))
 }
 
-/// Each byte that is not an unreserved URL character (RFC 3986 §2.3) as
-/// `%XX`.
+// Each byte that is not an unreserved URL character (RFC 3986 §2.3) as
+// `%XX`.
 fn percent_encoded(value: &str) -> String {
     value.bytes().fold(String::new(), |mut text, byte| {
         if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {

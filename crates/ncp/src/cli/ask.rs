@@ -67,13 +67,13 @@ struct Asker {
     limit: Duration,
 }
 
-/// Text of the server in a block, with escapes. Each line after the first gets
-/// an indent, so that no line can look like a question or a note of `ncp`.
+// Text of the server in a block, with escapes. Each line after the first gets
+// an indent, so that no line can look like a question or a note of `ncp`.
 fn block(text: &str) -> String {
     ui::printable(&ui::indented(text)).into_owned()
 }
 
-/// Text of the server on one line: a label, a title, a default, a URL.
+// Text of the server on one line: a label, a title, a default, a URL.
 fn single(text: &str) -> String {
     ui::printable(&ui::one_line(text)).into_owned()
 }
@@ -93,8 +93,8 @@ impl Asker {
         self.ui.diagnostic(text);
     }
 
-    /// One line from stdin, read on its own thread: a blocking read on the
-    /// runtime stops the time limits and delays the exit.
+    // One line from stdin, read on its own thread: a blocking read on the
+    // runtime stops the time limits and delays the exit.
     async fn line(&self) -> Result<String, Stop> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         std::thread::spawn(move || {
@@ -109,8 +109,8 @@ impl Asker {
         }
     }
 
-    /// A yes or no question, for example to open a page. The answer is a
-    /// letter or the whole word.
+    // A yes or no question, for example to open a page. The answer is a
+    // letter or the whole word.
     async fn decision(&self, question: &str) -> Result<Decision, Stop> {
         loop {
             self.say(&format!("{question} [y]es, [n]o, [c]ancel: "));
@@ -123,9 +123,9 @@ impl Asker {
         }
     }
 
-    /// The last question of a form. The answer is a letter or the whole
-    /// word, so that "change" cannot cancel. `y` also sends and `n` also
-    /// declines, as a person can type yes or no.
+    // The last question of a form. The answer is a letter or the whole
+    // word, so that "change" cannot cancel. `y` also sends and `n` also
+    // declines, as a person can type yes or no.
     async fn form_decision(&self, server: &str) -> Result<FormDecision, Stop> {
         loop {
             self.say(&format!(
@@ -141,8 +141,8 @@ impl Asker {
         }
     }
 
-    /// One field, until the answer passes the checks of the schema. `None`
-    /// for an optional field with no answer.
+    // One field, until the answer passes the checks of the schema. `None`
+    // for an optional field with no answer.
     async fn field(&self, field: &elicit::Field) -> Result<Option<Value>, Stop> {
         if let Some(description) = &field.description {
             self.say(&format!("  {}\n", block(description)));
@@ -167,7 +167,7 @@ impl Asker {
         Ok(content)
     }
 
-    /// Asks which field to change, then asks that field again.
+    // Asks which field to change, then asks that field again.
     async fn change(
         &self,
         fields: &[elicit::Field],
@@ -281,9 +281,9 @@ pub(super) fn has_punycode_label(host: &str) -> bool {
 }
 
 impl Asker {
-    /// Asks to open each page that the server needs, as a URL-mode question.
-    /// `ncp` does not run the request again: the server can need time, and the
-    /// person knows when the work on the page is complete.
+    // Asks to open each page that the server needs, as a URL-mode question.
+    // `ncp` does not run the request again: the server can need time, and the
+    // person knows when the work on the page is complete.
     async fn open_pages(&self, failure: Failure) -> Failure {
         let mut opened = false;
         for page in &failure.pages {
@@ -322,9 +322,9 @@ pub fn elicitor(context: &Context<'_>, server: &str) -> Elicitor {
     })
 }
 
-/// The requests of an `input_required` result as JSON, when `ncp` can
-/// answer each of them: only elicitation. `None` for a request of another
-/// kind, for example sampling.
+// The requests of an `input_required` result as JSON, when `ncp` can
+// answer each of them: only elicitation. `None` for a request of another
+// kind, for example sampling.
 fn elicitations(result: &rmcp::model::InputRequiredResult) -> Option<Vec<(String, Value)>> {
     let requests = serde_json::to_value(&result.input_requests).ok()?;
     requests

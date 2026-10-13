@@ -20,13 +20,13 @@ fn servers_of(path: &std::path::Path) -> Value {
     root["mcpServers"].clone()
 }
 
-/// The JSON value of a file with comments: the tests read it with the
-/// parser of `ncp`.
+// The JSON value of a file with comments: the tests read it with the
+// parser of `ncp`.
 fn jsonc_value(text: &str) -> Value {
     Value::Object(ncp::config::parse_root(text).unwrap())
 }
 
-/// A folder in the home folder with a `.git` folder and no project file.
+// A folder in the home folder with a `.git` folder and no project file.
 fn in_repository(mut home: Home) -> Home {
     let dir = home.root.join("app");
     std::fs::create_dir_all(dir.join(".git")).unwrap();
@@ -38,7 +38,7 @@ fn new_project_file(home: &Home) -> PathBuf {
     std::fs::canonicalize(&home.cwd).unwrap().join(".mcp.json")
 }
 
-/// `ncp server add NAME URL --global` with more arguments.
+// `ncp server add NAME URL --global` with more arguments.
 fn add_global(home: &Home, name: &str, url: &str, more: &[&str]) -> common::Run {
     let args: Vec<&str> = ["server", "add", name, url, "--global"]
         .into_iter()
@@ -799,8 +799,8 @@ fn the_tokens_stay_when_the_other_file_still_has_the_name() {
     );
 }
 
-/// A local HTTP server that answers each request with `404`, as a server
-/// does for a path with no MCP endpoint.
+// A local HTTP server that answers each request with `404`, as a server
+// does for a path with no MCP endpoint.
 fn not_found_server() -> String {
     use std::io::{Read as _, Write as _};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

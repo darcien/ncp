@@ -87,9 +87,9 @@ pub fn find(paths: &Paths, env: &Env, search: bool) -> ProjectFile {
     }
 }
 
-/// Reads the file one time, and checks the owner on the same open file.
-/// For a symlink, the check is on the target. Another user cannot make a
-/// file that the user owns (git CVE-2022-24765).
+// Reads the file one time, and checks the owner on the same open file.
+// For a symlink, the check is on the target. Another user cannot make a
+// file that the user owns (git CVE-2022-24765).
 fn read_owned(file: &Path) -> Result<String, String> {
     // With no O_NONBLOCK, the open of a FIFO waits for a writer with no
     // limit, also in shell completion. The check of the open file follows.

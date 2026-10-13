@@ -112,10 +112,10 @@ pub fn spawn(
     }
 }
 
-/// Gives each stderr line of the server to `write`, until the server closes
-/// stderr. A line that is not UTF-8 must not stop the reader: then the server
-/// gets an error on its next write. A long line comes in parts of the limit,
-/// cut between characters.
+// Gives each stderr line of the server to `write`, until the server closes
+// stderr. A line that is not UTF-8 must not stop the reader: then the server
+// gets an error on its next write. A long line comes in parts of the limit,
+// cut between characters.
 async fn log_lines(
     stderr: tokio::process::ChildStderr,
     format: Arc<dyn Fn(&str) -> String + Send + Sync>,
@@ -156,7 +156,7 @@ async fn log_lines(
     }
 }
 
-/// The number of bytes at the end that start a character with no end.
+// The number of bytes at the end that start a character with no end.
 fn cut_character(bytes: &[u8]) -> usize {
     match std::str::from_utf8(bytes) {
         Err(error) if error.error_len().is_none() => bytes.len() - error.valid_up_to(),

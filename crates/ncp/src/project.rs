@@ -149,7 +149,7 @@ mod tests {
 
     use super::*;
 
-    /// A fake tree: the paths that exist.
+    // A fake tree: the paths that exist.
     fn tree(paths: &[&str]) -> impl Fn(&Path, &str) -> bool {
         let set: HashSet<PathBuf> = paths.iter().map(PathBuf::from).collect();
         move |folder, name| set.contains(&folder.join(name))

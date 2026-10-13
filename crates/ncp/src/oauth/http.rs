@@ -58,7 +58,7 @@ impl OAuthHttp {
     }
 }
 
-/// The request body as it shows: a form or JSON with each secret hidden.
+// The request body as it shows: a form or JSON with each secret hidden.
 fn shown_request_body(body: &[u8]) -> Option<String> {
     if body.is_empty() {
         return None;
@@ -70,8 +70,8 @@ fn shown_request_body(body: &[u8]) -> Option<String> {
     })
 }
 
-/// The response body as it shows: JSON with each secret hidden, else only
-/// its size, because an HTML page is long and says nothing new.
+// The response body as it shows: JSON with each secret hidden, else only
+// its size, because an HTML page is long and says nothing new.
 fn shown_response_body(body: &[u8]) -> Option<String> {
     if body.is_empty() {
         return None;
@@ -137,7 +137,7 @@ impl OAuthHttp {
     }
 }
 
-/// Sends the request and reads the whole body, up to the limit.
+// Sends the request and reads the whole body, up to the limit.
 async fn receive(
     client: &reqwest::Client,
     request: reqwest::Request,
@@ -159,7 +159,7 @@ async fn receive(
     Ok(builder.body(body)?)
 }
 
-/// The method as a static name. OAuth uses only GET and POST.
+// The method as a static name. OAuth uses only GET and POST.
 fn static_method(method: &reqwest::Method) -> &'static str {
     match *method {
         reqwest::Method::GET => "GET",

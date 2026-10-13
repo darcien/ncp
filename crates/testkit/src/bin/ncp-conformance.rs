@@ -101,8 +101,8 @@ impl Run {
         }
     }
 
-    /// Runs the command. When the server needs a login or more scopes, logs
-    /// in and runs it again, as a user does after the hint.
+    // Runs the command. When the server needs a login or more scopes, logs
+    // in and runs it again, as a user does after the hint.
     fn with_login(&self, args: &[&str], logins: &mut usize) -> Result<Output, String> {
         loop {
             let output = self.ncp(args)?;
@@ -120,8 +120,8 @@ impl Run {
     }
 }
 
-/// A value for a property of the schema. The suite checks the types, not
-/// the values.
+// A value for a property of the schema. The suite checks the types, not
+// the values.
 fn sample(schema: &Value) -> Value {
     match schema["type"].as_str() {
         Some("number" | "integer") => json!(1),
@@ -132,7 +132,7 @@ fn sample(schema: &Value) -> Value {
     }
 }
 
-/// The arguments of a call: each required property with a sample value.
+// The arguments of a call: each required property with a sample value.
 fn arguments(tool: &Value) -> Value {
     let schema = &tool["inputSchema"];
     let required: Vec<&str> = schema["required"]
@@ -146,10 +146,10 @@ fn arguments(tool: &Value) -> Value {
     Value::Object(properties)
 }
 
-/// The calls of the scenario: the `toolCalls` of the context, else one
-/// call of each listed tool. The schema scenario sends the input schema of
-/// its focal tool, as `ncp tool list` shows it, back through its echo
-/// tool. Thus it checks that `ncp` keeps each keyword.
+// The calls of the scenario: the `toolCalls` of the context, else one
+// call of each listed tool. The schema scenario sends the input schema of
+// its focal tool, as `ncp tool list` shows it, back through its echo
+// tool. Thus it checks that `ncp` keeps each keyword.
 fn calls(scenario: &str, context: &Value, tools: &Value) -> Vec<(String, Value)> {
     if scenario == "json-schema-2020-12-preservation" {
         let listed = tools.as_array().cloned().unwrap_or_default();

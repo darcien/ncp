@@ -57,8 +57,8 @@ impl FileStore {
             .map_err(|source| self.io(source))
     }
 
-    /// Reads, changes and writes the file under a lock, so that two
-    /// processes that write at the same time do not lose a change.
+    // Reads, changes and writes the file under a lock, so that two
+    // processes that write at the same time do not lose a change.
     fn change(&self, edit: impl FnOnce(&mut BTreeMap<String, String>)) -> Result<(), StoreError> {
         let _lock = private_file::lock(&self.path.with_extension("lock"), LOCK_LIMIT)
             .map_err(|source| self.io(source))?;
@@ -122,7 +122,7 @@ mod tests {
     use super::*;
     use crate::server::ServerName;
 
-    /// A new, empty folder for one test.
+    // A new, empty folder for one test.
     fn scratch_dir(test: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("ncp-test-{}-{test}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);

@@ -136,7 +136,7 @@ impl TextFormat {
     }
 }
 
-/// A time as `hh:mm:ss` in range (a leap second is 60).
+// A time as `hh:mm:ss` in range (a leap second is 60).
 fn is_time(text: &str) -> bool {
     let parts: Vec<&str> = text.split(':').collect();
     let number = |part: &str, top: u32| {
@@ -148,8 +148,8 @@ fn is_time(text: &str) -> bool {
         if number(hours, 23) && number(minutes, 59) && number(seconds, 60))
 }
 
-/// The end of a date-time after the seconds: optional fractions, then `Z`
-/// or an offset `+hh:mm` or `-hh:mm`.
+// The end of a date-time after the seconds: optional fractions, then `Z`
+// or an offset `+hh:mm` or `-hh:mm`.
 fn is_offset(text: &str) -> bool {
     let rest = match text.strip_prefix('.') {
         Some(fraction) => {
@@ -168,7 +168,7 @@ fn is_offset(text: &str) -> bool {
             .is_some_and(|offset| offset.len() == 5 && is_time(&format!("{offset}:00")))
 }
 
-/// A date as `YYYY-MM-DD` with a month and a day in range.
+// A date as `YYYY-MM-DD` with a month and a day in range.
 fn is_date(text: &str) -> bool {
     let parts: Vec<&str> = text.split('-').collect();
     let number = |part: &str, width: usize| {
@@ -256,8 +256,8 @@ pub fn parse(params: &Value) -> Result<Request, RequestError> {
     }
 }
 
-/// Gives `None` when the list is empty or an item is not a choice. A field
-/// with no choice cannot get an answer.
+// Gives `None` when the list is empty or an item is not a choice. A field
+// with no choice cannot get an answer.
 fn choices(list: &Value) -> Option<Vec<Choice>> {
     let items = list.as_array().filter(|items| !items.is_empty())?;
     items
@@ -279,8 +279,8 @@ fn choices(list: &Value) -> Option<Vec<Choice>> {
         .collect()
 }
 
-/// The choices of a single-select string: `enum` (with `enumNames` as the
-/// titles), or `oneOf` with `const` and `title`.
+// The choices of a single-select string: `enum` (with `enumNames` as the
+// titles), or `oneOf` with `const` and `title`.
 fn single_choices(property: &Value) -> Option<Vec<Choice>> {
     if let Some(list) = property.get("oneOf") {
         return choices(list);
@@ -391,7 +391,7 @@ pub fn hint(field: &Field) -> String {
     format!("{} ({kind}{need}){default}", field.label)
 }
 
-/// The count of values that a multi-select takes, as words.
+// The count of values that a multi-select takes, as words.
 fn count_text(minimum: u64, maximum: Option<u64>) -> String {
     match maximum {
         Some(maximum) if maximum == minimum => format!("{minimum}"),

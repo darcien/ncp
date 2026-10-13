@@ -327,9 +327,9 @@ fn value_from_the_credential_file_expands_in_env_and_the_environment_wins() {
     assert_eq!(text_of(&env_value(&home).stdout()), "from-env");
 }
 
-/// `ncp` clears the environment of a stdio server. The SDK of the server
-/// cannot change this, so the test uses the fixture and not an interop
-/// server.
+// `ncp` clears the environment of a stdio server. The SDK of the server
+// cannot change this, so the test uses the fixture and not an interop
+// server.
 #[test]
 fn stdio_server_gets_only_the_environment_of_ncp_and_its_entry() {
     let home = Home::new("server-env").unset("NO_PROXY");
@@ -480,7 +480,7 @@ async fn stored_bearer_token_goes_in_a_static_header() {
     assert_eq!(run.code(), 0, "{}", run.describe());
 }
 
-/// The origin of a fixture URL, as `ncp` writes it in a store key.
+// The origin of a fixture URL, as `ncp` writes it in a store key.
 fn origin_of(url: &str) -> String {
     url::Url::parse(url).unwrap().origin().ascii_serialization()
 }
@@ -1191,8 +1191,8 @@ async fn ssl_cert_file_without_the_root_of_the_server_fails_with_a_hint() {
     );
 }
 
-/// On Linux the system store reads `SSL_CERT_DIR`, so a root there is a
-/// system root. The file of `SSL_CERT_FILE` replaces it.
+// On Linux the system store reads `SSL_CERT_DIR`, so a root there is a
+// system root. The file of `SSL_CERT_FILE` replaces it.
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread")]
 async fn ssl_cert_file_replaces_the_system_roots_on_linux() {
@@ -1225,8 +1225,8 @@ fn unreadable_ssl_cert_file_gives_a_local_error_that_names_the_variable() {
     );
 }
 
-/// The JSON Lines on stderr with the kind as their key, for example
-/// `debug`.
+// The JSON Lines on stderr with the kind as their key, for example
+// `debug`.
 fn notes(run: &Run, kind: &str) -> Vec<Value> {
     run.stderr()
         .into_iter()
@@ -1449,8 +1449,8 @@ async fn login_uses_the_configured_client_id_and_registers_nothing() {
     assert_eq!(record.token_client_id.as_deref(), Some("pre-1"));
 }
 
-/// A server with no Dynamic Client Registration and a client with a
-/// secret that the user registered there.
+// A server with no Dynamic Client Registration and a client with a
+// secret that the user registered there.
 async fn pre_registered(
     test: &str,
     oauth: impl FnOnce(&str) -> Value,
@@ -1841,8 +1841,8 @@ async fn the_scopes_of_a_403_stay_with_tokens_in_the_native_store() {
     step_up_keeps_the_scopes("step-up-native", true).await;
 }
 
-/// A call gets a 403 for a new scope. Then a login follows, then the call
-/// again. The tokens are in the file or in the native store.
+// A call gets a 403 for a new scope. Then a login follows, then the call
+// again. The tokens are in the file or in the native store.
 async fn step_up_keeps_the_scopes(name: &str, native: bool) {
     let auth = ncp_testkit::auth_server::serve_auth(AuthSettings {
         scopes_supported: vec!["a".into()],
@@ -1883,7 +1883,7 @@ async fn step_up_keeps_the_scopes(name: &str, native: bool) {
     assert_eq!(run.code(), 0, "{}", run.describe());
 }
 
-/// The scope that a login asks for, with the settings of the server.
+// The scope that a login asks for, with the settings of the server.
 async fn first_login_scope(name: &str, settings: AuthSettings) -> Option<String> {
     let (auth, fixture) = oauth_fixture(settings).await;
     let home = oauth_home(name, &fixture.url);
@@ -2425,7 +2425,7 @@ fn server_that_stops_at_its_start_gives_its_exit_status_and_its_log() {
     );
 }
 
-/// A configuration whose server leaves a mark file when it starts.
+// A configuration whose server leaves a mark file when it starts.
 fn marking_server(home: &Home) -> PathBuf {
     let mark = home.root.join("started");
     home.configure(&json!({
@@ -3044,8 +3044,8 @@ fn a_page_that_is_not_safe_is_refused_and_no_page_is_a_protocol_error() {
     assert_eq!(run.code(), 3, "{}", run.describe());
 }
 
-/// A server that answers each request with the status line and headers,
-/// and counts its connections.
+// A server that answers each request with the status line and headers,
+// and counts its connections.
 fn raw_server(answer: String) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
     use std::io::{Read as _, Write as _};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

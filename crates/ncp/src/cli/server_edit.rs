@@ -152,8 +152,8 @@ pub async fn add(context: &Context<'_>, args: AddArgs) -> Result<(), Failure> {
     report_added(context, &target, name, &entry, outcome).await
 }
 
-/// The form of the entry: one word after the name is a URL, and the words
-/// after `--` are a command.
+// The form of the entry: one word after the name is a URL, and the words
+// after `--` are a command.
 fn request(args: &AddArgs) -> Result<Request, Failure> {
     let form = match (&args.url, args.command.split_first()) {
         (Some(url), None) => Form::Remote { url: url.clone() },
@@ -209,10 +209,10 @@ fn remove_command(name: &str, scope: Scope) -> String {
     }
 }
 
-/// `server add` writes to the project file. It writes to the global file
-/// with `--global`, with `--config-file`, or in the home folder. With no
-/// project file, it makes `.mcp.json` in the current folder, as `mise use`
-/// does (project-config rule 9).
+// `server add` writes to the project file. It writes to the global file
+// with `--global`, with `--config-file`, or in the home folder. With no
+// project file, it makes `.mcp.json` in the current folder, as `mise use`
+// does (project-config rule 9).
 async fn add_target(
     context: &Context<'_>,
     loaded: &Loaded,
@@ -285,10 +285,10 @@ fn read(file: &Path) -> Result<Option<String>, Failure> {
     }
 }
 
-/// `ncp` writes only a trusted project file, as `mise use` checks the
-/// trust before it writes (project-config rule 9). With a TTY, an
-/// untrusted file gets the question: a Yes trusts it, and a No writes the
-/// ignored record and stops.
+// `ncp` writes only a trusted project file, as `mise use` checks the
+// trust before it writes (project-config rule 9). With a TTY, an
+// untrusted file gets the question: a Yes trusts it, and a No writes the
+// ignored record and stops.
 async fn trusted_for_write(context: &Context<'_>, project: &Project) -> Result<(), Failure> {
     let file = project.file.display();
     match project.trust {
@@ -332,13 +332,13 @@ fn untrusted(project: &Project) -> Failure {
     .hint("ncp trust --show")
 }
 
-/// The steps under the lock (design 4.7 steps 6 to 9):
-/// - read the base
-/// - make the edit
-/// - replace the file atomically, after a last check
-/// - write the trust record of a project file
-///
-/// Each question comes before the lock, so no person waits inside it.
+// The steps under the lock (design 4.7 steps 6 to 9):
+// - read the base
+// - make the edit
+// - replace the file atomically, after a last check
+// - write the trust record of a project file
+//
+// Each question comes before the lock, so no person waits inside it.
 async fn change(
     context: &Context<'_>,
     target: &Target,
@@ -396,7 +396,7 @@ impl From<std::io::Error> for Stop {
     }
 }
 
-/// The wait runs on its own thread, so that Ctrl-C stops it.
+// The wait runs on its own thread, so that Ctrl-C stops it.
 async fn lock(context: &Context<'_>) -> Result<private_file::Lock, Failure> {
     let path = context.paths.config_lock.clone();
     let shown = path.display().to_string();
@@ -411,9 +411,9 @@ async fn lock(context: &Context<'_>) -> Result<private_file::Lock, Failure> {
     }
 }
 
-/// The file that the new bytes go to. A symlink stays: its target gets them. A
-/// symlink to a missing file is an error, because a rename puts a file in the
-/// place of the link.
+// The file that the new bytes go to. A symlink stays: its target gets them. A
+// symlink to a missing file is an error, because a rename puts a file in the
+// place of the link.
 fn real_path(file: &Path) -> Result<PathBuf, Failure> {
     match fs::canonicalize(file) {
         Ok(real) => Ok(real),
@@ -425,8 +425,8 @@ fn real_path(file: &Path) -> Result<PathBuf, Failure> {
     }
 }
 
-/// The mode of the old file, or `0600` for a new one. A rename needs only
-/// the access to the folder, so a read-only file gets its own check.
+// The mode of the old file, or `0600` for a new one. A rename needs only
+// the access to the folder, so a read-only file gets its own check.
 fn mode_for_write(target: &Target, real: &Path) -> Result<u32, Failure> {
     match fs::metadata(real) {
         Ok(metadata) => {
@@ -442,8 +442,8 @@ fn cannot_write(target: &Target, error: &dyn std::fmt::Display) -> Failure {
     Failure::protocol(format!("cannot write {}: {error}", target.file.display()))
 }
 
-/// The file has the bytes that the user checked. The lock cannot stop an
-/// editor or another tool.
+// The file has the bytes that the user checked. The lock cannot stop an
+// editor or another tool.
 fn unchanged(target: &Target, real: &Path, base: Option<&String>) -> Result<(), Failure> {
     if read(real)?.as_ref() == base {
         Ok(())
@@ -465,9 +465,9 @@ fn edit_failure(target: &Target, error: &EditError) -> Failure {
     }
 }
 
-/// After a write, `ncp` trusts the new bytes of a project file: the user saw
-/// the old bytes and gave the change (project-config rule 9). A record that
-/// fails gives a warning, because the change is complete.
+// After a write, `ncp` trusts the new bytes of a project file: the user saw
+// the old bytes and gave the change (project-config rule 9). A record that
+// fails gives a warning, because the change is complete.
 fn trust_written(context: &Context<'_>, target: &Target, text: &str) {
     if target.scope == Scope::Project
         && let Err(failure) = project_file::trust_written(&context.paths, &target.file, text)
@@ -524,8 +524,8 @@ async fn report_added(
     )
 }
 
-/// One line for each stored value: the stores, and the other servers that
-/// use it, so that a reused value shows.
+// One line for each stored value: the stores, and the other servers that
+// use it, so that a reused value shows.
 fn value_line(name: &str, row: &SecretRow) -> String {
     let stored = if row.places.is_empty() {
         "not stored".to_string()
@@ -546,11 +546,11 @@ fn value_line(name: &str, row: &SecretRow) -> String {
     format!("{}: {stored}, {used}.\n", row.name)
 }
 
-/// The steps that are left:
-/// - a value that no store and no variable has
-/// - a variable of the command or the URL
-/// - the login of an http server with no credential header
-/// - a check of the connection
+// The steps that are left:
+// - a value that no store and no variable has
+// - a variable of the command or the URL
+// - the login of an http server with no credential header
+// - a check of the connection
 fn next_steps(context: &Context<'_>, name: &str, entry: &Entry, rows: &[SecretRow]) -> Vec<Step> {
     let word = render::shell_word(name);
     let unset = |variable: &str| !context.env.contains_key(variable);
@@ -582,8 +582,8 @@ fn next_steps(context: &Context<'_>, name: &str, entry: &Entry, rows: &[SecretRo
         .collect()
 }
 
-/// A warning when the other file has the name: it says which entry takes
-/// effect in this folder (project-config rule 9).
+// A warning when the other file has the name: it says which entry takes
+// effect in this folder (project-config rule 9).
 fn warn_about_other_file(
     context: &Context<'_>,
     view: Option<&Loaded>,
@@ -766,14 +766,14 @@ fn report_removed(
     )
 }
 
-/// The failure of a name that no file has, with the nearest name.
+// The failure of a name that no file has, with the nearest name.
 fn not_found(context: &Context<'_>, loaded: &Loaded, name: &str) -> Failure {
     session::select(loaded, name, context.ui)
         .err()
         .unwrap_or_else(|| Failure::usage(format!("no server {name:?} is configured")))
 }
 
-/// An entry that does not load has no URL to compare, so its tokens stay, and the result says so.
+// An entry that does not load has no URL to compare, so its tokens stay, and the result says so.
 async fn remove_tokens(context: &Context<'_>, name: &str, entry: &Value) -> TokenRemoval {
     match config::parse_one(name, entry, context.env) {
         Ok(server) => match &server.transport {

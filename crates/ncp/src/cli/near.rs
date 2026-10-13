@@ -1,6 +1,6 @@
 //! The near name for an unknown name: "did you mean ...?".
 
-/// The edit distance (Levenshtein) of two names, in characters.
+// The edit distance (Levenshtein) of two names, in characters.
 fn distance(a: &str, b: &str) -> usize {
     let b: Vec<char> = b.chars().collect();
     let first: Vec<usize> = (0..=b.len()).collect();

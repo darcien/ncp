@@ -89,8 +89,8 @@ fn pairs(words: &[String]) -> Result<Vec<Pair>, ArgumentError> {
     }
 }
 
-/// One pair. The first `=` splits the word. A value that starts with `@`
-/// is text, for example an npm scope.
+// One pair. The first `=` splits the word. A value that starts with `@`
+// is text, for example an npm scope.
 fn pair(word: &str) -> Result<Pair, ArgumentError> {
     let (key, value) = word
         .split_once('=')
@@ -136,7 +136,7 @@ pub fn coerce(resolved: &Resolved, schema: &JsonObject) -> JsonObject {
     }
 }
 
-/// True when the property has a JSON type and no `string` type.
+// True when the property has a JSON type and no `string` type.
 fn reads_as_json(schema: &JsonObject, key: &str) -> bool {
     const JSON_TYPES: [&str; 5] = ["number", "integer", "boolean", "array", "object"];
     let types = schema
@@ -163,8 +163,8 @@ pub fn types<'a>(root: &'a JsonObject, property: &'a Value) -> BTreeSet<&'a str>
     found
 }
 
-/// Each `$ref` resolves one time only. A server can send a schema whose
-/// references form a loop or a wide tree, and that must not stop `ncp`.
+// Each `$ref` resolves one time only. A server can send a schema whose
+// references form a loop or a wide tree, and that must not stop `ncp`.
 fn collect<'a>(
     root: &'a JsonObject,
     schema: &'a Value,
@@ -211,7 +211,7 @@ fn collect<'a>(
     }
 }
 
-/// The schema at a JSON pointer in the root schema (RFC 6901).
+// The schema at a JSON pointer in the root schema (RFC 6901).
 fn local_target<'a>(root: &'a JsonObject, pointer: &str) -> Option<&'a Value> {
     let path = pointer.strip_prefix('/')?;
     let (first, rest) = path.split_once('/').unwrap_or((path, ""));

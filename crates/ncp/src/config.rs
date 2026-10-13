@@ -374,8 +374,8 @@ impl Config {
     }
 }
 
-/// The names of the variables in each string value of a JSON value. Keys
-/// do not expand, so their names do not count.
+// The names of the variables in each string value of a JSON value. Keys
+// do not expand, so their names do not count.
 fn variables_in(value: &Value, found: &mut BTreeSet<String>) {
     match value {
         Value::String(text) => found.extend(expand::names(text).into_iter().map(str::to_string)),
@@ -456,9 +456,9 @@ fn servers_of(root: &Map<String, Value>) -> Result<Option<&Map<String, Value>>, 
         .transpose()
 }
 
-/// The values that can read a credential store: `env` of a stdio entry,
-/// `headers` and `oauth.clientSecret` of a remote entry. Only the field of
-/// the transport expands: `headers` in a stdio entry is an unknown key.
+// The values that can read a credential store: `env` of a stdio entry,
+// `headers` and `oauth.clientSecret` of a remote entry. Only the field of
+// the transport expands: `headers` in a stdio entry is an unknown key.
 fn store_values(entry: &Map<String, Value>, kind: Kind) -> Vec<&Value> {
     let values = match kind {
         Kind::Stdio => vec![entry.get("env")],
@@ -590,8 +590,8 @@ fn unexpanded(name: &str, value: &Value) -> Result<Unexpanded, EntryError> {
     })
 }
 
-/// Each `${NAME}` of `headers` with the host of the URL, and of
-/// `oauth.clientSecret` with the host of the issuer, which gets it.
+// Each `${NAME}` of `headers` with the host of the URL, and of
+// `oauth.clientSecret` with the host of the issuer, which gets it.
 fn sends(object: &Map<String, Value>, url: &str) -> Vec<(String, String)> {
     let oauth = object.get("oauth").and_then(Value::as_object);
     let issuer = oauth
@@ -612,8 +612,8 @@ fn sends(object: &Map<String, Value>, url: &str) -> Vec<(String, String)> {
     headers.chain(secret).collect()
 }
 
-/// The host that gets a value. With `${` in the authority, the host as the file
-/// writes it: a parse changes the case of a variable name.
+// The host that gets a value. With `${` in the authority, the host as the file
+// writes it: a parse changes the case of a variable name.
 fn host_of(url: &str) -> String {
     let authority = authority(url);
     if authority.contains("${") {
@@ -629,18 +629,18 @@ fn host_of(url: &str) -> String {
         .unwrap_or_else(|| authority.to_string())
 }
 
-/// The text between `://` and the first `/`, `?`, `#` or `\`, as a URL
-/// parser ends the authority.
+// The text between `://` and the first `/`, `?`, `#` or `\`, as a URL
+// parser ends the authority.
 fn authority(url: &str) -> &str {
     let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
     rest.split(['/', '?', '#', '\\']).next().unwrap_or(rest)
 }
 
-/// The URL for the checks with no expansion. A `${NAME}` in the path or
-/// the query becomes a literal, so the rules of the URL still apply. A
-/// `${NAME}` in the scheme or the authority decides the scheme and the
-/// host. Then no rule of the URL applies before the expansion. A fixed URL
-/// stands in, so that the checks of `headers` and `oauth` still run.
+// The URL for the checks with no expansion. A `${NAME}` in the path or
+// the query becomes a literal, so the rules of the URL still apply. A
+// `${NAME}` in the scheme or the authority decides the scheme and the
+// host. Then no rule of the URL applies before the expansion. A fixed URL
+// stands in, so that the checks of `headers` and `oauth` still run.
 fn url_to_check(url: &str) -> String {
     let scheme = url.split_once("://").map_or("", |(scheme, _)| scheme);
     if scheme.contains("${") || authority(url).contains("${") {
@@ -753,8 +753,8 @@ fn unknown_keys(server: &str, object: &Map<String, Value>, kind: Kind) -> Vec<Wa
         .collect()
 }
 
-/// The target with no expansion. The transport parsed first, so each field
-/// has the right type.
+// The target with no expansion. The transport parsed first, so each field
+// has the right type.
 fn configured_target(object: &Map<String, Value>, kind: Kind) -> Target {
     let text = |field: &str| {
         object
@@ -833,8 +833,8 @@ fn remote(
     })
 }
 
-/// The pre-registered client of the `oauth` object (design B68). A client
-/// ID and an issuer are not secrets, so they have no `${NAME}`.
+// The pre-registered client of the `oauth` object (design B68). A client
+// ID and an issuer are not secrets, so they have no `${NAME}`.
 fn oauth_client(
     object: &Map<String, Value>,
     url: &ServerUrl,
@@ -875,9 +875,9 @@ fn oauth_client(
     Ok(Some(PreRegisteredClient { client_id, kind }))
 }
 
-/// `oauth.issuer`, else `oauth.authorizationServer`: a string, or an array with
-/// one string. One issuer, because the user registers a client at one
-/// authorization server.
+// `oauth.issuer`, else `oauth.authorizationServer`: a string, or an array with
+// one string. One issuer, because the user registers a client at one
+// authorization server.
 fn configured_issuer(
     issuer: Option<String>,
     authorization_server: Option<&Value>,
@@ -940,8 +940,8 @@ fn strings(
     }
 }
 
-/// The values expand only when the server starts, but the parse checks
-/// their syntax now.
+// The values expand only when the server starts, but the parse checks
+// their syntax now.
 fn template_map(
     object: &Map<String, Value>,
     field: &str,
@@ -1397,8 +1397,8 @@ mod tests {
         assert_eq!(command("g"), "g");
     }
 
-    /// For each entry: the shown target is the target that runs, and an
-    /// entry that the loader refuses shows a problem or an error.
+    // For each entry: the shown target is the target that runs, and an
+    // entry that the loader refuses shows a problem or an error.
     #[test]
     fn the_unexpanded_entry_is_the_entry_that_runs() {
         let entries = [

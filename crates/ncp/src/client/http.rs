@@ -188,9 +188,9 @@ where
     }
 }
 
-/// True when the error or a cause is the rustls error for a certificate of
-/// an unknown issuer. An `io::Error` hides its inner error from `source`,
-/// so the search goes into it.
+// True when the error or a cause is the rustls error for a certificate of
+// an unknown issuer. An `io::Error` hides its inner error from `source`,
+// so the search goes into it.
 fn is_unknown_issuer(error: &(dyn std::error::Error + 'static)) -> bool {
     std::iter::successors(Some(error), |error| {
         error
@@ -228,11 +228,11 @@ pub fn configured(env: &Env, observer: &Observer) -> Result<reqwest::ClientBuild
     with_cert_file(builder, env)
 }
 
-/// Replaces the system roots with the roots in the file that `SSL_CERT_FILE`
-/// names, on each OS, as uv does. On Linux, the system store reads the variable
-/// in place of the system roots, so a merge gives a different rule on each OS.
-/// A file that `ncp` cannot use is an error, because a silent fallback gives a
-/// TLS error that does not name the cause.
+// Replaces the system roots with the roots in the file that `SSL_CERT_FILE`
+// names, on each OS, as uv does. On Linux, the system store reads the variable
+// in place of the system roots, so a merge gives a different rule on each OS.
+// A file that `ncp` cannot use is an error, because a silent fallback gives a
+// TLS error that does not name the cause.
 fn with_cert_file(
     builder: reqwest::ClientBuilder,
     env: &Env,
@@ -261,8 +261,8 @@ fn with_cert_file(
     Ok(builder.tls_certs_only(roots))
 }
 
-/// A value from `${NAME}` gets the sensitive mark, so debug output hides
-/// it.
+// A value from `${NAME}` gets the sensitive mark, so debug output hides
+// it.
 fn headers(
     config: &BTreeMap<String, Expanded>,
 ) -> Result<HashMap<HeaderName, HeaderValue>, HttpError> {
