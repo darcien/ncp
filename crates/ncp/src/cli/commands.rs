@@ -257,9 +257,9 @@ fn has_instructions(connection: &Connection) -> bool {
         .is_some_and(|info| info.instructions.is_some())
 }
 
-/// Keeps the tools in the cache for the time of `list_cache::keep_for`.
-/// A list that `ncp` must not keep removes the old file. A cache that
-/// cannot be written gives a warning: `ncp` works the same with no cache.
+/// Keeps the tools in the cache for the time of `list_cache::keep_for`. A list
+/// that `ncp` must not keep removes the old file. When `ncp` cannot write the
+/// cache, it gives a warning: `ncp` works the same with no cache.
 fn keep_tools(
     context: &Context<'_>,
     server: &Server,

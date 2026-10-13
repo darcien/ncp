@@ -1,7 +1,7 @@
 //! The protocol version cache file.
 //!
-//! It is a cache: `ncp` works the same when the file is removed. A file that
-//! does not load is ignored, and the next save writes it again.
+//! It is a cache: `ncp` works the same with no file. `ncp` ignores a file that
+//! does not load, and the next save writes it again.
 
 use std::{
     io::ErrorKind,
@@ -19,7 +19,7 @@ pub struct CacheError {
 
 /// # Errors
 ///
-/// Returns an error when the file exists but cannot be read.
+/// Returns an error when the file exists but `ncp` cannot read it.
 pub fn load(path: &Path) -> Result<VersionCache, CacheError> {
     match std::fs::read_to_string(path) {
         Ok(text) => Ok(serde_json::from_str(&text).unwrap_or_default()),
@@ -33,7 +33,7 @@ pub fn load(path: &Path) -> Result<VersionCache, CacheError> {
 
 /// # Errors
 ///
-/// Returns an error when the file cannot be written.
+/// Returns an error when `ncp` cannot write the file.
 pub fn save(path: &Path, cache: &VersionCache) -> Result<(), CacheError> {
     // Serializing a map of strings cannot fail.
     let text = serde_json::to_string_pretty(cache).unwrap_or_default();

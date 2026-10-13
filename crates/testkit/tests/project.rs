@@ -124,7 +124,7 @@ fn a_changed_byte_asks_again_and_says_that_the_file_changed() {
         message.contains("which changed since you trusted it"),
         "{message}"
     );
-    // The old bytes are trusted again after a revert.
+    // After a revert, the trust of the old bytes applies again.
     std::fs::write(&file, text).unwrap();
     assert_eq!(home.run(&["tool", "list", "fx"]).code(), 0);
 }

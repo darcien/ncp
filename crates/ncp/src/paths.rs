@@ -26,7 +26,7 @@ pub struct NoHome;
 impl Paths {
     /// # Errors
     ///
-    /// Returns an error when an XDG variable is not set and `HOME` is not an
+    /// Returns an error when an XDG variable has no value and `HOME` is not an
     /// absolute path.
     pub fn from_env(env: &Env) -> Result<Self, NoHome> {
         let home = || {

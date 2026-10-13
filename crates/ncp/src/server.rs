@@ -72,8 +72,8 @@ impl fmt::Display for ServerName {
 
 /// The URL of a remote server.
 ///
-/// Tokens and headers must not go over the network in plain text, so `http`
-/// is permitted only for a loopback host. The configuration file must not
+/// Tokens and headers must not go over the network in plain text, so `ncp`
+/// permits `http` only for a loopback host. The configuration file must not
 /// hold a secret, so the URL has no user name or password.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerUrl(Url);

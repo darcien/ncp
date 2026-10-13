@@ -140,7 +140,7 @@ pub enum Change {
 ///
 /// # Errors
 ///
-/// Returns a failure when a record cannot be written.
+/// Returns a failure when `ncp` cannot write a record.
 pub fn change(paths: &Paths, project: &Project, change: Change) -> Result<Trust, Failure> {
     let trusted = record(&paths.trusted_configs, &project.file);
     let ignored = record(&paths.ignored_configs, &project.file);
@@ -161,7 +161,7 @@ pub fn change(paths: &Paths, project: &Project, change: Change) -> Result<Trust,
 ///
 /// # Errors
 ///
-/// Returns a failure when a record cannot be written.
+/// Returns a failure when `ncp` cannot write a record.
 pub fn trust_written(paths: &Paths, file: &Path, text: &str) -> Result<(), Failure> {
     private_file::write(
         &record(&paths.trusted_configs, file),

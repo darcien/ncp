@@ -67,9 +67,8 @@ struct Asker {
     limit: Duration,
 }
 
-/// Text of the server in a block, with escapes. Each line after the first
-/// is indented, so that no line can look like a question or a note of
-/// `ncp`.
+/// Text of the server in a block, with escapes. Each line after the first gets
+/// an indent, so that no line can look like a question or a note of `ncp`.
 fn block(text: &str) -> String {
     ui::printable(&ui::indented(text)).into_owned()
 }

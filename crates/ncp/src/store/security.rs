@@ -285,8 +285,8 @@ impl SecurityStore {
         }
     }
 
-    /// Adds or replaces one item. Each item has its own run, so that each
-    /// exit code is known.
+    /// Adds or replaces one item. Each item has its own run, so that `ncp`
+    /// knows each exit code.
     fn add(&self, account: &str, text: &str, deadline: Instant) -> Result<(), StoreError> {
         let output = self.run(&["-i"], Some(&add_line(account, text)), deadline)?;
         // The error does not show stderr: after a parse error, it can hold

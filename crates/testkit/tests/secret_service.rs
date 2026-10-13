@@ -1,9 +1,9 @@
 //! Tests of the Linux Secret Service store.
 //!
 //! These tests run only in the Linux harness container, through
-//! `harness/linux/secret-service.sh`. The script starts a new D-Bus session
-//! and keyring daemon for each case, and runs one test in it. A normal test
-//! run skips them, because the Secret Service of the host must not be used.
+//! `harness/linux/secret-service.sh`. The script starts a new D-Bus session and
+//! keyring daemon for each case, and runs one test in it. A normal test run
+//! skips them, because a test must not use the Secret Service of the host.
 
 #![cfg(target_os = "linux")]
 // Test code can use unwrap: a panic is a test failure.

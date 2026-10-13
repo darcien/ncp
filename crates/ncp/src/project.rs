@@ -111,8 +111,8 @@ pub fn record_name(file: &Path) -> String {
 /// A project file that `ncp` read, with the state of its trust.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
-    /// The path where the search found the file. A symlink is not resolved,
-    /// so that a file linked into two folders asks in each folder.
+    /// The path where the search found the file. `ncp` does not resolve a
+    /// symlink, so that a file linked into two folders asks in each folder.
     pub file: PathBuf,
     /// The text that `ncp` read one time. It shows, hashes and runs this
     /// one copy.

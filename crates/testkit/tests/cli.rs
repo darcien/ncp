@@ -595,7 +595,8 @@ async fn rejected_stored_header_value_gives_the_secret_hint_before_the_login_hin
         "{}",
         run.describe()
     );
-    // A value from the environment is not stored, so only the login hint.
+    // `ncp` does not store a value from the environment, so only the login hint
+    // shows.
     let home = home.set("K", "old");
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
@@ -2709,7 +2710,7 @@ fn refresh_gets_the_list_again_and_keeps_it() {
     assert_eq!(home.run(&["--refresh", "tool", "list", "fx"]).code(), 0);
     assert!(started.exists(), "--refresh must start the server");
     assert_ne!(std::fs::read_to_string(&cache).unwrap(), before);
-    // As in uv, --no-cache wins over --refresh: nothing is written.
+    // As in uv, --no-cache wins over --refresh: `ncp` writes nothing.
     let before = std::fs::read_to_string(&cache).unwrap();
     assert_eq!(
         home.run(&["--refresh", "--no-cache", "tool", "list", "fx"])

@@ -875,8 +875,8 @@ fn oauth_client(
     Ok(Some(PreRegisteredClient { client_id, kind }))
 }
 
-/// `oauth.issuer`, else `oauth.authorizationServer`: a string, or an array
-/// with one string. One issuer, because a client is registered at one
+/// `oauth.issuer`, else `oauth.authorizationServer`: a string, or an array with
+/// one string. One issuer, because the user registers a client at one
 /// authorization server.
 fn configured_issuer(
     issuer: Option<String>,

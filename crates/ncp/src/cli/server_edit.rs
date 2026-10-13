@@ -55,8 +55,8 @@ impl Scope {
 /// The file that a command changes, with the bytes that the user checked:
 /// the base of the edit of a project file.
 struct Target {
-    /// The path where `ncp` found the file, or the path that it names. A
-    /// symlink is not resolved: the trust record keys this path.
+    /// The path where `ncp` found the file, or the path that it names. `ncp`
+    /// does not resolve a symlink, because the trust record keys this path.
     file: PathBuf,
     scope: Scope,
     /// `None` for a new file.
@@ -465,9 +465,9 @@ fn edit_failure(target: &Target, error: &EditError) -> Failure {
     }
 }
 
-/// After a write, `ncp` trusts the new bytes of a project file: the user
-/// saw the old bytes and gave the change (project-config rule 9). A
-/// record that fails gives a warning, because the change is done.
+/// After a write, `ncp` trusts the new bytes of a project file: the user saw
+/// the old bytes and gave the change (project-config rule 9). A record that
+/// fails gives a warning, because the change is complete.
 fn trust_written(context: &Context<'_>, target: &Target, text: &str) {
     if target.scope == Scope::Project
         && let Err(failure) = project_file::trust_written(&context.paths, &target.file, text)

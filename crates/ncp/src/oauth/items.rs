@@ -114,7 +114,7 @@ impl ClientItem {
     ///
     /// # Errors
     ///
-    /// Returns an error when the item cannot be written as JSON.
+    /// Returns an error when `serde_json` cannot write the item.
     pub fn to_secret(&self) -> Result<Secret, ItemError> {
         to_secret("client", self)
     }
@@ -141,7 +141,7 @@ impl ClientItem {
 ///
 /// # Errors
 ///
-/// Returns an error when the value cannot be written as JSON.
+/// Returns an error when `serde_json` cannot write the value.
 pub fn to_secret(item: &'static str, value: &impl Serialize) -> Result<Secret, ItemError> {
     serde_json::to_string(value)
         .map(Secret::new)

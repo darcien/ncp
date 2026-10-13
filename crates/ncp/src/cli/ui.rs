@@ -65,7 +65,7 @@ pub struct Ui {
 impl Ui {
     /// # Errors
     ///
-    /// Returns a failure when stdout cannot be written.
+    /// Returns a failure when `ncp` cannot write to stdout.
     pub fn result(
         self,
         text: impl FnOnce() -> String,
@@ -161,7 +161,7 @@ impl Ui {
 
 /// # Errors
 ///
-/// Returns a failure when stdout cannot be written.
+/// Returns a failure when `ncp` cannot write to stdout.
 pub fn write_stdout_bytes(bytes: &[u8]) -> Result<(), Failure> {
     let mut stdout = std::io::stdout().lock();
     match stdout.write_all(bytes).and_then(|()| stdout.flush()) {
@@ -172,12 +172,12 @@ pub fn write_stdout_bytes(bytes: &[u8]) -> Result<(), Failure> {
     }
 }
 
-/// A closed pipe (for example `ncp ... | head`) is not an error of the
-/// command, but a full disk is.
+/// A closed pipe (for example `ncp ... | head`) is not an error of the command,
+/// but a full disk is.
 ///
 /// # Errors
 ///
-/// Returns a failure when stdout cannot be written.
+/// Returns a failure when `ncp` cannot write to stdout.
 pub fn write_stdout(text: &str) -> Result<(), Failure> {
     let mut stdout = std::io::stdout().lock();
     match stdout

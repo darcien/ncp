@@ -51,9 +51,9 @@ pub struct GlobalOptions {
     )]
     pub timeout: u64,
     /// Show diagnostics on stderr: where each value comes from (never the
-    /// value), the proxy route, the cached protocol version. -vv also shows
-    /// the JSON-RPC messages and the HTTP requests. The credentials of the
-    /// connection are hidden; the messages show as they are.
+    /// value), the proxy route, the cached protocol version. -vv also shows the
+    /// JSON-RPC messages and the HTTP requests. ncp hides the credentials of
+    /// the connection, and shows the messages as they are.
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
     pub verbose: u8,
     /// Show the time of each step on stderr: CPU, configuration,
@@ -214,8 +214,8 @@ pub enum AuthCommand {
 #[derive(Debug, Subcommand)]
 pub enum SecretCommand {
     /// Read one value from stdin and keep it under the name, for the
-    /// destination of the entries that name ${NAME}. On a TTY the input is
-    /// not shown.
+    /// destination of the entries that name ${NAME}. On a TTY, ncp does not
+    /// show the input.
     Set {
         /// The name, as in ${NAME} in the configuration
         name: String,

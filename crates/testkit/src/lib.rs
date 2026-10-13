@@ -97,7 +97,6 @@ impl Mode {
 #[derive(Clone)]
 pub struct Fixture {
     pub mode: Mode,
-    /// Counts the `server/discover` requests.
     pub discover_calls: Arc<AtomicUsize>,
 }
 
@@ -587,8 +586,8 @@ fn unauthorized() -> http::Response<BoxBody<Bytes, Infallible>> {
     response
 }
 
-/// A Streamable HTTP fixture on a free loopback port. The server stops when
-/// the value is dropped.
+/// A Streamable HTTP fixture on a free loopback port. The server stops at the
+/// drop of the value.
 pub struct HttpFixture {
     pub url: String,
     pub discover_calls: Arc<AtomicUsize>,
@@ -939,11 +938,11 @@ async fn oauth_handle(
         .await
 }
 
-/// A local proxy. It makes a tunnel for a `CONNECT` to a loopback address,
-/// as a real proxy does. Each other request gets `502 Bad Gateway`, so
-/// that a test never goes to the network. It looks up no name, so a
-/// `CONNECT` to `localhost` gets `502` too. It records the first line of
-/// each request, and stops when the value is dropped.
+/// A local proxy. It makes a tunnel for a `CONNECT` to a loopback address, as a
+/// real proxy does. Each other request gets `502 Bad Gateway`, so that a test
+/// never goes to the network. It looks up no name, so a `CONNECT` to
+/// `localhost` gets `502` too. It records the first line of each request, and
+/// stops at the drop of the value.
 pub struct TestProxy {
     pub address: std::net::SocketAddr,
     request_lines: Arc<std::sync::Mutex<Vec<String>>>,

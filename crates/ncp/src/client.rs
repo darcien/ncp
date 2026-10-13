@@ -305,7 +305,7 @@ struct Handler {
     refused: Arc<AtomicBool>,
 }
 
-/// Marks a request as active until the value is dropped, at each exit.
+/// Marks a request as active until the drop of the value, at each exit.
 struct ActiveRequest(Arc<AtomicBool>);
 
 impl ActiveRequest {
@@ -429,9 +429,9 @@ async fn probe(
         Phase::Discover,
         deadline,
     ));
-    // On a probe timeout the future is dropped. Its stdio process stops by
-    // kill-on-drop, so a late answer cannot reach the next connection. When
-    // the connect limit comes first, the handshake stops itself.
+    // On a probe timeout, `ncp` drops the future. Its stdio process stops by
+    // kill-on-drop, so a late answer cannot reach the next connection. When the
+    // connect limit comes first, the handshake stops itself.
     let probe_deadline = Instant::now() + launch.probe_timeout;
     let answer = if probe_deadline < deadline {
         tokio::time::timeout_at(probe_deadline, attempt).await.ok()
@@ -508,8 +508,8 @@ async fn handshake(
                 launch.observer.clone(),
             );
             let serve = info.serve_with_lifecycle(transport, lifecycle);
-            // The handshake future owns stdin. It ends with the race, so
-            // stdin is closed before the stop steps.
+            // The handshake future owns stdin. It ends with the race, so stdin
+            // closes before the stop steps.
             match race(serve, deadline, launch.cancel).await {
                 Ended::Done(Ok(service)) => (service, Some(process)),
                 // A failed handshake can be a server that stopped: a closed
@@ -659,8 +659,8 @@ fn to_rmcp(version: &ProtocolVersion) -> rmcp::model::ProtocolVersion {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CacheHints {
     pub ttl_ms: Option<u64>,
-    /// A private list must not be shared across authorization contexts.
-    /// A list with no scope counts as private: that is the safe reading.
+    /// A client must not share a private list across authorization contexts. A
+    /// list with no scope counts as private: that is the safe reading.
     pub private: bool,
 }
 
@@ -731,7 +731,7 @@ impl Connection {
 
     /// # Errors
     ///
-    /// Returns an error when a `tools/list` request fails, is cancelled or
+    /// Returns an error when a `tools/list` request fails, gets a cancel, or
     /// passes its time limit.
     pub async fn list_tools(&self, limits: RequestLimits<'_>) -> Result<Vec<Tool>, RequestError> {
         Ok(self.list_tools_fresh_for(limits).await?.0)
@@ -908,7 +908,7 @@ impl Connection {
     ///
     /// # Errors
     ///
-    /// Returns an error when the request fails, is cancelled or passes its
+    /// Returns an error when the request fails, gets a cancel, or passes its
     /// time limit.
     pub async fn call_tool(
         &self,

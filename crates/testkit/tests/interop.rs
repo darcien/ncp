@@ -1,8 +1,8 @@
 //! Interop tests of `ncp` against the official MCP everything server
 //! (TypeScript SDK). See `docs/design/interop.md`.
 //!
-//! The tests need Node and the pinned server. Thus they are ignored by
-//! default. Run them with `mise run interop` after `mise run
+//! The tests need Node and the pinned server. Thus they have the `ignore`
+//! attribute. Run them with `mise run interop` after `mise run
 //! interop:install`. They need no network.
 
 // Test code can use unwrap: a panic is a test failure.

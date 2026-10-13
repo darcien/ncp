@@ -333,7 +333,7 @@ fn a_change_of_a_project_file_after_the_trust_stops_the_write() {
     assert_eq!(run.code(), 3, "{}", run.describe());
     let text = std::fs::read_to_string(home.project_file()).unwrap();
     assert!(!text.contains("web"), "{text}");
-    // The changed bytes are not trusted.
+    // `ncp` does not trust the changed bytes.
     let home = home.unset("NCP_TEST_CHANGE_BEFORE_RENAME");
     assert_eq!(
         home.run(&["trust", "--show"]).stdout()["trust"],

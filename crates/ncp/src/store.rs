@@ -22,14 +22,14 @@ use crate::credential::{CredentialKey, Secret};
 pub trait CredentialStore: Send + Sync {
     /// # Errors
     ///
-    /// Returns an error when the store cannot be read.
+    /// Returns an error when a read of the store fails.
     fn load(&self, key: &CredentialKey) -> Result<Option<Secret>, StoreError>;
 
     /// Adds the secret, or replaces the secret that has the same key.
     ///
     /// # Errors
     ///
-    /// Returns an error when the store cannot be written.
+    /// Returns an error when a write to the store fails.
     fn save(&self, key: &CredentialKey, secret: &Secret) -> Result<(), StoreError>;
 
     /// Removes the secret. True when the store had it. Removing a secret
@@ -37,7 +37,7 @@ pub trait CredentialStore: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns an error when the store cannot be written.
+    /// Returns an error when a write to the store fails.
     fn delete(&self, key: &CredentialKey) -> Result<bool, StoreError>;
 
     /// The keys of all `ncp` items, in order. The call reads no value, so a
@@ -46,7 +46,7 @@ pub trait CredentialStore: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns an error when the store cannot be read.
+    /// Returns an error when a read of the store fails.
     fn keys(&self) -> Result<Vec<CredentialKey>, StoreError>;
 }
 

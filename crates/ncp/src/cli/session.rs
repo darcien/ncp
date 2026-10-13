@@ -145,8 +145,8 @@ impl Loaded {
 ///
 /// # Errors
 ///
-/// Returns a usage failure when a file does not parse, and a local
-/// failure when the global file cannot be read.
+/// Returns a usage failure when a file does not parse, and a local failure when
+/// `ncp` cannot read the global file.
 pub fn load_config(paths: &Paths, env: &Env, search: bool) -> Result<Loaded, Failure> {
     let path = &paths.config_file;
     let (text, exists) = match std::fs::read_to_string(path) {
@@ -198,8 +198,8 @@ fn trusted(loaded: Loaded, env: &Env) -> Result<Loaded, Failure> {
 ///
 /// # Errors
 ///
-/// Returns the failures of `load_config`, a failure when a record cannot
-/// be written, and exit 130 at Ctrl-C.
+/// Returns the failures of `load_config`, a failure when `ncp` cannot write a
+/// record, and exit 130 at Ctrl-C.
 pub async fn load(context: &Context<'_>, named: Option<&str>) -> Result<Loaded, Failure> {
     let loaded = context.timed(
         |record, elapsed| record.config = Some(elapsed),
@@ -396,8 +396,8 @@ fn entry_failure(name: &str, error: &EntryError, path: &Path) -> Failure {
 ///
 /// # Errors
 ///
-/// Returns a failure when the connect fails. A version cache that cannot be
-/// read or written gives a warning: `ncp` works the same with no cache.
+/// Returns a failure when the connect fails. When `ncp` cannot read or write
+/// the version cache, it gives a warning: `ncp` works the same with no cache.
 pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, Failure> {
     let prepared = prepare(context, server).await?;
     let launch = prepared.launch(context, server);
@@ -472,7 +472,7 @@ async fn stored_login(
 ///
 /// # Errors
 ///
-/// Returns a failure when no login is stored, or when the connect fails.
+/// Returns a failure when the store has no login, or when the connect fails.
 pub async fn open_with_login(
     context: &Context<'_>,
     server: &Server,
@@ -518,7 +518,7 @@ pub async fn open_with_login(
 ///
 /// # Errors
 ///
-/// Returns a failure when a value of the entry cannot be read.
+/// Returns a failure when `ncp` cannot read a value of the entry.
 pub async fn challenge(context: &Context<'_>, server: &Server) -> Result<Option<String>, Failure> {
     let prepared = prepare(context, server).await?;
     let launch = prepared.launch(context, server);
@@ -636,8 +636,8 @@ impl Prepared {
         }
     }
 
-    /// A cache that cannot be written gives only a warning, because `ncp`
-    /// works the same with no cache.
+    /// When `ncp` cannot write the cache, it gives only a warning, because
+    /// `ncp` works the same with no cache.
     fn save_version(self, context: &Context<'_>, server: &Server, version: &ProtocolVersion) {
         if !context.cache.writes() || self.cached.as_ref() == Some(version) {
             return;

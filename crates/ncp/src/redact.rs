@@ -64,10 +64,10 @@ pub fn header(name: &str, value: &str, sensitive: bool) -> String {
     }
 }
 
-/// The URL with its user information and its OAuth codes and tokens
-/// hidden. The rest of the text stays as it is, also a `${NAME}` of the
-/// configuration, so that the URL shows as the user wrote it. A text that
-/// is not a URL is hidden as a whole.
+/// The URL with its user information and its OAuth codes and tokens hidden. The
+/// rest of the text stays as it is, also a `${NAME}` of the configuration, so
+/// that the URL shows as the user wrote it. The function hides a text that is
+/// not a URL completely.
 #[must_use]
 pub fn url(text: &str) -> String {
     let Some((scheme, rest)) = text.split_once("://") else {

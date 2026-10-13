@@ -223,7 +223,7 @@ pub fn binding_mismatch(text: &str) -> Option<items::BindingMismatch> {
 ///
 /// # Errors
 ///
-/// Returns an error when the lock file cannot be opened, or when another
+/// Returns an error when `ncp` cannot open the lock file, or when another
 /// process holds the lock past the limit.
 pub fn lock_tokens(path: &std::path::Path) -> std::io::Result<private_file::Lock> {
     private_file::lock(path, REFRESH_LOCK_LIMIT)
@@ -245,8 +245,8 @@ impl RmcpStore for TokenStore {
             .map(|secret| parse_item(&secret))
             .transpose()
             .map_err(|error| AuthError::CredentialStoreError(error.to_string()))?;
-        // A read after the refresh lock can find tokens that another
-        // process saved for another server: they must not be used here.
+        // A read after the refresh lock can find tokens that another process
+        // saved for another server. `ncp` must not use them here.
         if let (Some(expected), Some(item)) = (&self.binding, &item) {
             items::check_binding(item.binding.as_ref(), expected)
                 .map_err(|mismatch| binding_error(&mismatch))?;

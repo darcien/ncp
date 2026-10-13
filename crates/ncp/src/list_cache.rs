@@ -1,10 +1,10 @@
 //! The cache of tool lists, one file for each server.
 //!
-//! From `2026-07-28` a list result can carry `ttlMs`: the time that a
-//! client may treat it as fresh. Within that time `ncp` can show and use
-//! the tools with no server start. A list with no `ttlMs` is not kept. The
-//! cache is a cache: `ncp` works the same when it is removed, and a file
-//! that does not load is ignored.
+//! From `2026-07-28` a list result can carry `ttlMs`: the time that a client
+//! may treat it as fresh. Within that time `ncp` can show and use the tools
+//! with no server start. `ncp` does not keep a list with no `ttlMs`. The cache
+//! is a cache: `ncp` works the same with no cache, and ignores a file that does
+//! not load.
 
 use std::{
     path::{Path, PathBuf},
@@ -70,10 +70,10 @@ pub enum Access {
 
 /// The time to keep a list, or `None` when `ncp` must not keep it.
 ///
-/// A private list must not be shared across authorization contexts (MCP
+/// A client must not share a private list across authorization contexts (MCP
 /// 2026-07-28, server/utilities/caching). The cache has no copy of a
-/// credential, so it cannot see a changed one. Thus `ncp` keeps a private
-/// list only from an http server with no credential.
+/// credential, so it cannot see a changed one. Thus `ncp` keeps a private list
+/// only from an http server with no credential.
 #[must_use]
 pub fn keep_for(ttl_ms: Option<u64>, private: bool, access: Access) -> Option<u64> {
     let ttl = ttl_ms.filter(|ttl| *ttl > 0)?;
@@ -129,7 +129,7 @@ pub fn load(path: &Path) -> Option<CachedTools> {
 ///
 /// # Errors
 ///
-/// Returns an error when the file cannot be written.
+/// Returns an error when `ncp` cannot write the file.
 pub fn save(path: &Path, cached: &CachedTools) -> std::io::Result<()> {
     let text = serde_json::to_string(cached).map_err(std::io::Error::other)?;
     private_file::write(path, text.as_bytes())

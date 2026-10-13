@@ -21,7 +21,7 @@ const BIN: &str = "ncp";
 
 /// # Errors
 ///
-/// Returns a failure when stdout cannot be written.
+/// Returns a failure when `ncp` cannot write to stdout.
 pub fn script(shell: CompletionShell) -> Result<(), Failure> {
     let mut command = Cli::command();
     let mut generated = Vec::new();
@@ -188,8 +188,8 @@ fn config(paths: &Paths, env: &Env) -> Option<crate::config::Config> {
         .map(|loaded| loaded.config)
 }
 
-/// Writes the configured server names, one on each line. A configuration
-/// that cannot be read gives no names and no error.
+/// Writes the configured server names, one on each line. When `ncp` cannot read
+/// the configuration, it gives no names and no error.
 pub fn servers(env: &Env) {
     let names = Paths::from_env(env)
         .ok()

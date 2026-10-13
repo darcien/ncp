@@ -1,8 +1,7 @@
-//! Live tests of `ncp` with the login Keychain, a real browser and a login
-//! at a real server. One test sets the system proxy on a host that is
-//! thrown away. The tests change the state of the machine, so they are
-//! ignored by default.
-//! See `docs/live-tests.md`.
+//! Live tests of `ncp` with the login Keychain, a real browser and a login at a
+//! real server. One test sets the system proxy on a host that is thrown away.
+//! The tests change the state of the machine, so they have the `ignore`
+//! attribute. See `docs/live-tests.md`.
 
 // Test code can use unwrap: a panic is a test failure.
 #![allow(clippy::unwrap_used)]

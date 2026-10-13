@@ -15,7 +15,7 @@ use std::{
 ///
 /// # Errors
 ///
-/// Returns an error when a directory or the file cannot be written.
+/// Returns an error when `ncp` cannot write a directory or the file.
 pub fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let parent = path.parent().unwrap_or(Path::new("."));
     DirBuilder::new()
@@ -90,8 +90,8 @@ mod tests {
     }
 }
 
-/// An exclusive lock on a lock file. The lock ends when the value is
-/// dropped, also when the process stops.
+/// An exclusive lock on a lock file. The lock ends at the drop of the value,
+/// also when the process stops.
 #[derive(Debug)]
 pub struct Lock {
     _file: fs::File,
@@ -106,8 +106,8 @@ const LOCK_STEP: std::time::Duration = std::time::Duration::from_millis(20);
 ///
 /// # Errors
 ///
-/// Returns an error when the file cannot be opened, or when another
-/// process holds the lock for longer than the limit.
+/// Returns an error when `ncp` cannot open the file, or when another process
+/// holds the lock for longer than the limit.
 pub fn lock(path: &Path, limit: std::time::Duration) -> std::io::Result<Lock> {
     let parent = path.parent().unwrap_or(Path::new("."));
     DirBuilder::new()

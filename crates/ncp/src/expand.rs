@@ -1,9 +1,9 @@
 //! `${VAR}` expansion in configuration values.
 //!
-//! Only `${VAR}` and `${env:VAR}` are supported. Cursor, Cline and Windsurf
-//! write the second form, so their files load with no change. Other forms
-//! can run commands or ask for input. They are errors, so the configuration
-//! never runs code.
+//! `ncp` supports only `${VAR}` and `${env:VAR}`. Cursor, Cline and Windsurf
+//! write the second form, so their files load with no change. Other forms can
+//! run commands or ask for input. They are errors, so the configuration never
+//! runs code.
 
 use std::collections::HashMap;
 

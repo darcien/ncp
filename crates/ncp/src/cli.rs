@@ -49,9 +49,7 @@ const SHUTDOWN_LIMIT: Duration = Duration::from_secs(2);
 pub struct Platform {
     pub open_native: secrets::OpenNative,
     pub open_browser: auth::OpenBrowser,
-    /// True when a person can answer questions on a TTY.
     pub interactive: fn() -> bool,
-    /// Runs before the rename of a changed configuration file.
     pub before_rename: fn(&std::path::Path),
 }
 

@@ -579,7 +579,7 @@ async fn warn_about_copies(
         (Ok(false) | Err(StoreError::Interrupted), _)
         | (Err(StoreError::Unavailable(_)), CredentialPlace::Native) => return,
         (Err(error), _) => {
-            // No copy is known, so no command can fix it.
+            // `ncp` knows no copy, so no command can fix it.
             context.ui.warning(
                 None,
                 &format!("ncp cannot check {} for a copy: {error}", place_text(other)),
@@ -611,12 +611,11 @@ enum Unread {
     Failed(std::io::Error),
 }
 
-/// Reads the value from stdin. When a person can answer (stdin and stderr
-/// are a TTY), the input is not shown. A TTY on stdin with no TTY on
-/// stderr is an error: the question would not show, and the terminal
-/// would echo the value. Each read has the limit of `--timeout`. One new
-/// line at the end is not part of the value, because `echo` and a pasted
-/// line add it.
+/// Reads the value from stdin. When a person can answer (stdin and stderr are a
+/// TTY), `ncp` does not show the input. A TTY on stdin with no TTY on stderr is
+/// an error: the question would not show, and the terminal would echo the
+/// value. Each read has the limit of `--timeout`. One new line at the end is
+/// not part of the value, because `echo` and a pasted line add it.
 async fn read_value(
     context: &Context<'_>,
     name: &str,
@@ -1085,10 +1084,10 @@ struct Choice {
     unlisted: Vec<CredentialPlace>,
 }
 
-/// The destinations to remove. With no flag, a place that cannot answer
-/// stops the delete: an item there could be a second destination. A
-/// native store that cannot list is not asked again, so that the delete
-/// does not wait for its limit once more.
+/// The destinations to remove. With no flag, a place that cannot answer stops
+/// the delete: an item there could be a second destination. `ncp` does not ask
+/// a native store that cannot list again, so that the delete does not wait for
+/// its limit once more.
 async fn chosen(
     context: &Context<'_>,
     name: &SecretName,

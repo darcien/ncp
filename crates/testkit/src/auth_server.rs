@@ -226,8 +226,8 @@ impl AuthState {
     }
 }
 
-/// An authorization server on a free loopback port. It stops when the
-/// value is dropped.
+/// An authorization server on a free loopback port. It stops at the drop of the
+/// value.
 pub struct AuthServer {
     pub state: AuthState,
     stop: CancellationToken,

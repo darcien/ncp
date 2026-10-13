@@ -27,8 +27,8 @@ pub fn transport_name(server: &Server) -> &'static str {
     }
 }
 
-/// The command line of a stdio server, or the URL of a remote server, as
-/// the configuration file writes it: `${NAME}` is not expanded, so no value
+/// The command line of a stdio server, or the URL of a remote server, as the
+/// configuration file writes it: `ncp` does not expand `${NAME}`, so no value
 /// of a variable shows.
 #[must_use]
 pub fn target(server: &Server) -> String {

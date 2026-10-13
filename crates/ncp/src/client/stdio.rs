@@ -25,7 +25,6 @@ const LOG_WAIT: Duration = Duration::from_millis(500);
 /// The wait for the exit status of a server whose handshake failed.
 const EXIT_WAIT: Duration = Duration::from_millis(500);
 
-/// Wait time after each stop step.
 const STOP_WAIT: Duration = Duration::from_secs(2);
 
 /// The longest part of a stderr line of a server that goes out as one line.

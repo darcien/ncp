@@ -92,7 +92,7 @@ pub(super) async fn command(context: &Context<'_>, command: AuthCommand) -> Resu
             )
             .await
             .map_err(|failure| login_failure(context, (&loaded, &server), &notes, failure))?;
-            // The cleanup is outside the login limit: the tokens are saved,
+            // The cleanup is outside the login limit: the store has the tokens,
             // and the cleanup has its own short limit.
             remove_old_tokens(context, &name, credential_store).await
         }
@@ -374,7 +374,7 @@ fn refresh_lock(context: &Context<'_>, server: &ServerName) -> std::path::PathBu
         .with_file_name(format!("oauth-{}.lock", server.as_str()))
 }
 
-/// Gives `None` when the lock file cannot be made. This is not an error,
+/// Gives `None` when `ncp` cannot make the lock file. This is not an error,
 /// because the lock only puts a refresh, a login and a logout in order.
 async fn hold_tokens_lock(
     context: &Context<'_>,
@@ -1003,8 +1003,8 @@ async fn select<'a>(
 /// so that a slow server cannot hide the usage error behind that limit.
 const ISSUER_LOOKUP_LIMIT: Duration = Duration::from_secs(10);
 
-/// Discovery sends no secret, so the lookup is safe before the issuer is
-/// known.
+/// Discovery sends no secret, so the lookup is safe before `ncp` knows the
+/// issuer.
 async fn with_server_issuer(
     context: &Context<'_>,
     failure: Failure,
