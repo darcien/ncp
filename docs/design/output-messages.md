@@ -614,8 +614,8 @@ release. Section 10.1 adds it.
     `about`. The inner function then gives the server to each failure
     that it makes, with the forms above. Remaps: auth.rs:260, 298, 316,
     472 and 692 (step 7), secrets.rs:181 (step 4). Their inner failures
-    include `store_failure` and the `interrupted()` of `limited`
-    (auth.rs:134).
+    include `store_failure` and `interrupted()`. In step 7, `discover` and
+    `wait_for_redirect` get the server name as a parameter.
 - `Hint` has `message` and `command: Option<String>`, with the names of
   the JSON fields. The constructor `Hint::run(goal, command)` makes "To
   GOAL, run `COMMAND`" and sets `command`. The constructor
