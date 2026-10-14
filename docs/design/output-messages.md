@@ -16,7 +16,7 @@ inventory.
 
 | Part | Sections | Use |
 |---|---|---|
-| Reference | 1 to 7 | The terms, the scope, the rules, the formats, the hint sentences, the model and the examples |
+| Reference | 1 to 7 | The terms, the scope, the MUST requirements on message content, the rules, the formats, the hint sentences, the model and the examples |
 | How-to | 8 to 10 | The migration steps, the tests to change and the design documents to change |
 | Explanation | 11 to 13 | The problems of today, the reason for each rule, and the risks |
 
@@ -46,13 +46,28 @@ inventory.
 | Hints of an error or a warning | Yes | – |
 | Standalone hints (H01 to H05, H07) | Yes | They use the label `hint:`, so they obey the hint rules. |
 | Display texts of the `ncp` error types | Yes | They become causes. |
-| stdout fields that hold an error: `invalid[].error` of `server list` and of `ncp trust` | Yes | They hold the same Display texts (section 6.4). |
+| stdout fields that hold an error: `invalid[].error` of `server list` and of `ncp trust` | Yes | They hold the same Display texts (section 5.4). |
 | clap usage errors in text mode | No | uv keeps the format of clap too (research section 8). |
 | `debug:`, `trace:`, `progress:`, `timings:` lines | No | They are logs for each server, with a stable prefix that people search for. uv writes its debug lines in another format too. |
-| Questions and prompts (`ask.rs`, `Trust? [y/N]`, P01 to P16) | No, later | They are a dialog, not a diagnostic. Most of them are already sentences with a capital letter. A second change keeps this diff small. |
-| Success text on stdout (I01 to I12) | No, later | It is a result, not a diagnostic. It already uses sentences with periods. |
-| Color | No | B60 removed color on 2026-10-10. This proposal does not open that decision again. |
+| Questions and prompts (`ask.rs`, `Trust? [y/N]`, P01 to P16) | No, later | They are a dialog, not a diagnostic. A second change keeps this change small. |
+| Success text on stdout (I01 to I12) | No, later | It is a result, not a diagnostic. |
+| Color | No | B60 removed color on 2026-10-10. |
 | Exit codes | No | Requirement I3 and cli.md section 3. |
+
+### 2.1 MUST requirements on the content of a message
+
+No requirement text changes. Each of these requirements states what an
+error must say. The table gives the place of each content after the
+change.
+
+| Requirement | Content | Place after the change |
+|---|---|---|
+| A13 | "the message says that the stop is on purpose" | Message (section 7.10). The tests cli.rs:1790 and 1812 still read `message`. |
+| N6 | the error names the new location of a redirect | Message: "The server `S` answered 308 with a redirect to `URL`. ncp follows no redirect." Rule 6 permits the location in the message, because the redirect is the failure itself, not an inner error. `connect_failure` reads it from the notes of the HTTP client. |
+| S2 | the error names the opt-in for the credential file | Hint with `--credential-store file`. |
+| S8 | a store call with no answer in 60 s stops with an error | Message or cause: "The credential store gave no answer in 60 s". When no server is involved, it is the message of `store_failure`. When a call site adds a server, it is a cause (section 6.4). It is also a cause in E45, E71 and W13. |
+| P8, P9 | a clear error for `input_required`, and the pages in the error | Message and data lines, `pages` in JSON (section 7.11). |
+| N4 | a bad `SSL_CERT_FILE` stops with an error | The message names the variable and the path. |
 
 ## 3. Rules
 
@@ -86,8 +101,9 @@ reason for each rule.
    `cause:` line, outer first. Each layer of an `ncp` error type writes
    only its own part and gives the inner error as its source. Before the
    redaction of rule 21, `ncp` makes a list: the message, then the causes.
-   If the last string in the list contains the text of a cause, that cause
-   does not show. Exception: a store error that passes through rmcp
+   `ncp` compares each cause with the last string that it kept in the
+   list. If that string contains the text of the cause, the cause does not
+   show. Exception: a store error that passes through rmcp
    arrives as one text. It shows as one cause.
 
 8. **Consequence.** A consequence tells what `ncp` did or did not do
@@ -145,7 +161,7 @@ reason for each rule.
     control character shows in double quotes, with the escapes of Rust
     `Debug`.
 
-15. **Foreign text.** Free foreign text is a message or a body from a
+15. **Foreign text.** Free foreign text is the error text or a body from a
     server, or the text of a library error. It goes on a `cause:` line or
     a data line. It never goes into the message or a hint. A value from a
     server (a URL, a host, a tool name) can be in a message or a hint, in
@@ -189,8 +205,8 @@ reason for each rule.
 
 21. **Redaction.** Today `hide_expanded_url` (session.rs) hides secrets in
     the message of an error about an http server. It writes the server URL
-    as the file writes it, with its user information and its OAuth query
-    values hidden. It also hides each `${NAME}` value of the server URL in
+    as the configuration file has it, with its user information and its
+    OAuth query values hidden. It also hides each `${NAME}` value of the server URL in
     each other place, also in its encoded forms. After this change, the
     same function runs on the message, on each data line, on each cause and
     on each hint, at the same places. No part names a stored URL or issuer
@@ -235,16 +251,13 @@ spaces. A standalone hint is one `hint:` line (section 4.2). Section 7
 gives full examples: causes and a hint (7.1, 7.5), data lines (7.8,
 7.11) and warnings (7.12, 7.13).
 
-A cause with two lines, from a message of a server:
+A cause with two lines, from the error text of a server:
 
 ```
 error: The server `fx` returned the error -32603 for `tools/call`
   cause: Internal error
          error: run this
 ```
-
-The second line of the cause starts at column 9, so it cannot look like an
-error of `ncp`.
 
 A long cause that `ncp` cut (rule 16):
 
@@ -261,8 +274,8 @@ The line `...` stands for 18 lines that this document does not show.
 ### 4.1 Standard hint sentences
 
 The same fix uses the same sentence in each place. The column "Command"
-tells if the JSON hint has the field `command` (rule 10). S, T, N, I and P
-are values that `ncp` puts in.
+tells whether the JSON hint has the field `command` (rule 10). S, T, N, I
+and P stand for values that `ncp` supplies.
 
 | ID | Fix today | Hint sentence | Command |
 |---|---|---|---|
@@ -306,9 +319,10 @@ are values that `ncp` puts in.
 | E18 | `put the new URL in the entry when you trust it` | If you trust the new URL, put it in the entry | No |
 | E20 (404, B78) | the 404 hint | The server has no MCP endpoint at the path of the URL. Many servers use `/mcp`. Examine the path in the entry. | No |
 | E17, E19, E20 (B50) | the TLS hint | `SSL_CERT_FILE` replaces the system roots. Put each root that you need in the file. Include the public roots. | No |
-| E46 | `register a client at I (see P), then set ...` | Register a client at `I`. Then set `clientId`, `clientSecret` and `issuer` in the `oauth` object of the server `S`. A third sentence names the page `P` when it is safe (B63). | No |
+| E46 | `register a client at I (see P), then set ...` | Register a client at `I`. Then set `clientId`, `clientSecret` and `issuer` in the `oauth` object of the server `S`. When it is safe (B63), a third sentence names the page `P`. | No |
 | E47 | one hint with two branches and a `;` | First hint: "If the server moved on purpose, remove `clientId`, `clientSecret` and `issuer` from the `oauth` object of the server `S`. Then run `ncp auth login S`." When the server has no DCR, the first hint tells the user to register a client at `I`. Second hint: "If you did not expect the move, tell the owner of the server. Do not change the entry." | No |
 | E48 | `when you registered the client at I, add "issuer": ...` | If you registered the client at `I`, add `"issuer": "I"` to the `oauth` object of the server `S` | No |
+| E14 (`url`) | `use https` in the Display text | Use an `https` URL | No |
 | E10, E51 | `did you mean X?` in the message | Did you mean `X`? | No |
 | secret_service.rs:99 | `unlock the keyring to list them` | To list the locked items, unlock the keyring | No |
 
@@ -434,8 +448,8 @@ name, so the error has a hint:
 - JSON: `{"name", "error", "causes"}`. `error` is the Display text of the
   outer error. `causes` is the source chain, with rule 7.
 - Text: one table cell `not valid: TEXT`. TEXT joins the error and its
-  causes with `: `, with rule 7. One pure function `chain_text` makes
-  TEXT. The same function makes the reason of an unusable project file
+  causes with `: `, with rule 7. The pure function `chain_text` (section
+  6.3) makes TEXT. The same function makes the reason of an unusable project file
   where one line is necessary.
 
 Example for `"url": "http://example.com/mcp"`:
@@ -468,7 +482,7 @@ Example for `"url": "http://example.com/mcp"`:
   2. It downcasts to `StreamableHttpError<reqwest::Error>` and takes the
      `reqwest::Error` of `Client`. `Client` has no `source()` in rmcp
      3.5.1.
-  3. It walks the chain of the `reqwest::Error` (hyper, io).
+  3. It reads the source chain of the `reqwest::Error` (hyper, io).
 - `context(message)` gives the failure a new message. The old message
   becomes the first cause. All other parts stay.
 - `map_text(f)` applies `f` to the message, each data line, each cause,
@@ -501,8 +515,8 @@ Example for `"url": "http://example.com/mcp"`:
 
 ### 6.4 Shared failures that get a server
 
-A shared failure has no server where it is made. When a call site adds a
-server, the message names it (rule 12):
+A shared failure has no server at the place where the code makes it. When
+a call site adds a server, the message names it (rule 12):
 
 - `store_failure`: the call site uses `context` with a message that names
   the server and the operation, then `about`. The store text becomes a
@@ -521,10 +535,10 @@ Section 8 gives the call sites and their steps.
 
 ## 7. Examples
 
-Each example shows a different rule, before and after the change.
-Section 7.13 gives more messages of the same forms. The foreign text in these examples comes from rmcp 3.5.1,
-reqwest, hyper, std and the `security` program. It can change with a new
-version of a library. `/home/u` is the home folder of the user.
+Each example shows a different rule, before and after the change. The
+foreign text in the examples comes from rmcp 3.5.1, reqwest, hyper, std
+and the `security` program. It can change with a new version of a
+library. `/home/u` is the home folder of the user.
 
 ### 7.1 The deepest chain (C01, session.rs `entry_failure`)
 
@@ -547,8 +561,7 @@ error: The entry of the server `fx` in `/home/u/.config/ncp/mcp.json` is not val
 hint: ncp puts a stored secret only into `env` and `headers` values. To set the variable, run `export ARG_ONLY=<value>`. Then run the command again.
 ```
 
-Five levels become a message, two causes and a hint. The rule about stored
-secrets explains the fix, so it goes into the hint.
+The rule about stored secrets explains the fix, so it goes into the hint.
 
 ### 7.2 A fix after a semicolon (E14, server.rs `UrlError::PlainHttp`)
 
@@ -635,7 +648,7 @@ Both causes are `ncp` text. The second cause comes from the type that
 `ncp` makes for an exit of `security`. When `security` writes on stderr,
 that text is a third cause, as foreign text.
 
-### 7.6 An rmcp cause in small letters, with the 404 hint (E20, B78, session.rs `connect_failure`)
+### 7.6 An rmcp cause in lowercase, with the 404 hint (E20, B78, session.rs `connect_failure`)
 
 The cache has a protocol version for the `initialize` handshake.
 
@@ -655,7 +668,7 @@ error: The handshake with the server `docs` failed in `initialize`
 hint: The server has no MCP endpoint at the path of the URL. Many servers use `/mcp`. Examine the path in the entry.
 ```
 
-The cause keeps the small letter of rmcp (rule 15).
+The cause keeps the lowercase first letter of rmcp (rule 15).
 
 ### 7.7 A connection that the host refuses (E20, session.rs `connect_failure`)
 
@@ -663,7 +676,7 @@ The cache has no protocol version, so `ncp` probes with `server/discover`
 first (client.rs). A refused connection is not a legacy answer, so the
 probe gives its own error. Today `causes` stops at the reqwest error,
 because the rmcp type `StreamableHttpError::Client` gives no `source()`.
-The downcast of section 6.1 shows the reason.
+With the downcast of section 6.1, the causes show the reason.
 
 Before:
 
@@ -771,8 +784,8 @@ error: The server `fx` asks you to open a page before it answers `tools/call`:
 hint: After you complete the steps on the page, run the command again
 ```
 
-The message of the server error is free text, so it is a cause. The page
-message stays on its data line.
+The text of the server error is free text, so it is a cause. The text of
+the page stays on its data line.
 
 ### 7.12 A warning with a hint (W21 and H06, secrets.rs `secret set`)
 
@@ -793,7 +806,7 @@ hint: To delete the items of this destination, run `ncp secret delete A --server
 
 ### 7.13 More messages of the same forms
 
-Each item gives the inventory ID, the code location, the rule that it
+Each example gives the inventory ID, the code location, the rule that it
 shows, and the text after the change.
 
 E30 and E33 (session.rs `request_failure`, auth.rs `auth_failure`). The
@@ -838,10 +851,10 @@ warning: ncp does not use `/work/app/.mcp.json`
 
 Each step is one or more commits. Each step changes the error types, the
 call sites, the tests and the design documents of one area together.
-After each step, `mise run precommit` passes. Do the steps in the order of
-the list.
+After each step, `mise run precommit` must pass. Do the steps in this
+order.
 
-1. **Acceptance.** The user accepts this proposal.
+1. **Acceptance.** Get the acceptance of this proposal from the user.
 2. **Model, renderer and the first area.** Do these tasks:
    - Make the model of section 6.
    - Make one renderer for text and one for JSON.
@@ -858,20 +871,20 @@ the list.
      session.rs:995-999, 1025-1026 and 1055, auth.rs:1452.
    - Change the places that copy only `failure.message` to
      `Warning::from` or `context`. After the split, the reason is in
-     `causes`, so a copy of the message alone loses it, and no test fails.
-     Places: W10 (auth.rs:591), W23 (secrets.rs:981), W24
+     `causes`. A copy of only the message loses the reason, and no test
+     finds the loss. Places: W10 (auth.rs:591), W23 (secrets.rs:981), W24
      (secrets.rs:1009), W26 (server_edit.rs:475) and E91
-     (secrets.rs:1209). E91 also uses `with_exit`.
-   - Change `interrupted` (section 6.4). The call sites with a server give
-     it and use `about`: session.rs:701 and 971, ask.rs:295 and 390,
-     auth.rs:828.
+     (secrets.rs:1209). For E91, also use `with_exit`.
+   - Change `interrupted` (section 6.4). At the call sites with a server,
+     give the server and use `about`: session.rs:701 and 971, ask.rs:295
+     and 390, auth.rs:828.
    - Give each existing hint its old text and no command.
    - Change the first area: cli.rs (E01 to E05 and the clap JSON of rule
      25) and ui.rs (E116).
    - Add the style check to `Run::error()` and to a new `Run::warnings()`
      in the testkit. Add `Run::old_error()` and `Run::old_warnings()`,
-     which skip the check. Each test that reads a diagnostic of the old
-     form uses an `old_` method.
+     which skip the check. In each test that reads a diagnostic of the old
+     form, use an `old_` method.
    - Add a unit test helper that examines a Display text for rules 3 and
      5. Use it for the error types of the first area.
    - Change the design documents of step 2 (section 10).
@@ -889,45 +902,46 @@ the list.
      failure. The tests read the whole stderr, in text and in JSON.
    - Add a test of the reason of E94: `server add` with a URL that is not
      valid shows the reason of the URL.
-3. **Configuration and entries.** `ConfigError`, `EntryError`,
+3. **Configuration and entries.** Change `ConfigError`, `EntryError`,
    `UrlError`, `ExpandError` and the name errors. Call sites: E07, E08,
    E11, E14, E67, E68, the reason of E90, and the stdout field `invalid`
-   (section 5.4). Hint functions for the fixes that the Display texts hold
-   today.
-4. **Stores and secrets.** `StoreError`, the `security` and Secret
-   Service texts, `private_file`. Call sites: E66, E69 to E91, W18 to W25,
-   H06 and H07. The OAuth store marks of `oauth/store.rs` use `chain_text`
-   (the exception of rule 7). The remap at secrets.rs:181 becomes
-   `about`, and `read_stored` names the server in its failures (section
-   6.4).
-5. **Load and selection.** E06, E09, E10, E12, E13, W02, W04 and W05 in
-   session.rs. `project_entries` gets its indent parameter.
-6. **Connect and requests.** `ConnectError`, `RequestError`, the HTTP
-   client errors and the proxy route. Call sites: E15 to E30. The causes
-   function for transport errors (section 6.1). `is_not_found` (B78) reads
-   the whole source chain, because the Display text of `ConnectError` no
-   longer holds the text of rmcp.
-7. **OAuth.** `auth.rs`, `oauth/callback.rs`, `oauth/items.rs`: E31 to
-   E49 and W08 to W13. Shared failures (section 6.4):
-   - `store_failure` at auth.rs:519, 1342 and 1355 uses `context` and
-     `about`.
-   - `token_store_failure` (session.rs:884) names the server.
-   - The remaps at auth.rs:260, 298, 316, 472 and 692 become `about`.
-     `discover` and `wait_for_redirect` get the server name as a
+   (section 5.4). Add hint functions for the fixes that the Display texts
+   hold today.
+4. **Stores and secrets.** Change `StoreError`, the `security` and Secret
+   Service texts, and `private_file`. Call sites: E66, E69 to E91, W18 to
+   W25, H06 and H07. For the OAuth store marks of `oauth/store.rs`, use
+   `chain_text` (the exception of rule 7). Change the remap at
+   secrets.rs:181 to `about`. Make `read_stored` name the server in its
+   failures (section 6.4).
+5. **Load and selection.** Change E06, E09, E10, E12, E13, W02, W04 and
+   W05 in session.rs. Give `project_entries` its indent parameter
+   (section 7.8).
+6. **Connect and requests.** Change `ConnectError`, `RequestError`, the
+   HTTP client errors and the proxy route. Call sites: E15 to E30. Add the
+   causes function for transport errors (section 6.1). Make
+   `is_not_found` (B78) read the whole source chain. The reason: the
+   Display text of `ConnectError` no longer holds the text of rmcp.
+7. **OAuth.** Change `auth.rs`, `oauth/callback.rs` and `oauth/items.rs`:
+   E31 to E49 and W08 to W13. Change the shared failures (section 6.4):
+   - At auth.rs:519, 1342 and 1355, use `context` and `about` on
+     `store_failure`.
+   - Make `token_store_failure` (session.rs:884) name the server.
+   - Change the remaps at auth.rs:260, 298, 316, 472 and 692 to `about`.
+     Give `discover` and `wait_for_redirect` the server name as a
      parameter.
-8. **Commands and elicitation.** `tool_args`, `elicit`, commands.rs and
-   ask.rs: E50 to E65, E117, W01, W06, W07, W14 to W17 and H01 to H05. The
-   warning set of rule 20 in the elicitor.
-9. **Project files and edits.** `add_entry`, `config_edit`,
+8. **Commands and elicitation.** Change `tool_args`, `elicit`,
+   commands.rs and ask.rs: E50 to E65, E117, W01, W06, W07, W14 to W17
+   and H01 to H05. Add the warning set of rule 20 to the elicitor.
+9. **Project files and edits.** Change `add_entry`, `config_edit`,
    `project_file`, server_edit.rs and trust.rs: E92 to E115, W03, W26, W27
    and H08.
 10. **End.** Remove `Failure::server` and its prefix, so that only `about`
     stays. Remove `Run::old_error()` and `Run::old_warnings()`, so that
-    the style check examines each diagnostic. Change the comment of `Failure` in
-    `outcome.rs` ("each hint is one command") and the module comment of
-    `ui.rs`. Update `.scratch/progress.md`.
+    the style check examines each diagnostic. Change the comment of
+    `Failure` in `outcome.rs` ("each hint is one command") and the module
+    comment of `ui.rs`. Update `.scratch/progress.md`.
 
-Each step from 3 to 9 also does these tasks:
+In each step from 3 to 9, also do these tasks:
 
 - Change each message of the area from the old form to the new form, in
   one commit. Thus no message shows the server two times between the
@@ -1024,7 +1038,7 @@ These checks do not change:
 - the checks of `debug:`, `trace:`, `progress:` and `timings:` lines,
 - the checks of exit codes.
 
-### 9.3 Checks of wording that read only `message`
+### 9.3 Checks of text that read only `message`
 
 These checks make sure that a text does not show. The text can now be in a
 data line, a cause or a hint. Thus each check changes to read the whole
@@ -1040,12 +1054,10 @@ because no cause exists yet. Step 2 adds those tests.
 
 ## 10. Changes to the design documents
 
-Each step of the migration (section 8) changes the parts of the design
-documents that describe the messages of its area. The column "Step" gives
-the step. plan.md says that cli.md wins over the plan. Thus, after a
-step, cli.md must not describe the old messages as the target. Step 2
-adds B80, which also tells the reader which texts of cli.md are old
-until their step.
+plan.md says that cli.md has priority over the plan. Thus, after each
+step of section 8, cli.md must not describe the old messages of its area
+as the target. B80 (step 2) tells the reader which texts of cli.md are
+old until their step.
 
 ### 10.1 cli.md sections 1 to 4
 
@@ -1058,9 +1070,9 @@ until their step.
 | 3 | Section 4, row `server list` | `"invalid": [{"name", "error", "causes"}]` |
 | 4 | Section 2.4, error block (lines 205-209) | The "after" text of section 7.4. |
 | 4 | Section 2.4, lines 212-214 | Keep the meaning. Add that the store error is a cause. |
-| 5 | Section 2.1, first item | Old: "shows the correct command, for example 'use `ncp tool call github search_issues`'". New: "shows the correct command in a hint" (section 7.3). |
+| 5 | Section 2.1, first list point | Old: "shows the correct command, for example 'use `ncp tool call github search_issues`'". New: "shows the correct command in a hint" (section 7.3). |
 | 6 | Section 4, error object | The message of the example becomes "The server `github` needs a login or more scopes". |
-| 8 | Section 2.1, fourth item | Old: "no tool `search_issue`; did you mean `search_issues`?". New: "The server `github` has no tool `search_issue`", with the hint "Did you mean `search_issues`?". |
+| 8 | Section 2.1, fourth list point | Old: "no tool `search_issue`; did you mean `search_issues`?". New: "The server `github` has no tool `search_issue`", with the hint "Did you mean `search_issues`?". |
 | 8 | Section 2.2, line 139 | "The command line has no tool name" |
 
 The new text of the error object in section 4:
@@ -1111,20 +1123,6 @@ New decision, added in step 2:
 | 9 | server-add.md | Lines 98 to 100, 167, 175 to 177, 208 to 216, 343 to 345 | Quoted messages with a capital letter and backticks. Hints as sentences. |
 | – | plan.md | Lines 158, 201, 204, 235, 300, 428 | No change. They describe milestones that are done. |
 
-### 10.4 MUST requirements that state the content of a message
-
-No requirement text changes. These requirements state what an error must
-say. The new text keeps each content in the error, as the table shows.
-
-| Requirement | Content | Place after the change |
-|---|---|---|
-| A13 | "the message says that the stop is on purpose" | Message (section 7.10). The tests cli.rs:1790 and 1812 keep reading `message`. |
-| N6 | the error names the new location of a redirect | Message: "The server `S` answered 308 with a redirect to `URL`. ncp follows no redirect." The redirect is the failure itself, not an inner error, because `connect_failure` reads it from the notes of the HTTP client. Thus rule 6 permits the location in the message. |
-| S2 | the error names the opt-in for the credential file | Hint with `--credential-store file`. |
-| S8 | a store call with no answer in 60 s stops with an error | Message or cause: "The credential store gave no answer in 60 s". It is the message of `store_failure` when no server is involved. When a call site adds a server, it is a cause (section 6.4). It is also a cause in E45, E71 and W13. |
-| P8, P9 | a clear error for `input_required`, and the pages in the error | Message and data lines, `pages` in JSON (section 7.11). |
-| N4 | a bad `SSL_CERT_FILE` stops with an error | The message names the variable and the path. |
-
 ## 11. Problems of today
 
 Today the text on stderr has these problems:
@@ -1135,8 +1133,8 @@ Today the text on stderr has these problems:
   name the server two times (E12, E13, E70).
 - Four messages give the fix in the message and again in a hint (E09, E70,
   E75, E92).
-- Messages start with a small letter. Text from rmcp starts with a capital
-  letter, so one line mixes the two.
+- Messages start with a lowercase letter. Text from rmcp starts with a
+  capital letter, so one line mixes the two.
 - The JSON error object holds only the first hint. Other hints follow as
   separate hint lines (B74).
 
@@ -1150,17 +1148,8 @@ reader. A reader of the old shape reads `error.hint` and gets nothing. It
 does not fail on a parse, because each line is still one JSON object with
 the same key.
 
-These JSON shapes change:
-
-- the error object: no `hint`, new `data`, `causes` and `hints`, a new
-  `message` text,
-- the warning object: new `data`, `causes` and `hints`, a new `message`
-  text,
-- the standalone hint: new `command`, a new `message` text,
-- `invalid[]` of `server list` and `ncp trust`: new `causes`, a shorter
-  `error` text.
-
-cli.md section 4 has no written exception for the time before the first
+The change affects the shapes of the error object, the warning object,
+the standalone hint and `invalid[]` (section 5). cli.md section 4 has no written exception for the time before the first
 release. Section 10.1 adds it.
 
 ## 12. Reasons for the rules
@@ -1180,7 +1169,7 @@ because AGENTS.md makes uv the first reference for command-line behavior.
 | 7 Causes | Shows the chain of `source()`, also text that repeats | rmcp and reqwest put the inner text into the outer text. |
 | 8 Consequence | The same, for example "No `requires-python` value found in the workspace. Defaulting to `>=3.14`." | – |
 | 9 Hints | Four forms of a fix in the message. "Did you mean `X`?" is on the message line. | One place for each fix. A suggestion is a fix. JSON has `hints`. The user decided this form. |
-| 10 Hint command | No JSON | Agents run a hint command (secret-binding.md rule 5). The sentence alone does not tell an agent which span is the command. A command that changes state needs a decision of a person, so `ncp` does not give it as data that an agent can run with no review. The opt-in to the credential file needs a decision of the user (S2). |
+| 10 Hint command | No JSON | Agents run a hint command (secret-binding.md rule 5). The sentence alone does not tell an agent which span is the command. A command that changes state needs a decision of a person. Thus `ncp` does not give it as data that an agent can run with no review. The opt-in to the credential file needs a decision of the user (S2). |
 | 11 Hint order | Hints in groups, with general hints last | B74. |
 | 12 Server name | The object of the failure is in the sentence (research rule 5) | The name shows one time in the text. |
 | 13 Articles | Mostly "Package `x`", with no article | ASD-STE100 rule 4.5. |
@@ -1191,9 +1180,9 @@ because AGENTS.md makes uv the first reference for command-line behavior.
 | 18 Indent | The same cause indent (research section 3). Lines of the author are at the indent of the author. A new line in a hint goes to column 0. | A line from a server cannot start at column 0 (B60). A hint is `ncp` text, and rule 14 quotes a value with a new line, so a hint needs no second line. |
 | 19 Empty line before a hint | The same (research section 4, and `uv-tool-commands` `upgrade.rs` for a standalone hint) | – |
 | 20 Warnings | `_once` warnings show one time in a run | Only an elicitation repeats a warning: it can run 8 rounds (B63) and give the same warning in each round. A set in the elicitor of one request needs no shared state in `Ui`. |
-| 21 Redaction | – | Requirement S3. Causes now hold the text of reqwest and rmcp, which can hold the server URL. A wider redaction changes the handling of secrets, so it needs a separate proposal. |
+| 21 Redaction | – | Requirement S3. Causes now hold the text of reqwest and rmcp, which can hold the server URL. A wider redaction changes how `ncp` handles secrets, so it needs a separate proposal. |
 | 22 Quiet | `-q` keeps the causes and hints of an error (research section 5). `-qq` shows nothing, also no error. | B74 already keeps them. An agent needs the code, the server and the hints of the error. The exit code alone does not tell which server or which fix. |
-| 23 No wrap | Wraps messages and causes, not hints | A wrap breaks a long command that a person copies. Without a wrap, `grep` finds a whole message on one line. A wrap on a terminal needs the terminal width, from `COLUMNS` or from a new dependency. It is optional later work. |
+| 23 No wrap | Wraps messages and causes, not hints | A wrap breaks a long command that a person copies. Without a wrap, `grep` finds a whole message on one line. A wrap on a terminal needs the terminal width, from `COLUMNS` or from a new dependency. A wrap on a terminal is optional later work. |
 | 24 Same parts in JSON | No JSON errors | Requirement I1 and cli.md section 4. A separate `data` keeps server text out of `message` (rule 15). |
 | 25 Usage errors of clap | The format of clap, also in uv (research section 8). No JSON. | The clap lines are foreign text, so rule 15 puts them on a cause. Some clap errors put the names of the missing arguments on the lines after the first line. |
 
@@ -1204,7 +1193,7 @@ because AGENTS.md makes uv the first reference for command-line behavior.
 | A script or an agent reads `error.hint`. | It gets nothing. | No release exists. The field `command` gives a command that reads state as data (rule 10). |
 | An agent needs a command that changes state, for example `ncp trust`, `ncp secret set` or `ncp server remove`. | Today the agent gets it as a bare command. After the change, it must read the command from the sentence. | Rule 10 is the safe default. A change to this policy needs a separate proposal. |
 | A secret shows in a data line, a cause or a hint. | A leak (S3). | Private fields and `map_text` in step 2. Rule 21. New tests read the whole stderr. |
-| The redaction of today does not hide a `${NAME}` value of a header or of `env` in a body that a server echoes. | A leak in the text of a cause. | The same is true today in the message. A wider redaction needs a separate proposal, because it changes the handling of secrets. |
+| The redaction of today does not hide a `${NAME}` value of a header or of `env` in a body that a server echoes. | A leak in the text of a cause. | The same is true today in the message. A wider redaction needs a separate proposal, because it changes how `ncp` handles secrets. |
 | A message does not name its server after `ncp` no longer writes the prefix. | The user cannot see which server failed. | The style check (rule 12) fails the test. |
 | An rmcp or reqwest update changes a cause text. | A test of library text fails. | Tests examine the text of `ncp` and only a short part of library text, for example `HTTP 404`. |
 | B78 reads `HTTP 404` from the Display text of the error. | The check fails when the Display text no longer holds the chain. | `is_not_found` reads the whole source chain (step 6). The test with a local `404` server stays. |
