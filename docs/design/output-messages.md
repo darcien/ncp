@@ -577,7 +577,7 @@ release. Section 10.1 adds it.
   `Extra` holds the rare fields `data`, `login_challenge`, `pages` and
   `destination`. Thus `Failure` stays below the 128 bytes of
   `clippy::result_large_err`.
-- Read methods: `exit()`, `server()`, `message()`, `hints()`, `pages()`
+- Read methods: `exit()`, `server_name()`, `message()`, `hints()`, `pages()`
   and `login_challenge()`. No code outside the module reads or writes a
   field.
 - Build methods: `data(line)`, `cause(text)`, `caused_by(&dyn Error)`,
@@ -610,11 +610,19 @@ release. Section 10.1 adds it.
     of an interrupt" with no server. The call sites with a server
     (session.rs:701 and 971, ask.rs:295 and 390, auth.rs:828) give it and
     use `about`.
+  - A remap that adds a server to each failure of an inner call becomes
+    `about`. The inner function then gives the server to each failure
+    that it makes, with the forms above. Remaps: auth.rs:260, 298, 316,
+    472 and 692 (step 7), secrets.rs:181 (step 4). Their inner failures
+    include `store_failure` and the `interrupted()` of `limited`
+    (auth.rs:134).
 - `Hint` has `message` and `command: Option<String>`, with the names of
   the JSON fields. The constructor `Hint::run(goal, command)` makes "To
   GOAL, run `COMMAND`" and sets `command`. The constructor
   `Hint::run_text(goal, command)` makes the same sentence with no
   `command`, for a command that changes state (rule 10).
+  `Hint::text(message)` makes a hint with no `command`, for each other
+  form of rule 9 and for the old hint texts of step 2.
 - `chain_text(&dyn Error)` replaces `causes()` (session.rs:838). It joins
   an error and its source chain with `: `, with the omission of rule 7.
 - `Failure::caused_by(&dyn Error)` adds the causes of a source chain, with
@@ -1101,7 +1109,8 @@ the list.
      methods of section 7. Struct literals: session.rs:384, 461, 774, 863,
      932, 954 and 971, secrets.rs:1148, ask.rs:301, auth.rs:115. Pattern:
      commands.rs:167. Field reads: cli.rs:112, 199 and 267, ask.rs:289
-     and 424.
+     and 424. Field reads in unit tests: secrets.rs:1437 and 1441,
+     session.rs:995-999, 1025-1026 and 1055, auth.rs:1452.
    - Change the places that copy only `failure.message` (section 7).
    - Change `interrupted` (section 7).
    - Give each existing hint its old text and no command.
@@ -1117,7 +1126,8 @@ the list.
 
    Change these tests in step 2:
    - In the testkit, add `Run::hints()` and `Run::error_text()`, which
-     joins the message, the data lines and the causes.
+     joins the message, the data lines and the causes. Both read the error
+     with no style check, so that they work on both forms.
    - Change each `error()["hint"]` check to `hints()` (section 12.1).
    - Change the checks of a separate hint line and of an absent hint
      (section 12.1).
