@@ -1,6 +1,6 @@
 # Design: errors, warnings and hints
 
-Status: proposal, not accepted. Revision 3, after two rounds of two
+Status: proposal, not accepted. Revision 4, after two rounds of two
 reviews (section 16).
 
 Date: 2026-10-13. Input:
@@ -34,8 +34,8 @@ gives the rules, the text and JSON formats, the changes to the design
 decisions, and a migration plan.
 
 This proposal changes no MUST requirement. It adds no dependency. It does
-not change how `ncp` stores or handles secrets. Section 14 lists the
-questions that only the user can answer.
+not change how `ncp` stores or handles secrets. Section 14 gives its
+place in the plan.
 
 ## 2. Terms
 
@@ -164,7 +164,7 @@ rule.
     command (secret-binding.md rule 5). The sentence alone does not tell an
     agent which span is the command. A command that changes state needs a
     decision, so `ncp` does not give it as data that an agent runs with no
-    review. Section 14 asks the user about this policy.
+    review.
 
 11. **Hint order.** The hints come in the order to try them. The most
     probable fix comes first.
@@ -266,8 +266,8 @@ rule.
     places. B70 applies to each part: no part names a stored URL or issuer.
     Reason: requirement S3. Causes now hold the text of reqwest and rmcp,
     which can hold the server URL. This rule keeps the redaction of today
-    for the new parts. A wider redaction is a question for the user
-    (section 14).
+    for the new parts. A wider redaction changes the handling of secrets.
+    It is not in the scope of this proposal.
 
 22. **Quiet.** `-q` hides warnings with their causes and hints, standalone
     hints, and progress. An error always shows with its causes and its
@@ -584,8 +584,7 @@ These JSON shapes change:
   `error` text.
 
 cli.md section 4 has no written exception for the time before the first
-release. Archives of a release build exist from milestone 14. Section 14
-asks the user about both points.
+release. Section 10.1 adds it.
 
 ## 7. Model
 
@@ -624,7 +623,8 @@ asks the user about both points.
    The three arrays are always present. `ncp` no longer writes the field
    `hint` and the separate hint lines. There is no transition field,
    because `ncp` has no release. `destination` stays, and cli.md section 4
-   lists it. The user decides on the written exception (section 14).
+   lists it. cli.md section 4 gets an exception for the time before the
+   first release (section 6.5).
 2. **Server name.** The message names the server: "the server `NAME`"
    (rule 12). The renderer writes no prefix. JSON keeps `server`. The style
    check of the tests makes sure that each failure with `server` names the
@@ -1058,6 +1058,7 @@ until their step.
 | 2 | End of section 1 | New paragraph: "In this document, 'the hint `COMMAND`' means a hint sentence that gives `COMMAND`." The sentence covers each place that says "with the hint `COMMAND`". These places are section 2.4 (lines 189-190, 213-214, 229-231) and 15 decisions: B17, B28, B31, B32, B35, B51, B52, B58, B67, B71, B72, B73, B75, B77 and C5. |
 | 2 | Section 2.3, row `-q` | "`-q` hides warnings, standalone hints and progress. An error shows with its causes and hints (B74)." |
 | 2 | Section 4, error object | The text below. Its example becomes the "after" object of section 6.1, with the message "The server `github` needs a login or more scopes". |
+| 2 | Section 4, after the rule of a major version | "Before the first release, the fields of a JSON object can change." |
 | 3 | Section 4, row `server list` | `"invalid": [{"name", "error", "causes"}]` |
 | 4 | Section 2.4, error block (lines 205-209) | The "after" text of section 9.4. |
 | 4 | Section 2.4, lines 212-214 | Keep the meaning. Add that the store error is a cause. |
@@ -1134,7 +1135,7 @@ call sites, the tests and the design documents of one area together.
 After each step, `mise run precommit` passes. Do the steps in the order of
 the list.
 
-1. **Questions.** The user answers section 14 and accepts this proposal.
+1. **Acceptance.** The user accepts this proposal.
 2. **Model, renderer and the first area.** Do these tasks:
    - Make the model of section 7.
    - Make one renderer for text and one for JSON.
@@ -1323,10 +1324,10 @@ because no cause exists yet. Step 2 adds those tests.
 
 | Risk | Effect | Control |
 |---|---|---|
-| A script or an agent reads `error.hint`. | It gets nothing. | No release exists. The field `command` gives a command that reads state as data (rule 10). The user decides on the written exception (section 14). |
-| An agent needs a command that changes state, for example `ncp trust`, `ncp secret set` or `ncp server remove`. | Today the agent gets it as a bare command. After the change, it must read the command from the sentence. | Rule 10 is the safe default. Section 14 asks the user about the policy. |
+| A script or an agent reads `error.hint`. | It gets nothing. | No release exists. The field `command` gives a command that reads state as data (rule 10). |
+| An agent needs a command that changes state, for example `ncp trust`, `ncp secret set` or `ncp server remove`. | Today the agent gets it as a bare command. After the change, it must read the command from the sentence. | Rule 10 is the safe default. A change to this policy needs a separate proposal. |
 | A secret shows in a data line, a cause or a hint. | A leak (S3). | Private fields and `map_text` in step 2. Rule 21. New tests read the whole stderr. |
-| The redaction of today does not hide a `${NAME}` value of a header or of `env` in a body that a server echoes. | A leak in the text of a cause. | The same is true today in the message. Section 14 asks the user about a wider redaction. |
+| The redaction of today does not hide a `${NAME}` value of a header or of `env` in a body that a server echoes. | A leak in the text of a cause. | The same is true today in the message. A wider redaction needs a separate proposal, because it changes the handling of secrets. |
 | A message does not name its server after `ncp` no longer writes the prefix. | The user cannot see which server failed. | The style check (rule 12) fails the test. |
 | An rmcp or reqwest update changes a cause text. | A test of library text fails. | Tests examine the text of `ncp` and only a short part of library text, for example `HTTP 404`. |
 | B78 reads `HTTP 404` from the Display text of the error. | The check fails when the Display text no longer holds the chain. | `is_not_found` reads the whole source chain. The test with a local `404` server stays. |
@@ -1334,35 +1335,11 @@ because no cause exists yet. Step 2 adds those tests.
 | A body of a server or a list of pages is long. | Hints go out of view. | Rule 16 cuts a cause and the data lines at 20 lines or 2048 bytes. |
 | About 150 checks change. | Review is slow, and a wrong text can pass. | Steps by area, the style check from step 2, and the hint sentences of section 5.1. |
 
-## 14. Open questions for the user
+## 14. Place in the plan
 
-1. **Wider redaction.** Rule 21 keeps the redaction of today: the server
-   URL and its `${NAME}` values, its user information and its OAuth query
-   values. A server can echo a header value, for example `Authorization`,
-   in the body of an error. The body then shows in a cause, as it shows in
-   the message today. Do you want a wider redaction in each diagnostic?
-   That redaction hides each `${NAME}` value of the entry (in `headers` and
-   `env`). It also hides each value of an RFC 9110 credential header
-   (`Authorization`, `Proxy-Authorization`). AGENTS.md says that a change
-   to the handling of secrets needs your decision.
-2. **Milestone.** `docs/plan.md` has no milestone for this work. M20 is
-   parked. Where in the plan order do you want it, and is it a gate?
-3. **JSON shapes before the first release.** cli.md section 4 says that
-   the removal or change of a field needs a major version. This proposal
-   changes these shapes: the error object, the warning object, the
-   standalone hint, and `invalid[]` of `server list` and `ncp trust`
-   (section 6.5). Do you accept a written exception in cli.md section 4:
-   "Before the first release, the fields of a JSON object can change"? Did
-   anybody other than you get the archives of milestone 14 (`dist/`)?
-4. **Commands that change state.** Rule 10 gives the JSON field `command`
-   only for a command that reads state or starts a login. Do you want
-   `command` also for commands that change state (store, delete, remove,
-   trust, tool call), so that an agent can run them directly? With the
-   field, an agent can do these actions with no decision of a person:
-   - trust a project file with no review of its entries,
-   - delete the stored secrets of all destinations (`--all`),
-   - remove an entry and its OAuth tokens,
-   - call a tool with side effects.
+This work is milestone 20 of [plan.md](../plan.md). It comes after
+milestone 19 and before the distribution, which is always the last
+milestone.
 
 ## 15. Differences from uv
 
@@ -1392,6 +1369,10 @@ because no cause exists yet. Step 2 adds those tests.
 Reviews: `.scratch/review-output-messages-adversarial.md` (F, and round 2
 A-N) and `.scratch/review-output-messages-uv-ste.md` (U, R, S, T, and
 round 2 U-N).
+
+Revision 4 removes the open questions of revision 3. Questions 1, 3 and
+4 do not block this proposal. The user answered question 2: section 14.
+The table rows below use the numbers of revision 3.
 
 ### 16.1 Round 1
 

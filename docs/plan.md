@@ -7,6 +7,9 @@ Do the milestones in order. Each milestone ends with `mise run check` and
 Record progress in `.scratch/progress.md` (not tracked by git): what is done,
 what is next, what is blocked, and why.
 
+The distribution milestone has no number and is always the last. Put a new
+milestone before it, with the next number.
+
 ## Milestone 1: early tests of risks
 
 Status: done.
@@ -327,7 +330,7 @@ behavior. Do the items in order. Each item is one or more small commits.
 Status: items 1 to 3 done on 2026-10-10 at commit 3066c47 (report
 `docs/research/release-build-2026-10-10.md`). The release step also makes
 the archives and `SHA256SUMS` of the decided release form, with no upload.
-Item 4 moved to milestone 20: the user decided on 2026-10-10 to do the
+Item 4 moved to the distribution milestone: the user decided on 2026-10-10 to do the
 interop tests before the distribution, and to do the distribution last.
 
 1. Static musl builds for `x86_64` and `aarch64` in the Linux harness, macOS
@@ -336,7 +339,7 @@ interop tests before the distribution, and to do the distribution last.
    and `linux/amd64`.
 3. Start time (F3): measure `ncp --version` and `ncp server list`, and
    record the result in a research report.
-4. Moved to milestone 20.
+4. Moved to the distribution milestone.
 
 ## Milestone 15: interop tests
 
@@ -489,9 +492,20 @@ step.
    browser, with their own account. Record the result in a new report in
    `docs/research/`.
 
-## Milestone 20: distribution (gate)
+## Milestone 20: errors, warnings and hints
 
-Do this milestone last. The workflow needs action pins from github.com. The
+Design: `docs/design/output-messages.md` (revision 4). The design is the
+source of truth; this list only orders the work. Research:
+`docs/research/uv-output-messages.md`.
+
+1. **Stop and ask** the user to accept the design.
+2. Do steps 2 to 10 of the migration plan (design section 11), in order.
+   Each step changes the types, the call sites, the tests and the design
+   documents of one area.
+
+## Last milestone: distribution (gate)
+
+The workflow needs action pins from github.com. The
 push, the tag and the CIMD URL need the user.
 
 Parked by the user on 2026-10-12. Start only after the user does the tests
