@@ -103,8 +103,8 @@ reason for each rule.
    redaction of rule 21, `ncp` makes a list: the message, then the causes.
    `ncp` compares each cause with the last string that it kept in the
    list. If that string contains the text of the cause, the cause does not
-   show. Exception: a store error that passes through rmcp
-   arrives as one text. It shows as one cause.
+   show. Exception: a store error that passes through rmcp arrives as one
+   text. It shows as one cause.
 
 8. **Consequence.** A consequence tells what `ncp` did or did not do
    because of the failure. It is a second sentence on the message line. It
@@ -189,8 +189,8 @@ reason for each rule.
 
 18. **Indent.** A `cause:` line starts with 2 spaces. A second line of a
     cause starts with 9 spaces. An empty line inside a cause stays empty. A
-    data line under an error starts with 7 spaces, under a warning with 9
-    spaces. A hint is always one line. Only a label or an empty line starts
+    data line under an error starts with 7 spaces. A data line under a
+    warning starts with 9 spaces. A hint is always one line. Only a label or an empty line starts
     at column 0.
 
 19. **Empty line before a hint.** In text, one empty line comes before each
@@ -1011,8 +1011,9 @@ Exact text (`assert_eq!`):
   923, 1041.
 - project.rs: 162, 393, 491 and 650 (`invalid[0].error` of `server list`).
 
-`starts_with`, `ends_with` and `contains` checks. Some of them change to
-`error_text()`, because their text moves to a cause or a data line:
+These checks use `starts_with`, `ends_with` or `contains`. Some of them
+change to `error_text()`, because their text moves to a cause or a data
+line:
 
 - cli.rs: 226, 512-514, 559, 650, 672, 703, 711, 713, 896, 1006, 1020,
   1073, 1087, 1117, 1223, 1513, 1516, 1568, 1614, 1873, 2186, 2300, 2325,
