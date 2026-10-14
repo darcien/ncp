@@ -1,16 +1,30 @@
 # Design: errors, warnings and hints
 
-Status: proposal, not accepted. Revision 4, after two rounds of two
-reviews (section 16).
+Status: proposal, not accepted. Revision 4.
 
 Date: 2026-10-13. Input:
 [uv-output-messages.md](../research/uv-output-messages.md) (uv 0.13.0,
 section 11 "Rules to copy"), the message inventory of 2026-10-13
 (`.scratch/message-inventory.md`, not tracked), [cli.md](cli.md) sections
-2, 4 and 9.
+2, 4 and 9. The review findings and their resolution are in
+`.scratch/review-output-messages-adversarial.md` and
+`.scratch/review-output-messages-uv-ste.md` (not tracked).
 
 The IDs E01 to E117, W01 to W27, H01 to H08 and C01 to C32 come from the
 inventory. Each example in this document also gives the code location.
+
+How to use this document:
+
+| You need | Read |
+|---|---|
+| The rules | Section 4 |
+| The text format and the standard hint sentences | Section 5 |
+| The JSON format | Section 6 |
+| The types and functions | Section 7 |
+| Examples of each rule, with the code location | Section 9 |
+| The changes to other design documents | Section 10 |
+| The work, step by step | Sections 11 and 12 |
+| The reasons for the differences from uv | Section 15 |
 
 ## 1. Purpose
 
@@ -29,9 +43,7 @@ these problems:
   separate hint lines (B74).
 
 The user decided to match uv as closely as the rules of `ncp` permit. uv is
-the first reference for command-line behavior (AGENTS.md). This document
-gives the rules, the text and JSON formats, the changes to the design
-decisions, and a migration plan.
+the first reference for command-line behavior (AGENTS.md).
 
 This proposal changes no MUST requirement. It adds no dependency. It does
 not change how `ncp` stores or handles secrets. Section 14 gives its
@@ -184,9 +196,8 @@ rule.
 14. **Backticks.** These values are in backticks: commands, flags, file
     paths, URLs, URL schemes and hosts. Configuration keys, field names,
     method names and the names of servers, tools, secrets and variables
-    are also in backticks. Examples of
-    schemes: `https`, `http`, `javascript:`. This applies also to a value
-    at the end of a line. `ncp` does not use the uv form `MESSAGE: value`.
+    are also in backticks. Examples of schemes: `https`, `http`,
+    `javascript:`. This applies also to a value at the end of a line. `ncp` does not use the uv form `MESSAGE: value`.
     A value that contains a backtick or a control character shows in
     double quotes, with the escapes of Rust `Debug`.
     Reason: an agent finds each value by its backticks. A period after a
@@ -249,8 +260,10 @@ rule.
     `upgrade.rs` for a standalone hint).
 
 20. **Warnings.** A warning has the format of an error: `warning:`, data
-    lines, `cause:` lines and hints. The elicitation of one request shows
-    each full warning (server, message, causes and hints) only one time.
+    lines, `cause:` lines and hints. The hints that follow a warning today
+    (H06 after W21, H08 after W26) become hints of that warning. The
+    elicitation of one request shows each full warning (server, message,
+    causes and hints) only one time.
     Reason: uv shows its `_once` warnings one time in a run. `ncp` needs
     this only for an elicitation, which can run 8 rounds (B63) and give
     the same warning in each round. A set in the elicitor of one request
@@ -317,30 +330,9 @@ hint: SECOND HINT
 ```
 
 A warning has the same layout with `warning: ` and a data indent of 9
-spaces.
-
-An error with two causes and one hint:
-
-```
-error: ncp cannot list the items in the native store. ncp deleted nothing.
-  cause: The credential store denied access
-  cause: `security dump-keychain` exited with code 51
-
-hint: The native store can have an item of `A` for another destination. To delete only the item of one server, run `ncp secret delete A --server <SERVER>`.
-```
-
-Both causes are `ncp` text. The second cause comes from the type that
-`ncp` makes for an exit of `security`. When `security` writes on stderr,
-that text is a third cause, as foreign text.
-
-An error with a data line:
-
-```
-error: The server `fs` is in `/work/app/.mcp.json`, which you did not trust:
-       fs  npx -y @modelcontextprotocol/server-filesystem .
-
-hint: To trust the file, run `ncp trust`
-```
+spaces. A standalone hint is one `hint:` line (section 5.2). Section 9
+gives full examples: causes and a hint (9.1, 9.5), data lines (9.8,
+9.11) and warnings (9.12, 9.13).
 
 A cause with two lines, from a message of a server:
 
@@ -364,19 +356,6 @@ error: The handshake with the server `docs` failed in `server/discover`
 ```
 
 The line `...` stands for 18 lines that this document does not show.
-
-A warning with a cause:
-
-```
-warning: The server `fx` sent a question that ncp cannot show. ncp declines.
-  cause: The request has no `url` field
-```
-
-A standalone hint:
-
-```
-hint: The server `fx` has instructions for clients. To see the instructions, run `ncp server show fx`.
-```
 
 ### 5.1 Standard hint sentences
 
@@ -404,8 +383,9 @@ are values that `ncp` puts in.
 | E10, E53 | `ncp server list` | To see the configured servers, run `ncp server list` | Yes |
 | E51, E52 | `ncp tool list S` | To see the tools of the server, run `ncp tool list S` | Yes |
 | E60 | `ncp tool show S T` | To see the arguments of the tool, run `ncp tool show S T` | Yes |
-| E09 | the corrected command | To give the server and the tool as two words, run `ncp tool call S T ...` (or `ncp tool show S T`) | No for `tool call`: calls a tool. Yes for `tool show`. |
-| E62 | the example call | For example, run `ncp tool call S T ...` | No: calls a tool |
+| E09 (`tool call`) | the corrected command | To give the server and the tool as two words, run `ncp tool call S T ARGS` | No: calls a tool |
+| E09 (other commands) | `ncp tool show S T` | To see the tool, run `ncp tool show S T` | Yes |
+| E62 | the example call | To call the tool, run `ncp tool call S T NAME=<TYPE> ...` | No: calls a tool |
 | E55 | `ncp resource list S`, `ncp prompt list S` | To see the resources of the server, run `ncp resource list S` (the same for prompts) | Yes |
 | E107 | `ncp server remove N[ --global]` | To remove the entry, run `ncp server remove N` (with `--global` when the global file has it) | No: removes |
 | E110 | `ncp server remove N` or `ncp trust` | To remove the entry of the project file, run `ncp server remove N` | No: removes |
@@ -618,44 +598,28 @@ release. Section 10.1 adds it.
 
 ## 8. Decisions on the open points
 
-1. **JSON object.** `data` and `causes` are arrays of strings. `hints` is
-   an array of objects with `message` and an optional `command` (rule 10).
-   The three arrays are always present. `ncp` no longer writes the field
-   `hint` and the separate hint lines. There is no transition field,
-   because `ncp` has no release. `destination` stays, and cli.md section 4
-   lists it. cli.md section 4 gets an exception for the time before the
-   first release (section 6.5).
-2. **Server name.** The message names the server: "the server `NAME`"
-   (rule 12). The renderer writes no prefix. JSON keeps `server`. The style
-   check of the tests makes sure that each failure with `server` names the
-   server in its message.
-3. **`-q`.** `-q` keeps the causes and hints of an error, as uv does and as
-   B74 says (rule 22). Rule 13 of the research report said that `ncp`
-   hides them. The report now has the correct rule.
-4. **Consequence tails.** A second sentence on the message line, with
-   periods (rule 8).
-5. **Library text.** Each error in the source chain is one `cause:` line
-   with no change of case or punctuation (rules 7 and 15). The message is
-   always `ncp` text.
-6. **Warnings.** Warnings have data lines, causes and hints (rule 20). The
-   hints that follow a warning today (H06 after W21, H08 after W26) become
-   hints of that warning. An elicitation shows each warning one time.
-7. **Periods.** As uv `STYLE.md`: one sentence has no period, two or more
-   sentences have a period after each (rule 4).
-8. **Line wrap.** None, in a pipe and on a terminal (rule 23). A wrap on a
-   terminal is optional later work.
-9. **Scope.** Errors, warnings, hints, standalone hints and the error
-   fields on stdout now. Prompts, success text, debug, trace and progress
-   later or not (section 3).
-10. **Migration.** Ten steps in a fixed order. Each step changes the types,
-    the call sites, the tests and the design documents of one area
-    together. After each step, `mise run precommit` passes (section 11).
+Each open point has a decision. This table gives the place that states
+it.
+
+| Point | Decision | Place |
+|---|---|---|
+| JSON object | The arrays `data`, `causes` and `hints`. No field `hint` and no transition field. `destination` stays. | Sections 6.1, 6.5 and 10.1 |
+| Server name | The message names the server. The renderer writes no prefix. JSON keeps `server`. | Rule 12, the style check of section 11 |
+| `-q` | An error keeps its causes and hints. | Rule 22 |
+| Consequence tails | A second sentence on the message line | Rule 8 |
+| Library text | One `cause:` line for each error of the source chain, with no change | Rules 7 and 15 |
+| Warnings | Data lines, causes and hints. One time in an elicitation. | Rule 20 |
+| Periods | As uv `STYLE.md` | Rule 4 |
+| Line wrap | None | Rule 23 |
+| Scope | Errors, warnings, hints and the error fields on stdout | Section 3 |
+| Migration | Ten steps in a fixed order | Section 11 |
 
 ## 9. Before and after
 
-The foreign text in these examples comes from rmcp 3.5.1, reqwest, hyper,
-std and the `security` program. It can change with a new version of a
-library. `/home/u` is the home folder of the user.
+Each example shows a different rule. Section 9.13 gives more messages of
+the same forms. The foreign text in these examples comes from rmcp 3.5.1,
+reqwest, hyper, std and the `security` program. It can change with a new
+version of a library. `/home/u` is the home folder of the user.
 
 ### 9.1 The deepest chain (C01, session.rs `entry_failure`)
 
@@ -681,7 +645,7 @@ hint: ncp puts a stored secret only into `env` and `headers` values. To set the 
 Five levels become a message, two causes and a hint. The rule about stored
 secrets explains the fix, so it goes into the hint.
 
-### 9.2 A fix after a semicolon (server.rs `UrlError::PlainHttp`)
+### 9.2 A fix after a semicolon (E14, server.rs `UrlError::PlainHttp`)
 
 Before:
 
@@ -719,7 +683,9 @@ error: `github.search_issues` joins a server name and a tool name
 hint: To give the server and the tool as two words, run `ncp tool call github search_issues q=x`
 ```
 
-The JSON hint has no `command`, because `tool call` calls a tool.
+The JSON hint has no `command`, because `tool call` calls a tool. Each
+other command that takes a server name gives the hint "To see the tool,
+run `ncp tool show github search_issues`", with `command`.
 
 ### 9.4 A duplicate fix and the server name two times (E70, secrets.rs `miss`)
 
@@ -760,37 +726,11 @@ error: ncp cannot list the items in the native store. ncp deleted nothing.
 hint: The native store can have an item of `A` for another destination. To delete only the item of one server, run `ncp secret delete A --server <SERVER>`.
 ```
 
-### 9.6 An rmcp cause (E30, session.rs `request_failure`)
+Both causes are `ncp` text. The second cause comes from the type that
+`ncp` makes for an exit of `security`. When `security` writes on stderr,
+that text is a third cause, as foreign text.
 
-Before:
-
-```
-error: server gh: tools/list: Transport closed
-```
-
-After:
-
-```
-error: The request `tools/list` to the server `gh` failed
-  cause: Transport closed
-```
-
-### 9.7 An rmcp cause with a repeated word (E33, auth.rs `auth_failure`)
-
-Before:
-
-```
-error: server gh: OAuth discovery: Metadata error: Protected resource metadata missing required resource field
-```
-
-After:
-
-```
-error: The OAuth discovery for the server `gh` failed
-  cause: Metadata error: Protected resource metadata missing required resource field
-```
-
-### 9.8 An rmcp cause in small letters, with the 404 hint (E20, B78)
+### 9.6 An rmcp cause in small letters, with the 404 hint (E20, B78, session.rs `connect_failure`)
 
 The cache has a protocol version for the `initialize` handshake.
 
@@ -812,7 +752,7 @@ hint: The server has no MCP endpoint at the path of the URL. Many servers use `/
 
 The cause keeps the small letter of rmcp (rule 15).
 
-### 9.9 A connection that the host refuses (E20, session.rs `connect_failure`)
+### 9.7 A connection that the host refuses (E20, session.rs `connect_failure`)
 
 The cache has no protocol version, so `ncp` probes with `server/discover`
 first (client.rs). A refused connection is not a legacy answer, so the
@@ -836,24 +776,7 @@ error: The handshake with the server `gh` failed in `server/discover`
   cause: Connection refused (os error 61)
 ```
 
-### 9.10 A time limit (E27, session.rs `request_failure`)
-
-Before:
-
-```
-error: server gh: tools/call: the server gave no answer in 300 s; ncp sent a cancel request
-hint: give a longer limit with --timeout <SECONDS>
-```
-
-After:
-
-```
-error: The server `gh` gave no answer to `tools/call` in 300 s. ncp sent a cancel request.
-
-hint: To wait longer, run the command again with `--timeout <SECONDS>`
-```
-
-### 9.11 A trust error (E13, session.rs `blocked`)
+### 9.8 A trust error (E13, session.rs `blocked`)
 
 `fs` is in the untrusted project file and in the global file. Today
 `project_entries` writes 2 spaces before each entry, and `indented` adds 2
@@ -884,27 +807,7 @@ indent, so the JSON `data` has the rows at column 0. The trust question
 P01 keeps its indent of 2 spaces. After a change of a trusted file, the
 message ends "which changed after you trusted it:".
 
-### 9.12 Two hints after a `401` (E16, B51)
-
-Before:
-
-```
-error: server web: the server needs a login or more scopes
-hint: ncp secret set WEB_TOKEN --server web
-hint: ncp auth login web
-```
-
-After:
-
-```
-error: The server `web` needs a login or more scopes
-
-hint: If the value of `WEB_TOKEN` changed, run `ncp secret set WEB_TOKEN --server web` to store the new value
-
-hint: To log in, run `ncp auth login web`
-```
-
-### 9.13 A near name (E51, commands.rs `find_tool`)
+### 9.9 A near name (E51, commands.rs `find_tool`)
 
 Before:
 
@@ -923,7 +826,7 @@ hint: Did you mean `search_issues`?
 hint: To see the tools of the server, run `ncp tool list github`
 ```
 
-### 9.14 A stop on purpose (E43, auth.rs `binding_failure`, requirement A13)
+### 9.10 A stop on purpose (E43, auth.rs `binding_failure`, requirement A13)
 
 Before:
 
@@ -943,7 +846,7 @@ hint: To log in, run `ncp auth login web`
 
 The message still says that the stop is on purpose, as A13 requires.
 
-### 9.15 A page to open (E26, session.rs `page_failure`)
+### 9.11 A page to open (E26, session.rs `page_failure`)
 
 Before:
 
@@ -966,51 +869,7 @@ hint: After you complete the steps on the page, run the command again
 The message of the server error is free text, so it is a cause. The page
 message stays on its data line.
 
-### 9.16 A warning with a cause and a consequence (W14, ask.rs `ask`)
-
-Before:
-
-```
-warning: server fx: cannot ask: the request is not valid: no url; ncp declines
-```
-
-After:
-
-```
-warning: The server `fx` sent a question that ncp cannot show. ncp declines.
-  cause: The request has no `url` field
-```
-
-### 9.17 A URL that ncp does not open (W15, ask.rs `ask`)
-
-Before:
-
-```
-warning: server fx: the server asks to open javascript:alert(1): ncp opens only https pages, not javascript:; ncp declines
-```
-
-After:
-
-```
-warning: The server `fx` asks ncp to open `javascript:alert(1)`. ncp declines.
-  cause: ncp opens only `https` pages, not `javascript:` pages
-```
-
-### 9.18 A host with a Punycode label (W16, ask.rs `ask`)
-
-Before:
-
-```
-warning: server fx: the host xn--pple-43d.com has a Punycode label (xn--): its name can look like another name
-```
-
-After:
-
-```
-warning: The page of the server `fx` is on the host `xn--pple-43d.com`. This host has a Punycode label (`xn--`), so its name can look like another name.
-```
-
-### 9.19 A warning with a hint (W21 and H06, secrets.rs `secret set`)
+### 9.12 A warning with a hint (W21 and H06, secrets.rs `secret set`)
 
 Before:
 
@@ -1027,15 +886,68 @@ warning: The native store also has an item of `A` for `https://web.example`. ncp
 hint: To delete the items of this destination, run `ncp secret delete A --server web`. Then store the value again.
 ```
 
-### 9.20 A warning that names a reason (W03, B76 (5))
+### 9.13 More messages of the same forms
 
-Before:
+Each item gives the inventory ID, the code location, the rule that it
+shows, and the text after the change.
+
+E30, session.rs `request_failure`. A cause from rmcp:
 
 ```
-warning: ncp does not use /work/app/.mcp.json: another user owns it
+error: The request `tools/list` to the server `gh` failed
+  cause: Transport closed
 ```
 
-After:
+E33, auth.rs `auth_failure`. The cause keeps the text of rmcp with its
+repeated word (rule 15):
+
+```
+error: The OAuth discovery for the server `gh` failed
+  cause: Metadata error: Protected resource metadata missing required resource field
+```
+
+E27, session.rs `request_failure`. A time limit with a consequence
+(rule 8):
+
+```
+error: The server `gh` gave no answer to `tools/call` in 300 s. ncp sent a cancel request.
+
+hint: To wait longer, run the command again with `--timeout <SECONDS>`
+```
+
+E16 (B51), session.rs `open_with_login`. Two hints after a `401`, in
+the order to try them (rule 11):
+
+```
+error: The server `web` needs a login or more scopes
+
+hint: If the value of `WEB_TOKEN` changed, run `ncp secret set WEB_TOKEN --server web` to store the new value
+
+hint: To log in, run `ncp auth login web`
+```
+
+W14, ask.rs `ask`. A warning with a cause and a consequence:
+
+```
+warning: The server `fx` sent a question that ncp cannot show. ncp declines.
+  cause: The request has no `url` field
+```
+
+W15, ask.rs `ask`. A URL and a scheme in backticks (rule 14):
+
+```
+warning: The server `fx` asks ncp to open `javascript:alert(1)`. ncp declines.
+  cause: ncp opens only `https` pages, not `javascript:` pages
+```
+
+W16, ask.rs `ask`. A value from a server in a message (rule 15):
+
+```
+warning: The page of the server `fx` is on the host `xn--pple-43d.com`. This host has a Punycode label (`xn--`), so its name can look like another name.
+```
+
+W03 (B76 (5)), session.rs `ProjectFile::Unusable`. The reason is a
+cause:
 
 ```
 warning: ncp does not use `/work/app/.mcp.json`
@@ -1110,7 +1022,7 @@ New decision, added in step 2:
 | 4 | secret-binding.md | Rule 5, "The condition is in the message, and each hint is only a command, because agents run a hint as a command (B3, B10)." | "The message says what is missing. The condition 'If the URL is correct' is in the hint. Each hint is a sentence. A hint that only reads state or starts a login has the JSON field `command`, because agents run a hint command (B3, B10)." |
 | 4 | secret-binding.md | Line 229, "tells the user to add the entry first" | "gives a hint that tells the user to add the entry first" |
 | 5 | project-config.md | Lines 167 to 173 | "with a hint that gives `ncp trust`", and the same for `ncp trust --ignore`. |
-| 5 | project-config.md | Example at line 184 | The "after" text of section 9.11, with only the hint `ncp trust`. |
+| 5 | project-config.md | Example at line 184 | The "after" text of section 9.8, with only the hint `ncp trust`. |
 | 9 | server-add.md | Lines 98 to 100, 167, 175 to 177, 208 to 216, 343 to 345 | Quoted messages with a capital letter and backticks. Hints as sentences. |
 | – | plan.md | Lines 158, 201, 204, 235, 300, 428 | No change. They describe milestones that are done. |
 
@@ -1121,11 +1033,11 @@ say. The new text keeps each content in the error, as the table shows.
 
 | Requirement | Content | Place after the change |
 |---|---|---|
-| A13 | "the message says that the stop is on purpose" | Message (section 9.14). The tests cli.rs:1790 and 1812 keep reading `message`. |
+| A13 | "the message says that the stop is on purpose" | Message (section 9.10). The tests cli.rs:1790 and 1812 keep reading `message`. |
 | N6 | the error names the new location of a redirect | Message: "The server `S` answered 308 with a redirect to `URL`. ncp follows no redirect." The redirect is the failure itself, not an inner error, because `connect_failure` reads it from the notes of the HTTP client. Thus rule 6 permits the location in the message. |
 | S2 | the error names the opt-in for the credential file | Hint with `--credential-store file`. |
 | S8 | a store call with no answer in 60 s stops with an error | Message or cause: "The credential store gave no answer in 60 s". It is the message when the store error is the whole failure (`store_failure`). It is a cause in E45, E71 and W13. |
-| P8, P9 | a clear error for `input_required`, and the pages in the error | Message and data lines, `pages` in JSON (section 9.15). |
+| P8, P9 | a clear error for `input_required`, and the pages in the error | Message and data lines, `pages` in JSON (section 9.11). |
 | N4 | a bad `SSL_CERT_FILE` stops with an error | The message names the variable and the path. |
 
 ## 11. Migration plan
@@ -1174,14 +1086,16 @@ the list.
    (section 6.4). Hint functions for the fixes that the Display texts hold
    today.
 4. **Stores and secrets.** `StoreError`, the `security` and Secret
-   Service texts, `private_file`. Call sites: E66, E69 to E91, W18 to W25
-   and H07. The OAuth store marks of `oauth/store.rs` use `chain_text`
+   Service texts, `private_file`. Call sites: E66, E69 to E91, W18 to W25,
+   H06 and H07. The OAuth store marks of `oauth/store.rs` use `chain_text`
    (the exception of rule 7).
 5. **Load and selection.** E06, E09, E10, E12, E13, W02, W04 and W05 in
    session.rs. `project_entries` gets its indent parameter.
 6. **Connect and requests.** `ConnectError`, `RequestError`, the HTTP
    client errors and the proxy route. Call sites: E15 to E30. The causes
-   function for transport errors (section 7).
+   function for transport errors (section 7). `is_not_found` (B78) reads
+   the whole source chain, because the Display text of `ConnectError` no
+   longer holds the text of rmcp.
 7. **OAuth.** `auth.rs`, `oauth/callback.rs`, `oauth/items.rs`: E31 to
    E49 and W08 to W13.
 8. **Commands and elicitation.** `tool_args`, `elicit`, commands.rs and
@@ -1363,119 +1277,3 @@ milestone.
 | Repeated warning | Only `_once` warnings show one time | Each warning of an elicitation shows one time | B63: up to 8 rounds of one request |
 | `-qq` | No output, also no error | The same as `-q` | An agent reads the code, the server and the hints of the JSON error. The exit code alone does not tell which server or which fix. |
 | Exit codes | 1 and 2 | 1 to 5 and 130 | Requirement I3. Not in the scope of this change. clap usage errors give 2 in both. |
-
-## 16. Review resolution
-
-Reviews: `.scratch/review-output-messages-adversarial.md` (F, and round 2
-A-N) and `.scratch/review-output-messages-uv-ste.md` (U, R, S, T, and
-round 2 U-N).
-
-Revision 4 removes the open questions of revision 3. Questions 1, 3 and
-4 do not block this proposal. The user answered question 2: section 14.
-The table rows below use the numbers of revision 3.
-
-### 16.1 Round 1
-
-| ID | Action |
-|---|---|
-| F01 | Changed: section 3, section 6.4 (`chain_text`, `causes` in `invalid`), step 3, sections 10.1 and 10.2 (B76 (2)). |
-| F02 | Changed: rule 21 states the redaction of today. Open question 1. |
-| F03 | Changed: private fields and `map_text` (section 7), step 2 with new tests. |
-| F04 | Changed: rule 10, the field `command`, the column in sections 5.1 and 5.2, section 6, section 10.3. Revision 3 limits `command` (A-N1). |
-| F05 | Changed: section 9.14 and section 10.4. The tests of A13 stay on `message`. |
-| F06 | Changed: in revision 3, step 2 makes each `{error}` site use `chain_text`, and the steps have a fixed order (A-N4). |
-| F07 | Changed: unit tests examine the Display texts. The style check examines only the message and hints. The `security` exit text is `ncp` text in backticks. The clap lines are a cause (rule 25). |
-| F08 | Changed: rule 15. Sections 9.15, 9.17 and 9.18 give E26, W15 and W16. |
-| F09 | Changed: rule 14 (double quotes for a value with a backtick) and the risk row. |
-| F10 | Changed: rule 20 limits the set to the elicitor of one request. |
-| F11 | Changed: rule 7 names the exception. Step 4 uses `chain_text`. |
-| F12 | Changed: section 12.1 adds the separate hint lines and the absence checks. Section 12.3 has a correct name and lists the full leak checks. |
-| F13 | Changed: section 9.11 has the 4 spaces of today and the indent parameter. |
-| F14 | Changed: sections 5.1 and 5.2 cover the hints of inventory section 6. E47 has two hints. E62 keeps its data lines (cli.md section 2.2 asks for the expected arguments). |
-| F15 | Changed: `Extra` in section 7. |
-| F16 | Changed: sections 10.1 to 10.3. |
-| F17 | Open question 3. |
-| F18 | Open question 2. The plan is not changed. |
-| F19 | Changed: in revision 3, rule 23 gives copy and `grep` as the reasons, and states a wrap on a terminal as optional later work. The claim about `unsafe` is gone. |
-| F20 | Changed: rule 7 defines the omission on the list of strings, before the redaction. Section 7 keeps the unwrap of rmcp and adds the downcast. Section 9.9 shows the refused connection. |
-| F21 | Changed: `Failure::about` (section 7) removes the prefix for each area in its own step. cli.rs:70-72 is in step 2. |
-| F22 | Changed: rule 16. |
-| F23 | Changed: in revision 3, open question 1 has its `${NAME}` again, rule 16 is active, and the long sentences are split. |
-| U1, U13 | Changed: rule 18 and section 15 state the data indent as a difference from uv, with the reason B60. |
-| U2 | Changed: a hint is one line (rule 18). Section 15 states it. |
-| U3 | Changed: rule 18 says that an empty line in a cause stays empty. |
-| U4 | Changed: rule 6 and section 15. |
-| U5 | Changed: section 15. |
-| U6 | Changed: rule 20 and section 15. |
-| U7 | Changed: rule 19. |
-| U8 | Changed: section 15, row `-qq`. |
-| U9 | Changed: section 15, row exit codes. Section 3 puts exit codes out of scope. |
-| U10 | Changed: rule 23. |
-| U11 | Changed: rule 14 and section 15. |
-| U12 | Changed: rule 4. |
-| R1 | No action: it confirms the proposal. The research report now says it too. |
-| R2 | Changed: the research report, section 3 and rule 11. Rule 18 does not cite uv for the data indent. |
-| R3 | No action: no effect on the proposal (the reviewer says so). |
-| R4, R5 | No action: they confirm the proposal. |
-| S1 | Changed: "store" for credentials (section 2, section 5.1). |
-| S2 | Changed: "delete" for stored items, "remove" for entries and keys (section 2, sections 5.1 and 9.19). |
-| S3 | Changed: the `security` text is in backticks (sections 5 and 9.5). |
-| S4 | Changed: "item" and "value" (section 2). |
-| S5 | Changed: "To see the instructions". |
-| S6 | Changed: active voice in sections 9.2, 9.5 and 9.19. |
-| S7 | Changed: section 9.19. |
-| S8 | Changed: "The command line has no command" and "The command line has no tool name". |
-| S9 | Changed: rule 13 uses articles, and section 15 states it. |
-| S10 | Changed: the 404 hint has three sentences. |
-| S11 | Changed: the TLS hint has three sentences. |
-| S12 | Changed: the E26, E105 and `export` hints. |
-| S13 | Changed: the NO_PROXY hint. "log in" stays, as the reviewer says. |
-| S14 | Changed: section 9.16 has one `ncp` cause with no colon. |
-| S15 | Changed: "If CONDITION, run `COMMAND` to GOAL" (rule 9, section 5.1). |
-| T1 | Changed: in revision 3, "check" and "test" are only nouns. The verb is "examine". |
-| T2 | Changed: in revision 3, section 2 limits "Store" and "Delete" to messages and hints, and "Remove" means "take a part out of a structure". Section 8 point 3 says "hides". |
-| T3 | Changed: section 2 defines "diagnostic", "message" and "standalone hint". B60 says "label line". |
-| T4 | Changed: rule 2 is a list. Rule 8 and the steps are split. |
-| T5 | Changed: rule 23 no longer has the passive "is forbidden". |
-| T6 | Changed: "capital letters" in B80. |
-| T7 | Changed: the `-q` row and the risk row. |
-| T8 | Changed: in revision 3, rule 7 and the style check put the condition first. |
-| T9 | No action: no finding. |
-
-### 16.2 Round 2, adversarial review
-
-| ID | Action |
-|---|---|
-| A-N1 | Changed: rule 10 gives `command` only for a command that reads state or starts a login. Sections 5.1, 5.2, 6 and 9.3 follow it. Open question 4 is now a general policy question with the risks. |
-| A-N2 | Changed: rule 10 needs an `ncp` command, so E21 and E20 (exited) have no `command`. `map_text` maps the hint command too. The Rust field is `message`, as in JSON. |
-| A-N3 | Changed: rule 16 defines the mark, its place in text and in JSON, and what N counts. The limit also applies to data lines. |
-| A-N4 | Changed: step 2 adds `chain_text` and `caused_by` and uses `chain_text` at each `{error}` site. The steps have a fixed order. Step 2 adds a test of the reason of E94. Each step changes the checks in other areas that quote its Display texts. |
-| A-N5 | Changed: the style check and the Display unit tests start in step 2, with a list of areas. Each step adds its area. |
-| A-N6 | Changed: section 9.9 uses `server/discover`. Section 9.8 says that the cache has a version for `initialize`. |
-| A-N7 | Changed: JSON has the array `data`. `message` holds only the message line (rules 15 and 24). |
-| A-N8 | Changed: rule 25 puts the clap lines up to `Usage:` into one cause. `ncp tool` with no subcommand gives "The command `ncp tool` has no subcommand". |
-| A-N9 | Changed: each step changes the design documents of its area (section 10, column "Step"). Step 2 adds B80, which says which older texts stay until their step. |
-| A-N10 | Changed: section 10.4 says "Message or cause" for S8, and explains why the N6 location is in the message. |
-
-### 16.3 Round 2, uv and STE review
-
-| ID | Action |
-|---|---|
-| U-N1 | Changed: section 15 has a row for values in double quotes. |
-| U-N2 | Changed: rule 23 says "a long command", not "or URL". |
-| U-N3 | Changed: rule 6 cites ASD-STE100 rule 4.2. |
-| U-N4 | Changed: rule 16 defines the place of the mark and uses the active voice. |
-| U-N5 | Changed: rule 25 gives a clap suggestion as the hint "Did you mean `X`?" (section 6.3). |
-| U-N6 | Changed: "test" is only a noun. The verb is "examine". |
-| U-N7 | Changed: section 2 limits "Store" and "Delete" to messages and hints, and widens "Remove" to keys. Section 8 point 3 says "hides". |
-| U-N8 | Changed: section 9.14 uses "To log in, run `ncp auth login web`", as section 5.1. |
-| U-N9 | Changed: rule 14 puts URL schemes in backticks. Sections 6.4, 9.2 and 9.17 follow it. |
-| U-N10 | Changed: E70 says "The variable `LINEAR_KEY`". E46, E47 and E48 say "the `oauth` object of the server `S`". |
-| U-N11 | Changed: the second hint of E47 has two sentences, with "Do not change the entry". |
-| U-N12 | Changed: H07 says "ncp examined only the global file and the project file of this folder". |
-| U-N13 | Changed: rule 9 lists the instruction forms with a condition, a goal or an event. |
-| U-N14 | Changed: section 9.14 says "ncp did this on purpose". |
-| U-N15 | Changed: H01 says "`PATH` has no server". Rule 16 uses "`ncp` cuts". |
-| U-N16 | Changed: step 2 is a list of tasks, and the tests of rule 21 are full sentences. |
-
-No finding is rejected.
