@@ -1,55 +1,26 @@
 # Design: errors, warnings and hints
 
-Status: proposal, not accepted. Revision 4.
+Status: proposal, not accepted. Revision 5. Date: 2026-10-15.
 
-Date: 2026-10-13. Input:
-[uv-output-messages.md](../research/uv-output-messages.md) (uv 0.13.0,
-section 11 "Rules to copy"), the message inventory of 2026-10-13
-(`.scratch/message-inventory.md`, not tracked), [cli.md](cli.md) sections
-2, 4 and 9. The review findings and their resolution are in
-`.scratch/review-output-messages-adversarial.md` and
-`.scratch/review-output-messages-uv-ste.md` (not tracked).
+`ncp` writes errors, warnings and hints on stderr. This design makes the
+text and the JSON match uv as closely as the rules of `ncp` permit.
+Milestone 20 of [plan.md](../plan.md) implements it. The design changes no
+MUST requirement and adds no dependency. It does not change how `ncp`
+stores or handles secrets.
 
-The IDs E01 to E117, W01 to W27, H01 to H08 and C01 to C32 come from the
-inventory. Each example in this document also gives the code location.
+Input: [uv-output-messages.md](../research/uv-output-messages.md) (uv
+0.13.0), the message inventory of 2026-10-13
+(`.scratch/message-inventory.md`, not tracked) and [cli.md](cli.md). The
+IDs E01 to E117, W01 to W27, H01 to H08 and C01 to C32 come from the
+inventory.
 
-How to use this document:
+| Part | Sections | Use |
+|---|---|---|
+| Reference | 1 to 7 | The terms, the scope, the rules, the formats, the hint sentences, the model and the examples |
+| How-to | 8 to 10 | The migration steps, the tests to change and the design documents to change |
+| Explanation | 11 to 13 | The problems of today, the reason for each rule, and the risks |
 
-| You need | Read |
-|---|---|
-| The rules | Section 4 |
-| The text format and the standard hint sentences | Section 5 |
-| The JSON format | Section 6 |
-| The types and functions | Section 7 |
-| Examples of each rule, with the code location | Section 9 |
-| The changes to other design documents | Section 10 |
-| The work, step by step | Sections 11 and 12 |
-| The reasons for the differences from uv | Section 15 |
-
-## 1. Purpose
-
-`ncp` writes errors, warnings and hints on stderr. Today the text has
-these problems:
-
-- One line joins the context, the reason and the fix with `: ` and `; `.
-  39 templates have a semicolon.
-- The renderer puts `server NAME:` before the message. Three messages then
-  name the server two times (E12, E13, E70).
-- Four messages give the fix in the message and again in a hint (E09, E70,
-  E75, E92).
-- Messages start with a small letter. Text from rmcp starts with a capital
-  letter, so one line mixes the two.
-- The JSON error object holds only the first hint. Other hints follow as
-  separate hint lines (B74).
-
-The user decided to match uv as closely as the rules of `ncp` permit. uv is
-the first reference for command-line behavior (AGENTS.md).
-
-This proposal changes no MUST requirement. It adds no dependency. It does
-not change how `ncp` stores or handles secrets. Section 14 gives its
-place in the plan.
-
-## 2. Terms
+## 1. Terms
 
 | Term | Meaning in this document |
 |---|---|
@@ -66,13 +37,13 @@ place in the plan.
 | Remove | To take a part out of a structure. Examples: an entry or a key of a configuration file, a field or a function of the code. |
 | Item | One record in a store. Its secret text is its "value". |
 
-## 3. Scope
+## 2. Scope
 
 | Output | In this change | Reason |
 |---|---|---|
-| Errors (`Failure`), text and JSON | Yes | The user decision. |
-| Warnings, text and JSON | Yes | The user decision. uv uses one format for both levels. |
-| Hints of an error or a warning | Yes | The user decision. |
+| Errors (`Failure`), text and JSON | Yes | – |
+| Warnings, text and JSON | Yes | uv uses one format for both levels. |
+| Hints of an error or a warning | Yes | – |
 | Standalone hints (H01 to H05, H07) | Yes | They use the label `hint:`, so they obey the hint rules. |
 | Display texts of the `ncp` error types | Yes | They become causes. |
 | stdout fields that hold an error: `invalid[].error` of `server list` and of `ncp trust` | Yes | They hold the same Display texts (section 6.4). |
@@ -83,15 +54,14 @@ place in the plan.
 | Color | No | B60 removed color on 2026-10-10. This proposal does not open that decision again. |
 | Exit codes | No | Requirement I3 and cli.md section 3. |
 
-## 4. Rules
+## 3. Rules
 
-Each rule is a test on the output with no color. The reason follows each
-rule.
+Each rule is a test on the output with no color. Section 12 gives the
+reason for each rule.
 
-1. **Labels.** An error starts with `error: `. Other labels are
-   `warning: `, `hint: ` and `  cause: `. The label is a lowercase word, a
+1. **Labels.** An error starts with `error: `. The other labels are
+   `warning: `, `hint: ` and `  cause: `. A label is a lowercase word, a
    colon and one space. There is no `note:` label.
-   Reason: uv (research section 1).
 
 2. **Order.** An error or a warning has these parts, in this order:
    - the message line,
@@ -99,50 +69,31 @@ rule.
    - zero or more `cause:` lines,
    - zero or more `hint:` lines.
 
-   Reason: uv (research sections 3 and 4).
-
 3. **First letter.** Each message, cause and hint in `ncp` text starts
    with a capital letter, a backtick, or the word `ncp`.
-   Reason: uv capitalizes messages and never capitalizes its own name
-   (research section 2).
 
 4. **Periods.** A line with one sentence has no final period. A line with
    two or more sentences has a period after each sentence. A question ends
    with `?`. A message that introduces data lines ends with `:`.
-   Reason: uv `STYLE.md`. uv code does not always obey this rule, for
-   example its most frequent hint. `ncp` obeys `STYLE.md`.
 
 5. **No semicolons.** `ncp` text has no `;`.
-   Reason: ASD-STE100 rule 8.1, the writing rule of `ncp`. uv permits
-   semicolons, so this is a difference from uv.
 
-6. **The message.** The message is a full sentence with a subject. It says
+6. **Message.** The message is a full sentence with a subject. It says
    what failed, and it names its object. It does not hold the reason of an
    inner error, and it does not hold a fix.
-   Reason: uv puts the fix and the inner reason on other lines (research
-   rules 5 and 7). uv starts most error lines with "Failed to" and no
-   subject. ASD-STE100 rule 4.2 does not permit omitted words, and a
-   statement with no subject omits a word. The order stays as in uv: what
-   failed, then the object.
 
 7. **Causes.** Each error in the source chain of the failure becomes one
    `cause:` line, outer first. Each layer of an `ncp` error type writes
    only its own part and gives the inner error as its source. Before the
    redaction of rule 21, `ncp` makes a list: the message, then the causes.
    If the last string in the list contains the text of a cause, that cause
-   does not show.
-   Reason: uv shows the chain of `source()`. The omission is specific to
-   `ncp`, because rmcp and reqwest put the inner text into the outer text.
-   Exception: a store error that passes through rmcp arrives as one text.
-   It shows as one cause.
+   does not show. Exception: a store error that passes through rmcp
+   arrives as one text. It shows as one cause.
 
 8. **Consequence.** A consequence tells what `ncp` did or did not do
-   because of the failure. It is a second sentence on the message line.
-   Examples: "ncp deleted nothing.", "ncp declines.", "ncp sent a cancel
-   request.". A consequence is not a reason, so it is not a cause. It is
-   not a fix, so it is not a hint.
-   Reason: uv uses this form, for example "No `requires-python` value
-   found in the workspace. Defaulting to `>=3.14`.".
+   because of the failure. It is a second sentence on the message line. It
+   is not a cause and not a hint. Examples: "ncp deleted nothing.", "ncp
+   declines.", "ncp sent a cancel request.".
 
 9. **Hints.** Each fix is a `hint:` line. A hint is a sentence, never a
    bare command. A command in a hint is in backticks. A hint has one of
@@ -159,11 +110,10 @@ rule.
 
    The same fix shows only one time: not in the message and in a hint, and
    not in two hints.
-   Reason: uv (research section 4). The user decided this form.
 
 10. **Hint command.** In JSON, a hint can have the field `command`. Text
     shows only the sentence, which holds the same command in backticks. A
-    hint has `command` only when all of these are true:
+    hint has `command` only when all of these conditions are true:
     - The command is an `ncp` command, and it is the whole fix.
     - The command only reads state or starts a login: a `list` or `show`
       command, `ncp trust --show`, `ncp auth login`, or `ncp --help`.
@@ -172,53 +122,35 @@ rule.
     - The command has no placeholder (`<SERVER>`, `<value>`) and no value
       from a server.
 
-    A command that stores, deletes, removes, changes trust or calls a tool
-    has no `command` field. `ncp auth login S --credential-store file` also
-    has none, because the opt-in to the credential file needs a decision
-    of the user (S2). Its hint has only the sentence.
-    Reason: specific to `ncp`, because uv has no JSON. Agents run a hint
-    command (secret-binding.md rule 5). The sentence alone does not tell an
-    agent which span is the command. A command that changes state needs a
-    decision, so `ncp` does not give it as data that an agent runs with no
-    review.
+    Thus a command that stores, deletes, removes, changes trust or calls a
+    tool has no `command`. `ncp auth login S --credential-store file` has
+    no `command`, because it stores the tokens in the credential file.
 
 11. **Hint order.** The hints come in the order to try them. The most
     probable fix comes first.
-    Reason: B74. uv orders hints in groups, with general hints last.
 
 12. **Server name.** When a diagnostic is about one server, its message
     names the server: "the server `NAME`". The renderer writes no
     `server NAME:` prefix. The JSON object keeps the field `server`.
-    Reason: uv puts the object of the failure in the sentence (research
-    rule 5). The name then shows one time in the text.
 
 13. **Articles.** A kind word before a name takes an article: "The server
     `web`", "the tool `add`", "the variable `ARG_ONLY`".
-    Reason: ASD-STE100 rule 4.5. uv mostly writes "Package `x`" with no
-    article, and sometimes "The package `x`".
 
 14. **Backticks.** These values are in backticks: commands, flags, file
-    paths, URLs, URL schemes and hosts. Configuration keys, field names,
-    method names and the names of servers, tools, secrets and variables
-    are also in backticks. Examples of schemes: `https`, `http`,
-    `javascript:`. This applies also to a value at the end of a line. `ncp` does not use the uv form `MESSAGE: value`.
-    A value that contains a backtick or a control character shows in
-    double quotes, with the escapes of Rust `Debug`.
-    Reason: an agent finds each value by its backticks. A period after a
-    value without backticks makes the value unclear (`a.b.` or `a.b`). A
-    value from a server can contain a backtick, and the quotes then keep
-    the spans in pairs.
+    paths, URLs, URL schemes (for example `https` and `javascript:`) and
+    hosts. Configuration keys, field names, method names and the names of
+    servers, tools, secrets and variables are also in backticks. This rule
+    also applies to a value at the end of a line, so `ncp` does not use
+    the form `MESSAGE: value`. A value that contains a backtick or a
+    control character shows in double quotes, with the escapes of Rust
+    `Debug`.
 
 15. **Foreign text.** Free foreign text is a message or a body from a
     server, or the text of a library error. It goes on a `cause:` line or
-    a data line. It never goes into the message or a hint. A value from a server
-    (a URL, a host, a tool name) can be in a message or a hint, in
+    a data line. It never goes into the message or a hint. A value from a
+    server (a URL, a host, a tool name) can be in a message or a hint, in
     backticks, after `printable` (B15). `ncp` does not change the case or
     the punctuation of foreign text.
-    Reason: uv shows library text as it is. A change of case can change a
-    code, for example `access_denied`. Text from a server never starts a
-    labeled line, so it cannot look like a diagnostic of `ncp` (B60). The
-    JSON `message` then holds only `ncp` text and values.
 
 16. **Length.** `ncp` cuts a cause that has more than 20 lines or more
     than 2048 bytes. It shows the first lines of the cause, at most 20
@@ -234,90 +166,55 @@ rule.
     - JSON: the last line of the cause string, after a new line, or the
       last string of `data`.
 
-    Reason: rmcp puts the whole body of a non-2xx answer into the error
-    (rmcp 3.5.1, `streamable_http_client.rs`). The pages of E26 and the
-    entries of E13 come from a server or a project file. A long text then
-    hides the hints.
-
 17. **Data lines.** A list of data goes under the message that introduces
     it. Examples: the entries of a project file, the pages to open, the
     problems of a schema check and the expected arguments, a list of
     destinations. Rules 3, 4 and 14 do not apply to a data line.
-    Reason: data is not a sentence.
 
 18. **Indent.** A `cause:` line starts with 2 spaces. A second line of a
     cause starts with 9 spaces. An empty line inside a cause stays empty. A
     data line under an error starts with 7 spaces, under a warning with 9
     spaces. A hint is always one line. Only a label or an empty line starts
     at column 0.
-    Reason: the cause indent is as in uv (research section 3). uv puts the
-    lines that the author writes at the indent of the author. `ncp` puts
-    data lines at the column of the message text, so that a line from a
-    server cannot start at column 0 (B60). A hint is `ncp` text, and rule
-    14 puts a value with a new line in quotes. Thus a hint needs no second
-    line.
 
 19. **Empty line before a hint.** In text, one empty line comes before each
     hint of an error or a warning. A standalone hint has no empty line
     before it. JSON has no empty line.
-    Reason: uv (research section 4, and `uv-tool-commands`
-    `upgrade.rs` for a standalone hint).
 
 20. **Warnings.** A warning has the format of an error: `warning:`, data
     lines, `cause:` lines and hints. The hints that follow a warning today
     (H06 after W21, H08 after W26) become hints of that warning. The
     elicitation of one request shows each full warning (server, message,
     causes and hints) only one time.
-    Reason: uv shows its `_once` warnings one time in a run. `ncp` needs
-    this only for an elicitation, which can run 8 rounds (B63) and give
-    the same warning in each round. A set in the elicitor of one request
-    needs no shared state in `Ui`.
 
-21. **Redaction of each part.** Today `ncp` hides secrets in the message of
-    an error about an http server with `hide_expanded_url` (session.rs).
-    This function writes the server URL as the file writes it, with its
-    user information and its OAuth query values hidden. It also hides each
-    `${NAME}` value of the server URL in each other place, also in its
-    encoded forms. After this change, the same function runs on the
-    message, on each data line, on each cause and on each hint, at the same
-    places. B70 applies to each part: no part names a stored URL or issuer.
-    Reason: requirement S3. Causes now hold the text of reqwest and rmcp,
-    which can hold the server URL. This rule keeps the redaction of today
-    for the new parts. A wider redaction changes the handling of secrets.
-    It is not in the scope of this proposal.
+21. **Redaction.** Today `hide_expanded_url` (session.rs) hides secrets in
+    the message of an error about an http server. It writes the server URL
+    as the file writes it, with its user information and its OAuth query
+    values hidden. It also hides each `${NAME}` value of the server URL in
+    each other place, also in its encoded forms. After this change, the
+    same function runs on the message, on each data line, on each cause and
+    on each hint, at the same places. No part names a stored URL or issuer
+    (B70). The redaction does not get wider.
 
 22. **Quiet.** `-q` hides warnings with their causes and hints, standalone
     hints, and progress. An error always shows with its causes and its
-    hints.
-    Reason: uv keeps the causes and hints of an error under `-q` (research
-    section 5). B74 already keeps them.
+    hints. `-qq` is the same as `-q`.
 
 23. **No wrap.** `ncp` does not wrap lines, on a terminal or in a pipe.
-    Reason: a wrap breaks a long command that a person copies. Without a
-    wrap, `grep` finds a whole message on one line. uv itself wraps only
-    messages and causes, not hints. A wrap on a terminal needs the width
-    of the terminal, from `COLUMNS` or from a new dependency such as
-    `terminal_size`. A wrap on a terminal is optional later work.
 
 24. **Same parts in JSON.** Text and JSON come from the same data: the
     message, the data lines, the causes and the hints. Each string in JSON
     is the same as in text, with no label and no indent. In JSON,
     `message` holds only the message line, and `data` holds the data
     lines. A test can compare the two forms.
-    Reason: specific to `ncp`, because uv writes no JSON errors. A
-    separate `data` keeps server text out of `message` (rule 15).
 
 25. **Usage errors of clap.** In text mode, a parse error keeps the format
     of clap. In a pipe, the JSON error object (B21) has an `ncp` message.
     The clap lines up to the line `Usage:`, with no empty line and no
     `tip:` line, are one cause. When clap gives a suggested subcommand or
     argument, the error has the hint "Did you mean `X`?".
-    Reason: uv does not change clap errors (research section 8). The clap
-    lines are foreign text, so rule 15 puts them on a cause. Some clap
-    errors put the names of the missing arguments on the lines after the
-    first line.
 
-## 5. Text format
+## 4. Text format
 
 The layout:
 
@@ -334,9 +231,9 @@ hint: SECOND HINT
 ```
 
 A warning has the same layout with `warning: ` and a data indent of 9
-spaces. A standalone hint is one `hint:` line (section 5.2). Section 9
-gives full examples: causes and a hint (9.1, 9.5), data lines (9.8,
-9.11) and warnings (9.12, 9.13).
+spaces. A standalone hint is one `hint:` line (section 4.2). Section 7
+gives full examples: causes and a hint (7.1, 7.5), data lines (7.8,
+7.11) and warnings (7.12, 7.13).
 
 A cause with two lines, from a message of a server:
 
@@ -361,7 +258,7 @@ error: The handshake with the server `docs` failed in `server/discover`
 
 The line `...` stands for 18 lines that this document does not show.
 
-### 5.1 Standard hint sentences
+### 4.1 Standard hint sentences
 
 The same fix uses the same sentence in each place. The column "Command"
 tells if the JSON hint has the field `command` (rule 10). S, T, N, I and P
@@ -415,7 +312,7 @@ are values that `ncp` puts in.
 | E10, E51 | `did you mean X?` in the message | Did you mean `X`? | No |
 | secret_service.rs:99 | `unlock the keyring to list them` | To list the locked items, unlock the keyring | No |
 
-### 5.2 Standalone hints
+### 4.2 Standalone hints
 
 A standalone hint gives information or advice. When a fix exists, it has
 a form of rule 9.
@@ -429,14 +326,14 @@ a form of rule 9.
 | H05 | ncp reads the JSON arguments from stdin. To end the input, push Ctrl-D. | No |
 | H07 | ncp examined only the global file and the project file of this folder. A project in another folder can still use the item. | No |
 
-## 6. JSON format
+## 5. JSON format
 
 stderr stays JSON Lines in a pipe (cli.md section 4). On stderr each
 object is on one line. This document shows some objects on more lines
 only to make them easy to read. The order of the keys is not a part of the
 format.
 
-### 6.1 The error object
+### 5.1 The error object
 
 ```
 {"error": {"code", "exit", "server"?, "message", "data", "causes",
@@ -489,7 +386,7 @@ A page error (B65) keeps `pages`. The page line from the server is in
 {"error":{"code":"input_required","exit":5,"server":"fx","message":"The server `fx` asks you to open a page before it answers `tools/call`:","data":["https://login.example.test/start (Sign in first)"],"causes":["Authorization needed"],"hints":[{"message":"After you complete the steps on the page, run the command again"}],"pages":[{"url":"https://login.example.test/start","message":"Sign in first"}]}}
 ```
 
-### 6.2 Warnings and standalone hints
+### 5.2 Warnings and standalone hints
 
 A warning has the same arrays as an error:
 
@@ -504,7 +401,7 @@ hint object:
 {"hint":{"server":"fx","message":"The server `fx` has instructions for clients. To see the instructions, run `ncp server show fx`.","command":"ncp server show fx"}}
 ```
 
-### 6.3 Parse errors (B21)
+### 5.3 Parse errors (B21)
 
 With no command:
 
@@ -529,7 +426,7 @@ name, so the error has a hint:
 {"error":{"code":"usage","exit":2,"message":"The command line is not valid","data":[],"causes":["unrecognized subcommand 'servr'"],"hints":[{"message":"Did you mean `server`?"},{"message":"To see the commands, run `ncp --help`","command":"ncp --help"}]}}
 ```
 
-### 6.4 Error fields on stdout
+### 5.4 Error fields on stdout
 
 `server list` and `ncp trust` write an invalid entry as `{"name",
 "error"}` in `invalid` (cli.md section 4, B76 (2)). After this change:
@@ -547,129 +444,89 @@ Example for `"url": "http://example.com/mcp"`:
 {"name":"web","error":"The field `url` is not valid","causes":["ncp permits `http` only for a loopback host"]}
 ```
 
-### 6.5 Compatibility
+## 6. Model
 
-`ncp` has no release: the version is 0.1.0, and git has no tag. The rule
-of cli.md section 4 ("The removal or change of a field needs a major
-version") protects users of a release. Thus this change replaces `hint`
-with `hints` and writes no transition field. One shape is simpler for each
-reader. A reader of the old shape reads `error.hint` and gets nothing. It
-does not fail on a parse, because each line is still one JSON object with
-the same key.
+### 6.1 `Failure`
 
-These JSON shapes change:
-
-- the error object: no `hint`, new `data`, `causes` and `hints`, a new
-  `message` text,
-- the warning object: new `data`, `causes` and `hints`, a new `message`
-  text,
-- the standalone hint: new `command`, a new `message` text,
-- `invalid[]` of `server list` and `ncp trust`: new `causes`, a shorter
-  `error` text.
-
-cli.md section 4 has no written exception for the time before the first
-release. Section 10.1 adds it.
-
-## 7. Model
-
-- `Failure` gets private fields: `exit`, `server`, `message`, `causes:
-  Box<[String]>`, `hints: Box<[Hint]>` and `extra: Option<Box<Extra>>`.
-  `Extra` holds the rare fields `data`, `login_challenge`, `pages` and
-  `destination`. Thus `Failure` stays below the 128 bytes of
-  `clippy::result_large_err`.
-- Read methods: `exit()`, `server_name()`, `message()`, `hints()`, `pages()`
-  and `login_challenge()`. No code outside the module reads or writes a
-  field.
+- Private fields: `exit`, `server`, `message`, `causes: Box<[String]>`,
+  `hints: Box<[Hint]>` and `extra: Option<Box<Extra>>`. `Extra` holds the
+  rare fields `data`, `login_challenge`, `pages` and `destination`. Thus
+  `Failure` stays below the 128 bytes of `clippy::result_large_err`. No
+  code outside the module reads or writes a field.
+- Read methods: `exit()`, `server_name()`, `message()`, `hints()`,
+  `pages()` and `login_challenge()`.
 - Build methods: `data(line)`, `cause(text)`, `caused_by(&dyn Error)`,
   `hint(Hint)`, `with_hints(hints)`, `with_pages(pages)`,
   `with_login_challenge(challenge)`, `with_exit(exit)` and
-  `about(server)`. `with_hints` replaces all hints. To put a hint first, a
-  call site reads `hints()` and gives the new list. session.rs:863 does
-  this for the `secret set` hints of B51 (rule 11).
-- `Failure::context(message)` gives a failure a new message. The old
-  message becomes the first cause. The server, the data lines, the other
-  causes, the hints and `Extra` stay.
-- `Warning::from(Failure)` keeps the server, the message, the data lines,
-  the causes and the hints.
-  Reason: today some code copies only `failure.message` into a warning or
-  a new failure. After the split, the reason is in `causes`, so a copy of
-  the message loses it, and no test fails. These places use
-  `Warning::from` or `context`: W10 (auth.rs:591), W23 (secrets.rs:981),
-  W24 (secrets.rs:1009), W26 (server_edit.rs:475) and E91
-  (secrets.rs:1209). E91 also uses `with_exit`.
-- A shared failure that gets a server names it in the message (rule 12):
-  - `store_failure` at auth.rs:519, 1342 and 1355 (step 7): `context`
-    with a message that names the server and the operation, then `about`.
-    Examples: "ncp cannot read the OAuth client of the server `S`", "ncp
-    cannot delete the tokens of the server `S`". The store text becomes a
-    cause.
-  - `token_store_failure` (session.rs:884, step 7): "ncp cannot keep the
-    OAuth tokens of the server `S`". The store text is a cause.
-  - `interrupted(server: Option<&str>)` (step 2): "ncp stopped the work
-    with the server `S` because of an interrupt", or "ncp stopped because
-    of an interrupt" with no server. The call sites with a server
-    (session.rs:701 and 971, ask.rs:295 and 390, auth.rs:828) give it and
-    use `about`.
-  - A remap that adds a server to each failure of an inner call becomes
-    `about`. The inner function then gives the server to each failure
-    that it makes, with the forms above. Remaps: auth.rs:260, 298, 316,
-    472 and 692 (step 7), secrets.rs:181 (step 4). Their inner failures
-    include `store_failure` and `interrupted()`. In step 7, `discover` and
-    `wait_for_redirect` get the server name as a parameter.
+  `about(server)`. `with_hints` replaces all hints. To put a hint first,
+  read `hints()` and give the new list.
+- `caused_by(&dyn Error)` adds the causes of a source chain, with rule 7.
+  For a transport error, one function builds the causes:
+  1. It unwraps `ClientInitializeError::TransportError` and
+     `ServiceError::TransportSend`, because rmcp gives no `source()`
+     there.
+  2. It downcasts to `StreamableHttpError<reqwest::Error>` and takes the
+     `reqwest::Error` of `Client`. `Client` has no `source()` in rmcp
+     3.5.1.
+  3. It walks the chain of the `reqwest::Error` (hyper, io).
+- `context(message)` gives the failure a new message. The old message
+  becomes the first cause. All other parts stay.
+- `map_text(f)` applies `f` to the message, each data line, each cause,
+  each hint message and each hint command. Each redaction place uses it.
+  The fields are private, so no place can copy a cause with no redaction.
+- `about(server)` sets the server of a failure whose message names it.
+  The renderer writes no prefix for it. During the migration,
+  `Failure::server(name)` keeps the old prefix. Step 10 removes `server`.
+
+### 6.2 `Warning` and `Hint`
+
+- `Warning` has `server`, `message`, `data`, `causes` and `hints`, and
+  the same `about` method. `Warning::from(Failure)` keeps all of these
+  parts.
 - `Hint` has `message` and `command: Option<String>`, with the names of
-  the JSON fields. The constructor `Hint::run(goal, command)` makes "To
-  GOAL, run `COMMAND`" and sets `command`. The constructor
-  `Hint::run_text(goal, command)` makes the same sentence with no
-  `command`, for a command that changes state (rule 10).
-  `Hint::text(message)` makes a hint with no `command`, for each other
-  form of rule 9 and for the old hint texts of step 2.
+  the JSON fields. It has three constructors:
+  - `Hint::run(goal, command)` makes "To GOAL, run `COMMAND`" and sets
+    `command`.
+  - `Hint::run_text(goal, command)` makes the same sentence with no
+    `command`, for a command that changes state (rule 10).
+  - `Hint::text(message)` makes each other form of rule 9, with no
+    `command`.
+
+### 6.3 Functions
+
 - `chain_text(&dyn Error)` replaces `causes()` (session.rs:838). It joins
   an error and its source chain with `: `, with the omission of rule 7.
-- `Failure::caused_by(&dyn Error)` adds the causes of a source chain, with
-  rule 7. One function builds the causes of a transport error. It keeps
-  the manual unwrap of rmcp (`ClientInitializeError::TransportError`,
-  `ServiceError::TransportSend`), because rmcp gives no `source()` there.
-  It then downcasts to `StreamableHttpError<reqwest::Error>`, takes the
-  `reqwest::Error` of `Client`, and walks its chain (hyper, io). `Client`
-  has no `source()` in rmcp 3.5.1.
-- `Failure::map_text(f)` applies `f` to the message, each data line, each
-  cause, each hint message and each hint command. Each redaction place
-  uses it. The fields are private, so a new place cannot copy causes with
-  no redaction.
-- `Warning` has `server`, `message`, `data`, `causes` and `hints`.
 - One pure function renders an error or a warning in text, and one in
-  JSON. uv also uses one function for both levels.
-- During the migration, `about(server)` on a `Failure` or a `Warning`
-  marks a diagnostic whose message already names the server. The renderer
-  then writes no prefix. `Failure::server(name)` and the server argument
-  of `Ui::warning` keep the old prefix until the last step.
+  JSON.
 
-## 8. Decisions on the open points
+### 6.4 Shared failures that get a server
 
-Each open point has a decision. This table gives the place that states
-it.
+A shared failure has no server where it is made. When a call site adds a
+server, the message names it (rule 12):
 
-| Point | Decision | Place |
-|---|---|---|
-| JSON object | The arrays `data`, `causes` and `hints`. No field `hint` and no transition field. `destination` stays. | Sections 6.1, 6.5 and 10.1 |
-| Server name | The message names the server. The renderer writes no prefix. JSON keeps `server`. | Rule 12, the style check of section 11 |
-| `-q` | An error keeps its causes and hints. | Rule 22 |
-| Consequence tails | A second sentence on the message line | Rule 8 |
-| Library text | One `cause:` line for each error of the source chain, with no change | Rules 7 and 15 |
-| Warnings | Data lines, causes and hints. One time in an elicitation. | Rule 20 |
-| Periods | As uv `STYLE.md` | Rule 4 |
-| Line wrap | None | Rule 23 |
-| Scope | Errors, warnings, hints and the error fields on stdout | Section 3 |
-| Migration | Ten steps in a fixed order | Section 11 |
+- `store_failure`: the call site uses `context` with a message that names
+  the server and the operation, then `about`. The store text becomes a
+  cause. Examples: "ncp cannot read the OAuth client of the server `S`",
+  "ncp cannot delete the tokens of the server `S`".
+- `token_store_failure`: "ncp cannot keep the OAuth tokens of the server
+  `S`". The store text is a cause.
+- `interrupted(server: Option<&str>)`: "ncp stopped the work with the
+  server `S` because of an interrupt". With no server: "ncp stopped because
+  of an interrupt".
+- A remap that adds a server to each failure of an inner call becomes
+  `about`. The inner function then names the server in each failure that
+  it makes, with the forms above.
 
-## 9. Before and after
+Section 8 gives the call sites and their steps.
 
-Each example shows a different rule. Section 9.13 gives more messages of
-the same forms. The foreign text in these examples comes from rmcp 3.5.1,
+## 7. Examples
+
+Each example shows a different rule, before and after the change.
+Section 7.13 gives more messages of the same forms. The foreign text in these examples comes from rmcp 3.5.1,
 reqwest, hyper, std and the `security` program. It can change with a new
 version of a library. `/home/u` is the home folder of the user.
 
-### 9.1 The deepest chain (C01, session.rs `entry_failure`)
+### 7.1 The deepest chain (C01, session.rs `entry_failure`)
 
 `ncp tool list fx` with `"args": ["${ARG_ONLY}"]` and no `ARG_ONLY`.
 
@@ -693,7 +550,7 @@ hint: ncp puts a stored secret only into `env` and `headers` values. To set the 
 Five levels become a message, two causes and a hint. The rule about stored
 secrets explains the fix, so it goes into the hint.
 
-### 9.2 A fix after a semicolon (E14, server.rs `UrlError::PlainHttp`)
+### 7.2 A fix after a semicolon (E14, server.rs `UrlError::PlainHttp`)
 
 Before:
 
@@ -714,7 +571,7 @@ hint: Use an `https` URL
 A pure function of the CLI layer gives the hint. It matches on the error
 type, as `hints_for_error` of uv does. The Display text holds no fix.
 
-### 9.3 A duplicate fix (E09, session.rs `joined_failure`)
+### 7.3 A duplicate fix (E09, session.rs `joined_failure`)
 
 Before:
 
@@ -735,7 +592,7 @@ The JSON hint has no `command`, because `tool call` calls a tool. Each
 other command that takes a server name gives the hint "To see the tool,
 run `ncp tool show github search_issues`", with `command`.
 
-### 9.4 A duplicate fix and the server name two times (E70, secrets.rs `miss`)
+### 7.4 A duplicate fix and the server name two times (E70, secrets.rs `miss`)
 
 Before:
 
@@ -755,7 +612,7 @@ hint: If the URL is correct, run `ncp secret set LINEAR_KEY --server linear` to 
 hint: To see the stored items and their destinations, run `ncp secret list`
 ```
 
-### 9.5 A consequence tail (E87, secrets.rs `secret delete` with no flag)
+### 7.5 A consequence tail (E87, secrets.rs `secret delete` with no flag)
 
 Before:
 
@@ -778,7 +635,7 @@ Both causes are `ncp` text. The second cause comes from the type that
 `ncp` makes for an exit of `security`. When `security` writes on stderr,
 that text is a third cause, as foreign text.
 
-### 9.6 An rmcp cause in small letters, with the 404 hint (E20, B78, session.rs `connect_failure`)
+### 7.6 An rmcp cause in small letters, with the 404 hint (E20, B78, session.rs `connect_failure`)
 
 The cache has a protocol version for the `initialize` handshake.
 
@@ -800,13 +657,13 @@ hint: The server has no MCP endpoint at the path of the URL. Many servers use `/
 
 The cause keeps the small letter of rmcp (rule 15).
 
-### 9.7 A connection that the host refuses (E20, session.rs `connect_failure`)
+### 7.7 A connection that the host refuses (E20, session.rs `connect_failure`)
 
 The cache has no protocol version, so `ncp` probes with `server/discover`
 first (client.rs). A refused connection is not a legacy answer, so the
 probe gives its own error. Today `causes` stops at the reqwest error,
 because the rmcp type `StreamableHttpError::Client` gives no `source()`.
-The downcast of section 7 shows the reason.
+The downcast of section 6.1 shows the reason.
 
 Before:
 
@@ -824,7 +681,7 @@ error: The handshake with the server `gh` failed in `server/discover`
   cause: Connection refused (os error 61)
 ```
 
-### 9.8 A trust error (E13, session.rs `blocked`)
+### 7.8 A trust error (E13, session.rs `blocked`)
 
 `fs` is in the untrusted project file and in the global file. Today
 `project_entries` writes 2 spaces before each entry, and `indented` adds 2
@@ -855,7 +712,7 @@ indent, so the JSON `data` has the rows at column 0. The trust question
 P01 keeps its indent of 2 spaces. After a change of a trusted file, the
 message ends "which changed after you trusted it:".
 
-### 9.9 A near name (E51, commands.rs `find_tool`)
+### 7.9 A near name (E51, commands.rs `find_tool`)
 
 Before:
 
@@ -874,7 +731,7 @@ hint: Did you mean `search_issues`?
 hint: To see the tools of the server, run `ncp tool list github`
 ```
 
-### 9.10 A stop on purpose (E43, auth.rs `binding_failure`, requirement A13)
+### 7.10 A stop on purpose (E43, auth.rs `binding_failure`, requirement A13)
 
 Before:
 
@@ -894,7 +751,7 @@ hint: To log in, run `ncp auth login web`
 
 The message still says that the stop is on purpose, as A13 requires.
 
-### 9.11 A page to open (E26, session.rs `page_failure`)
+### 7.11 A page to open (E26, session.rs `page_failure`)
 
 Before:
 
@@ -917,7 +774,7 @@ hint: After you complete the steps on the page, run the command again
 The message of the server error is free text, so it is a cause. The page
 message stays on its data line.
 
-### 9.12 A warning with a hint (W21 and H06, secrets.rs `secret set`)
+### 7.12 A warning with a hint (W21 and H06, secrets.rs `secret set`)
 
 Before:
 
@@ -934,20 +791,13 @@ warning: The native store also has an item of `A` for `https://web.example`. ncp
 hint: To delete the items of this destination, run `ncp secret delete A --server web`. Then store the value again.
 ```
 
-### 9.13 More messages of the same forms
+### 7.13 More messages of the same forms
 
 Each item gives the inventory ID, the code location, the rule that it
 shows, and the text after the change.
 
-E30, session.rs `request_failure`. A cause from rmcp:
-
-```
-error: The request `tools/list` to the server `gh` failed
-  cause: Transport closed
-```
-
-E33, auth.rs `auth_failure`. The cause keeps the text of rmcp with its
-repeated word (rule 15):
+E30 and E33 (session.rs `request_failure`, auth.rs `auth_failure`). The
+cause keeps the text of rmcp, also its repeated word (rule 15):
 
 ```
 error: The OAuth discovery for the server `gh` failed
@@ -961,24 +811,6 @@ E27, session.rs `request_failure`. A time limit with a consequence
 error: The server `gh` gave no answer to `tools/call` in 300 s. ncp sent a cancel request.
 
 hint: To wait longer, run the command again with `--timeout <SECONDS>`
-```
-
-E16 (B51), session.rs `open_with_login`. Two hints after a `401`, in
-the order to try them (rule 11):
-
-```
-error: The server `web` needs a login or more scopes
-
-hint: If the value of `WEB_TOKEN` changed, run `ncp secret set WEB_TOKEN --server web` to store the new value
-
-hint: To log in, run `ncp auth login web`
-```
-
-W14, ask.rs `ask`. A warning with a cause and a consequence:
-
-```
-warning: The server `fx` sent a question that ncp cannot show. ncp declines.
-  cause: The request has no `url` field
 ```
 
 W15, ask.rs `ask`. A URL and a scheme in backticks (rule 14):
@@ -1002,9 +834,213 @@ warning: ncp does not use `/work/app/.mcp.json`
   cause: Another user owns the file
 ```
 
+## 8. Migration plan
+
+Each step is one or more commits. Each step changes the error types, the
+call sites, the tests and the design documents of one area together.
+After each step, `mise run precommit` passes. Do the steps in the order of
+the list.
+
+1. **Acceptance.** The user accepts this proposal.
+2. **Model, renderer and the first area.** Do these tasks:
+   - Make the model of section 6.
+   - Make one renderer for text and one for JSON.
+   - Change each `{error}` of an `ncp` error type in a message to
+     `chain_text(&error)`. The Display texts do not change in this step,
+     so each message keeps its text. When a later step changes a Display
+     text, no message loses a reason.
+   - Use `map_text` at each redaction place.
+   - Change each struct literal and each field read of `Failure` to the
+     methods of section 6. Struct literals: session.rs:384, 461, 774, 863,
+     932, 954 and 971, secrets.rs:1148, ask.rs:301, auth.rs:115. Pattern:
+     commands.rs:167. Field reads: cli.rs:112, 199 and 267, ask.rs:289
+     and 424. Field reads in unit tests: secrets.rs:1437 and 1441,
+     session.rs:995-999, 1025-1026 and 1055, auth.rs:1452.
+   - Change the places that copy only `failure.message` to
+     `Warning::from` or `context`. After the split, the reason is in
+     `causes`, so a copy of the message alone loses it, and no test fails.
+     Places: W10 (auth.rs:591), W23 (secrets.rs:981), W24
+     (secrets.rs:1009), W26 (server_edit.rs:475) and E91
+     (secrets.rs:1209). E91 also uses `with_exit`.
+   - Change `interrupted` (section 6.4). The call sites with a server give
+     it and use `about`: session.rs:701 and 971, ask.rs:295 and 390,
+     auth.rs:828.
+   - Give each existing hint its old text and no command.
+   - Change the first area: cli.rs (E01 to E05 and the clap JSON of rule
+     25) and ui.rs (E116).
+   - Add the style check to `Run::error()` and to a new `Run::warnings()`
+     in the testkit. Add `Run::old_error()` and `Run::old_warnings()`,
+     which skip the check. Each test that reads a diagnostic of the old
+     form uses an `old_` method.
+   - Add a unit test helper that examines a Display text for rules 3 and
+     5. Use it for the error types of the first area.
+   - Change the design documents of step 2 (section 10).
+
+   Change these tests in step 2:
+   - In the testkit, add `Run::hints()` and `Run::error_text()`, which
+     joins the message, the data lines and the causes. Both read the error
+     with no style check, so that they work on both forms.
+   - Change each `error()["hint"]` check to `hints()` (section 9.1).
+   - Change the checks of a separate hint line and of an absent hint
+     (section 9.1).
+   - Change cli.rs:70-72 (the JSON warning) and the unit tests of `ui.rs`.
+   - Add tests for rule 21. One server has `?key=${APIKEY}` and refuses
+     the connection. The same server then gives an OAuth discovery
+     failure. The tests read the whole stderr, in text and in JSON.
+   - Add a test of the reason of E94: `server add` with a URL that is not
+     valid shows the reason of the URL.
+3. **Configuration and entries.** `ConfigError`, `EntryError`,
+   `UrlError`, `ExpandError` and the name errors. Call sites: E07, E08,
+   E11, E14, E67, E68, the reason of E90, and the stdout field `invalid`
+   (section 5.4). Hint functions for the fixes that the Display texts hold
+   today.
+4. **Stores and secrets.** `StoreError`, the `security` and Secret
+   Service texts, `private_file`. Call sites: E66, E69 to E91, W18 to W25,
+   H06 and H07. The OAuth store marks of `oauth/store.rs` use `chain_text`
+   (the exception of rule 7). The remap at secrets.rs:181 becomes
+   `about`, and `read_stored` names the server in its failures (section
+   6.4).
+5. **Load and selection.** E06, E09, E10, E12, E13, W02, W04 and W05 in
+   session.rs. `project_entries` gets its indent parameter.
+6. **Connect and requests.** `ConnectError`, `RequestError`, the HTTP
+   client errors and the proxy route. Call sites: E15 to E30. The causes
+   function for transport errors (section 6.1). `is_not_found` (B78) reads
+   the whole source chain, because the Display text of `ConnectError` no
+   longer holds the text of rmcp.
+7. **OAuth.** `auth.rs`, `oauth/callback.rs`, `oauth/items.rs`: E31 to
+   E49 and W08 to W13. Shared failures (section 6.4):
+   - `store_failure` at auth.rs:519, 1342 and 1355 uses `context` and
+     `about`.
+   - `token_store_failure` (session.rs:884) names the server.
+   - The remaps at auth.rs:260, 298, 316, 472 and 692 become `about`.
+     `discover` and `wait_for_redirect` get the server name as a
+     parameter.
+8. **Commands and elicitation.** `tool_args`, `elicit`, commands.rs and
+   ask.rs: E50 to E65, E117, W01, W06, W07, W14 to W17 and H01 to H05. The
+   warning set of rule 20 in the elicitor.
+9. **Project files and edits.** `add_entry`, `config_edit`,
+   `project_file`, server_edit.rs and trust.rs: E92 to E115, W03, W26, W27
+   and H08.
+10. **End.** Remove `Failure::server` and its prefix, so that only `about`
+    stays. Remove `Run::old_error()` and `Run::old_warnings()`, so that
+    the style check examines each diagnostic. Change the comment of `Failure` in
+    `outcome.rs` ("each hint is one command") and the module comment of
+    `ui.rs`. Update `.scratch/progress.md`.
+
+Each step from 3 to 9 also does these tasks:
+
+- Change each message of the area from the old form to the new form, in
+  one commit. Thus no message shows the server two times between the
+  steps.
+- Use `about` in place of `server` for the failures of the area.
+- Change the tests of the errors of the area (section 9.2).
+- Change the checks in other areas that quote a Display text of the types
+  of the area.
+- Change each test of the area from `old_error()` and `old_warnings()`
+  to `error()` and `warnings()`.
+- Add unit tests that examine the Display texts of the types of the area
+  for rules 3 and 5.
+- Change the design documents of the step (section 10).
+
+The style check examines the message and the hints of each diagnostic
+that `Run::error()` or `Run::warnings()` returns, for these rules:
+
+- rule 3: the first letter,
+- rule 5: no `;`,
+- rule 9: no hint two times,
+- rule 12: if the object has `server`, the message names it in backticks,
+- rule 14: no empty pair of backticks.
+
+The testkit cannot tell `ncp` causes from foreign causes. Thus the unit
+tests of the error types examine the causes that `ncp` writes.
+
+## 9. Tests to change
+
+The line numbers are from commit `aa8d48d` (inventory section 14).
+
+### 9.1 Checks of a hint (step 2, then the step of the area)
+
+About 50 checks read `error()["hint"]`. Step 2 changes them to `hints()`.
+The step of each area then changes the expected text to a sentence. It
+also adds a check of `command` where rule 10 gives one.
+
+- crates/testkit/tests/cli.rs: 210, 228, 237, 240, 249, 274, 290, 296,
+  423, 516, 535, 591, 603, 676, 792, 886, 1066, 1114, 1188, 1520-1521,
+  1532-1533, 1545, 1733, 1795, 1831, 1876, 2014, 2172, 2361, 2399, 2417, 3024,
+  3091, 3202.
+- crates/testkit/tests/project.rs: 61, 84, 166, 400, 619.
+- crates/testkit/tests/server_edit.rs: 183, 225, 295, 312, 368, 692, 700, 730, 834.
+- crates/ncp/src/cli/session.rs unit tests: 1029, 1056.
+
+Step 2 changes these checks of a separate hint line to the `hints` array
+of the error or the warning:
+
+- cli.rs: 278 (`ncp secret list` after E70), 594 (`ncp auth login web`),
+  1010 (H06 after W21).
+- project.rs: 85 (`ncp trust --ignore`).
+
+The checks of an absent hint become true with no change when `ncp` no
+longer writes the field `hint`. Thus step 2 changes them to `hints ==
+[]`:
+
+- cli.rs: 636 and 2233 (`error.get("hint").is_none()`).
+- cli.rs: 1092 (no hint after the failed copy check of B35). The check
+  then reads `warning.hints`.
+- cli.rs: 2118 (`assert_ne!(error["hint"], "ncp auth login web")`, B51).
+  It becomes: no hint has the `command` `ncp auth login web`.
+
+### 9.2 Checks of a message
+
+Exact text (`assert_eq!`):
+
+- cli.rs: 70-72 (W01, JSON warning), 270, 434, 465, 527, 578, 611, 657,
+  923, 1041.
+- project.rs: 162, 393, 491 and 650 (`invalid[0].error` of `server list`).
+
+`starts_with`, `ends_with` and `contains` checks. Some of them change to
+`error_text()`, because their text moves to a cause or a data line:
+
+- cli.rs: 226, 512-514, 559, 650, 672, 703, 711, 713, 896, 1006, 1020,
+  1073, 1087, 1117, 1223, 1513, 1516, 1568, 1614, 1873, 2186, 2300, 2325,
+  2329, 2413, 2539, 2895, 3040, 3085, 3087.
+- project.rs: 57, 60, 124, 256, 270, 284, 371-377, 478, 506-507, 523,
+  611, 638.
+- server_edit.rs: 203, 633, 682, 936.
+- client.rs: 324. security_store.rs: 305.
+- Unit tests: auth.rs 1441, 1453, 1471, oauth/callback.rs 242,
+  client/http.rs 442.
+
+These checks stay on `message`: cli.rs 1790 and 1812 (A13, "on
+purpose"). The checks cli.rs 172-173 (E62) change to `data`, because the
+problems and the expected arguments are data lines.
+
+Text form: cli.rs 2582 (`hint: use --output-format json`), and the unit
+tests of ui.rs at 456-464, 470-484, 489, 538-553 and 587-594.
+
+These checks do not change:
+
+- the checks of prompts (P01, P02, P09, P11),
+- the checks of results (I01, I10, I11),
+- the checks of `debug:`, `trace:`, `progress:` and `timings:` lines,
+- the checks of exit codes.
+
+### 9.3 Checks of wording that read only `message`
+
+These checks make sure that a text does not show. The text can now be in a
+data line, a cause or a hint. Thus each check changes to read the whole
+stderr:
+
+- project.rs: 354 (the server name `fs`).
+- cli.rs: 1794 (the stored host, B70), 2120 ("needs a login"), 2235
+  (the mark `local:`).
+
+The leak checks of secret values already read the whole stderr: cli.rs
+941-958, 1261, 1312, 1715 and 2251. No test has a secret in a cause yet,
+because no cause exists yet. Step 2 adds those tests.
+
 ## 10. Changes to the design documents
 
-Each step of the migration (section 11) changes the parts of the design
+Each step of the migration (section 8) changes the parts of the design
 documents that describe the messages of its area. The column "Step" gives
 the step. plan.md says that cli.md wins over the plan. Thus, after a
 step, cli.md must not describe the old messages as the target. Step 2
@@ -1017,12 +1053,12 @@ until their step.
 |---|---|---|
 | 2 | End of section 1 | New paragraph: "In this document, 'the hint `COMMAND`' means a hint sentence that gives `COMMAND`." The sentence covers each place that says "with the hint `COMMAND`". These places are section 2.4 (lines 189-190, 213-214, 229-231) and 15 decisions: B17, B28, B31, B32, B35, B51, B52, B58, B67, B71, B72, B73, B75, B77 and C5. |
 | 2 | Section 2.3, row `-q` | "`-q` hides warnings, standalone hints and progress. An error shows with its causes and hints (B74)." |
-| 2 | Section 4, error object | The text below. Its example gets the shape of the "after" object of section 6.1 and keeps its old message. |
+| 2 | Section 4, error object | The text below. Its example gets the shape of the "after" object of section 5.1 and keeps its old message. |
 | 2 | Section 4, after the rule of a major version | "Before the first release, the fields of a JSON object can change." |
 | 3 | Section 4, row `server list` | `"invalid": [{"name", "error", "causes"}]` |
-| 4 | Section 2.4, error block (lines 205-209) | The "after" text of section 9.4. |
+| 4 | Section 2.4, error block (lines 205-209) | The "after" text of section 7.4. |
 | 4 | Section 2.4, lines 212-214 | Keep the meaning. Add that the store error is a cause. |
-| 5 | Section 2.1, first item | Old: "shows the correct command, for example 'use `ncp tool call github search_issues`'". New: "shows the correct command in a hint" (section 9.3). |
+| 5 | Section 2.1, first item | Old: "shows the correct command, for example 'use `ncp tool call github search_issues`'". New: "shows the correct command in a hint" (section 7.3). |
 | 6 | Section 4, error object | The message of the example becomes "The server `github` needs a login or more scopes". |
 | 8 | Section 2.1, fourth item | Old: "no tool `search_issue`; did you mean `search_issues`?". New: "The server `github` has no tool `search_issue`", with the hint "Did you mean `search_issues`?". |
 | 8 | Section 2.2, line 139 | "The command line has no tool name" |
@@ -1067,11 +1103,11 @@ New decision, added in step 2:
 
 | Step | Document | Place | Change |
 |---|---|---|---|
-| 4 | secret-binding.md | Rule 5, error block | The "after" text of section 9.4. |
+| 4 | secret-binding.md | Rule 5, error block | The "after" text of section 7.4. |
 | 4 | secret-binding.md | Rule 5, "The condition is in the message, and each hint is only a command, because agents run a hint as a command (B3, B10)." | "The message says what is missing. The condition 'If the URL is correct' is in the hint. Each hint is a sentence. A hint that only reads state or starts a login has the JSON field `command`, because agents run a hint command (B3, B10)." |
 | 4 | secret-binding.md | Line 229, "tells the user to add the entry first" | "gives a hint that tells the user to add the entry first" |
 | 5 | project-config.md | Lines 167 to 173 | "with a hint that gives `ncp trust`", and the same for `ncp trust --ignore`. |
-| 5 | project-config.md | Example at line 184 | The "after" text of section 9.8, with only the hint `ncp trust`. |
+| 5 | project-config.md | Example at line 184 | The "after" text of section 7.8, with only the hint `ncp trust`. |
 | 9 | server-add.md | Lines 98 to 100, 167, 175 to 177, 208 to 216, 343 to 345 | Quoted messages with a capital letter and backticks. Hints as sentences. |
 | – | plan.md | Lines 158, 201, 204, 235, 300, 428 | No change. They describe milestones that are done. |
 
@@ -1082,217 +1118,84 @@ say. The new text keeps each content in the error, as the table shows.
 
 | Requirement | Content | Place after the change |
 |---|---|---|
-| A13 | "the message says that the stop is on purpose" | Message (section 9.10). The tests cli.rs:1790 and 1812 keep reading `message`. |
+| A13 | "the message says that the stop is on purpose" | Message (section 7.10). The tests cli.rs:1790 and 1812 keep reading `message`. |
 | N6 | the error names the new location of a redirect | Message: "The server `S` answered 308 with a redirect to `URL`. ncp follows no redirect." The redirect is the failure itself, not an inner error, because `connect_failure` reads it from the notes of the HTTP client. Thus rule 6 permits the location in the message. |
 | S2 | the error names the opt-in for the credential file | Hint with `--credential-store file`. |
-| S8 | a store call with no answer in 60 s stops with an error | Message or cause: "The credential store gave no answer in 60 s". It is the message of `store_failure` when no server is involved. When a call site adds a server, it is a cause (section 7). It is also a cause in E45, E71 and W13. |
-| P8, P9 | a clear error for `input_required`, and the pages in the error | Message and data lines, `pages` in JSON (section 9.11). |
+| S8 | a store call with no answer in 60 s stops with an error | Message or cause: "The credential store gave no answer in 60 s". It is the message of `store_failure` when no server is involved. When a call site adds a server, it is a cause (section 6.4). It is also a cause in E45, E71 and W13. |
+| P8, P9 | a clear error for `input_required`, and the pages in the error | Message and data lines, `pages` in JSON (section 7.11). |
 | N4 | a bad `SSL_CERT_FILE` stops with an error | The message names the variable and the path. |
 
-## 11. Migration plan
+## 11. Problems of today
 
-Each step is one or more commits. Each step changes the error types, the
-call sites, the tests and the design documents of one area together.
-After each step, `mise run precommit` passes. Do the steps in the order of
-the list.
+Today the text on stderr has these problems:
 
-1. **Acceptance.** The user accepts this proposal.
-2. **Model, renderer and the first area.** Do these tasks:
-   - Make the model of section 7.
-   - Make one renderer for text and one for JSON.
-   - Change each `{error}` of an `ncp` error type in a message to
-     `chain_text(&error)`. The Display texts do not change in this step,
-     so each message keeps its text. When a later step changes a Display
-     text, no message loses a reason.
-   - Use `map_text` at each redaction place.
-   - Change each struct literal and each field read of `Failure` to the
-     methods of section 7. Struct literals: session.rs:384, 461, 774, 863,
-     932, 954 and 971, secrets.rs:1148, ask.rs:301, auth.rs:115. Pattern:
-     commands.rs:167. Field reads: cli.rs:112, 199 and 267, ask.rs:289
-     and 424. Field reads in unit tests: secrets.rs:1437 and 1441,
-     session.rs:995-999, 1025-1026 and 1055, auth.rs:1452.
-   - Change the places that copy only `failure.message` (section 7).
-   - Change `interrupted` (section 7).
-   - Give each existing hint its old text and no command.
-   - Change the first area: cli.rs (E01 to E05 and the clap JSON of rule
-     25) and ui.rs (E116).
-   - Add the style check to `Run::error()` and to a new `Run::warnings()`
-     in the testkit. Add `Run::old_error()` and `Run::old_warnings()`,
-     which skip the check. Each test that reads a diagnostic of the old
-     form uses an `old_` method.
-   - Add a unit test helper that examines a Display text for rules 3 and
-     5. Use it for the error types of the first area.
-   - Change the design documents of step 2 (section 10).
+- One line joins the context, the reason and the fix with `: ` and `; `.
+  39 templates have a semicolon.
+- The renderer puts `server NAME:` before the message. Three messages then
+  name the server two times (E12, E13, E70).
+- Four messages give the fix in the message and again in a hint (E09, E70,
+  E75, E92).
+- Messages start with a small letter. Text from rmcp starts with a capital
+  letter, so one line mixes the two.
+- The JSON error object holds only the first hint. Other hints follow as
+  separate hint lines (B74).
 
-   Change these tests in step 2:
-   - In the testkit, add `Run::hints()` and `Run::error_text()`, which
-     joins the message, the data lines and the causes. Both read the error
-     with no style check, so that they work on both forms.
-   - Change each `error()["hint"]` check to `hints()` (section 12.1).
-   - Change the checks of a separate hint line and of an absent hint
-     (section 12.1).
-   - Change cli.rs:70-72 (the JSON warning) and the unit tests of `ui.rs`.
-   - Add tests for rule 21. One server has `?key=${APIKEY}` and refuses
-     the connection. The same server then gives an OAuth discovery
-     failure. The tests read the whole stderr, in text and in JSON.
-   - Add a test of the reason of E94: `server add` with a URL that is not
-     valid shows the reason of the URL.
-3. **Configuration and entries.** `ConfigError`, `EntryError`,
-   `UrlError`, `ExpandError` and the name errors. Call sites: E07, E08,
-   E11, E14, E67, E68, the reason of E90, and the stdout field `invalid`
-   (section 6.4). Hint functions for the fixes that the Display texts hold
-   today.
-4. **Stores and secrets.** `StoreError`, the `security` and Secret
-   Service texts, `private_file`. Call sites: E66, E69 to E91, W18 to W25,
-   H06 and H07. The OAuth store marks of `oauth/store.rs` use `chain_text`
-   (the exception of rule 7).
-5. **Load and selection.** E06, E09, E10, E12, E13, W02, W04 and W05 in
-   session.rs. `project_entries` gets its indent parameter.
-6. **Connect and requests.** `ConnectError`, `RequestError`, the HTTP
-   client errors and the proxy route. Call sites: E15 to E30. The causes
-   function for transport errors (section 7). `is_not_found` (B78) reads
-   the whole source chain, because the Display text of `ConnectError` no
-   longer holds the text of rmcp.
-7. **OAuth.** `auth.rs`, `oauth/callback.rs`, `oauth/items.rs`: E31 to
-   E49 and W08 to W13.
-8. **Commands and elicitation.** `tool_args`, `elicit`, commands.rs and
-   ask.rs: E50 to E65, E117, W01, W06, W07, W14 to W17 and H01 to H05. The
-   warning set of rule 20 in the elicitor.
-9. **Project files and edits.** `add_entry`, `config_edit`,
-   `project_file`, server_edit.rs and trust.rs: E92 to E115, W03, W26, W27
-   and H08.
-10. **End.** Remove `Failure::server` and its prefix, so that only `about`
-    stays. Remove `Run::old_error()` and `Run::old_warnings()`, so that
-    the style check examines each diagnostic. Change the comment of `Failure` in
-    `outcome.rs` ("each hint is one command") and the module comment of
-    `ui.rs`. Update `.scratch/progress.md`.
+### 11.1 JSON compatibility
 
-Each step from 3 to 9 also does these tasks:
+`ncp` has no release: the version is 0.1.0, and git has no tag. The rule
+of cli.md section 4 ("The removal or change of a field needs a major
+version") protects users of a release. Thus this change replaces `hint`
+with `hints` and writes no transition field. One shape is simpler for each
+reader. A reader of the old shape reads `error.hint` and gets nothing. It
+does not fail on a parse, because each line is still one JSON object with
+the same key.
 
-- Change each message of the area from the old form to the new form, in
-  one commit. Thus no message shows the server two times between the
-  steps.
-- Use `about` in place of `server` for the failures of the area.
-- Change the tests of the errors of the area (section 12.2).
-- Change the checks in other areas that quote a Display text of the types
-  of the area.
-- Change each test of the area from `old_error()` and `old_warnings()`
-  to `error()` and `warnings()`.
-- Add unit tests that examine the Display texts of the types of the area
-  for rules 3 and 5.
-- Change the design documents of the step (section 10).
+These JSON shapes change:
 
-The style check examines the message and the hints of each diagnostic
-that `Run::error()` or `Run::warnings()` returns, for these rules:
+- the error object: no `hint`, new `data`, `causes` and `hints`, a new
+  `message` text,
+- the warning object: new `data`, `causes` and `hints`, a new `message`
+  text,
+- the standalone hint: new `command`, a new `message` text,
+- `invalid[]` of `server list` and `ncp trust`: new `causes`, a shorter
+  `error` text.
 
-- rule 3: the first letter,
-- rule 5: no `;`,
-- rule 9: no hint two times,
-- rule 12: if the object has `server`, the message names it in backticks,
-- rule 14: no empty pair of backticks.
+cli.md section 4 has no written exception for the time before the first
+release. Section 10.1 adds it.
 
-The testkit cannot tell `ncp` causes from foreign causes. Thus the unit
-tests of the error types examine the causes that `ncp` writes.
+## 12. Reasons for the rules
 
-## 12. Tests and docs to change
+"Research" is [uv-output-messages.md](../research/uv-output-messages.md).
+The user decided to match uv as closely as the rules of `ncp` permit,
+because AGENTS.md makes uv the first reference for command-line behavior.
 
-The line numbers are from commit `aa8d48d` (inventory section 14).
-
-### 12.1 Checks of a hint (step 2, then the step of the area)
-
-About 50 checks read `error()["hint"]`. Step 2 changes them to `hints()`.
-The step of each area then changes the expected text to a sentence. It
-also adds a check of `command` where rule 10 gives one.
-
-- crates/testkit/tests/cli.rs: 210, 228, 237, 240, 249, 274, 290, 296,
-  423, 516, 535, 591, 603, 676, 792, 886, 1066, 1114, 1188, 1520-1521,
-  1532-1533, 1545, 1733, 1795, 1831, 1876, 2014, 2172, 2361, 2399, 2417, 3024,
-  3091, 3202.
-- crates/testkit/tests/project.rs: 61, 84, 166, 400, 619.
-- crates/testkit/tests/server_edit.rs: 183, 225, 295, 312, 368, 692, 700, 730, 834.
-- crates/ncp/src/cli/session.rs unit tests: 1029, 1056.
-
-Step 2 changes these checks of a separate hint line to the `hints` array
-of the error or the warning:
-
-- cli.rs: 278 (`ncp secret list` after E70), 594 (`ncp auth login web`),
-  1010 (H06 after W21).
-- project.rs: 85 (`ncp trust --ignore`).
-
-The checks of an absent hint become true with no change when `ncp` no
-longer writes the field `hint`. Thus step 2 changes them to `hints ==
-[]`:
-
-- cli.rs: 636 and 2233 (`error.get("hint").is_none()`).
-- cli.rs: 1092 (no hint after the failed copy check of B35). The check
-  then reads `warning.hints`.
-- cli.rs: 2118 (`assert_ne!(error["hint"], "ncp auth login web")`, B51).
-  It becomes: no hint has the `command` `ncp auth login web`.
-
-### 12.2 Checks of a message
-
-Exact text (`assert_eq!`):
-
-- cli.rs: 70-72 (W01, JSON warning), 270, 434, 465, 527, 578, 611, 657,
-  923, 1041.
-- project.rs: 162, 393, 491 and 650 (`invalid[0].error` of `server list`).
-
-`starts_with`, `ends_with` and `contains` checks. Some of them change to
-`error_text()`, because their text moves to a cause or a data line:
-
-- cli.rs: 226, 512-514, 559, 650, 672, 703, 711, 713, 896, 1006, 1020,
-  1073, 1087, 1117, 1223, 1513, 1516, 1568, 1614, 1873, 2186, 2300, 2325,
-  2329, 2413, 2539, 2895, 3040, 3085, 3087.
-- project.rs: 57, 60, 124, 256, 270, 284, 371-377, 478, 506-507, 523,
-  611, 638.
-- server_edit.rs: 203, 633, 682, 936.
-- client.rs: 324. security_store.rs: 305.
-- Unit tests: auth.rs 1441, 1453, 1471, oauth/callback.rs 242,
-  client/http.rs 442.
-
-These checks stay on `message`: cli.rs 1790 and 1812 (A13, "on
-purpose"). The checks cli.rs 172-173 (E62) change to `data`, because the
-problems and the expected arguments are data lines.
-
-Text form: cli.rs 2582 (`hint: use --output-format json`), and the unit
-tests of ui.rs at 456-464, 470-484, 489, 538-553 and 587-594.
-
-These checks do not change:
-
-- the checks of prompts (P01, P02, P09, P11),
-- the checks of results (I01, I10, I11),
-- the checks of `debug:`, `trace:`, `progress:` and `timings:` lines,
-- the checks of exit codes.
-
-### 12.3 Checks of wording that read only `message`
-
-These checks make sure that a text does not show. The text can now be in a
-data line, a cause or a hint. Thus each check changes to read the whole
-stderr:
-
-- project.rs: 354 (the server name `fs`).
-- cli.rs: 1794 (the stored host, B70), 2120 ("needs a login"), 2235
-  (the mark `local:`).
-
-The leak checks of secret values already read the whole stderr: cli.rs
-941-958, 1261, 1312, 1715 and 2251. No test has a secret in a cause yet,
-because no cause exists yet. Step 2 adds those tests.
-
-### 12.4 Docs that quote a message
-
-| Place | Today | Change |
+| Rule | uv 0.13.0 | Reason for `ncp` |
 |---|---|---|
-| cli.md:113 | "use `ncp tool call github search_issues`" | Section 10.1 |
-| cli.md:122-123 | "no tool `search_issue`; did you mean `search_issues`?" | Section 10.1 |
-| cli.md:139, 441 | "missing tool name" | "The command line has no tool name" |
-| cli.md:146 | `-q` row | Section 10.1 |
-| cli.md:205-209 | error block of E70 | Section 9.4 |
-| cli.md:212-214 | "the login keyring is locked" | Section 10.1 |
-| cli.md:313-317 | error object | Section 10.1 |
-| cli.md:425, 428, 439, 453, 456, 477, 480, 488, 492, 494, 496 | B7, B10, B21, B35, B38, B60, B63, B70, B74, B76, B78 | Section 10.2 |
-| project-config.md:167-173, 184-186 | trust errors | Section 10.3 |
-| secret-binding.md:209-223, 229 | E70 block, rule 5, E77 | Section 10.3 |
-| server-add.md:98-100, 167-168, 175-177, 208-216, 343-345 | E94, add_entry.rs:93, E85, outcomes table, E109 | Section 10.3 |
+| 1 Labels | The same (research section 1) | – |
+| 2 Order | The same (research sections 3 and 4) | – |
+| 3 First letter | The same. uv never capitalizes its own name (research section 2). | – |
+| 4 Periods | `STYLE.md` has this rule, but uv code does not always obey it, for example in its most frequent hint | `ncp` obeys `STYLE.md`. |
+| 5 No semicolons | Permitted | ASD-STE100 rule 8.1, the writing rule of `ncp`. |
+| 6 Message | "Failed to VERB OBJECT", with no subject. The fix and the inner reason are on other lines (research rules 5 and 7). | ASD-STE100 rule 4.2 does not permit omitted words. The order stays as in uv: what failed, then the object. |
+| 7 Causes | Shows the chain of `source()`, also text that repeats | rmcp and reqwest put the inner text into the outer text. |
+| 8 Consequence | The same, for example "No `requires-python` value found in the workspace. Defaulting to `>=3.14`." | – |
+| 9 Hints | Four forms of a fix in the message. "Did you mean `X`?" is on the message line. | One place for each fix. A suggestion is a fix. JSON has `hints`. The user decided this form. |
+| 10 Hint command | No JSON | Agents run a hint command (secret-binding.md rule 5). The sentence alone does not tell an agent which span is the command. A command that changes state needs a decision of a person, so `ncp` does not give it as data that an agent can run with no review. The opt-in to the credential file needs a decision of the user (S2). |
+| 11 Hint order | Hints in groups, with general hints last | B74. |
+| 12 Server name | The object of the failure is in the sentence (research rule 5) | The name shows one time in the text. |
+| 13 Articles | Mostly "Package `x`", with no article | ASD-STE100 rule 4.5. |
+| 14 Backticks | `MESSAGE: value`, with no backticks. A value with a backtick shows as it is. | An agent finds each value by its backticks. A period after a value without backticks makes the value unclear (`a.b.` or `a.b`). The quotes keep the backtick spans in pairs, and a new line in a value cannot start a line. |
+| 15 Foreign text | Library text as it is | A change of case can change a code, for example `access_denied`. Text from a server never starts a labeled line, so it cannot look like a diagnostic of `ncp` (B60). The JSON `message` holds only `ncp` text and values. |
+| 16 Length | The full text | rmcp puts the whole body of a non-2xx answer into the error (rmcp 3.5.1, `streamable_http_client.rs`). The pages of E26 and the entries of E13 come from a server or a project file. A long text hides the hints. |
+| 17 Data lines | The same | Data is not a sentence. |
+| 18 Indent | The same cause indent (research section 3). Lines of the author are at the indent of the author. A new line in a hint goes to column 0. | A line from a server cannot start at column 0 (B60). A hint is `ncp` text, and rule 14 quotes a value with a new line, so a hint needs no second line. |
+| 19 Empty line before a hint | The same (research section 4, and `uv-tool-commands` `upgrade.rs` for a standalone hint) | – |
+| 20 Warnings | `_once` warnings show one time in a run | Only an elicitation repeats a warning: it can run 8 rounds (B63) and give the same warning in each round. A set in the elicitor of one request needs no shared state in `Ui`. |
+| 21 Redaction | – | Requirement S3. Causes now hold the text of reqwest and rmcp, which can hold the server URL. A wider redaction changes the handling of secrets, so it needs a separate proposal. |
+| 22 Quiet | `-q` keeps the causes and hints of an error (research section 5). `-qq` shows nothing, also no error. | B74 already keeps them. An agent needs the code, the server and the hints of the error. The exit code alone does not tell which server or which fix. |
+| 23 No wrap | Wraps messages and causes, not hints | A wrap breaks a long command that a person copies. Without a wrap, `grep` finds a whole message on one line. A wrap on a terminal needs the terminal width, from `COLUMNS` or from a new dependency. It is optional later work. |
+| 24 Same parts in JSON | No JSON errors | Requirement I1 and cli.md section 4. A separate `data` keeps server text out of `message` (rule 15). |
+| 25 Usage errors of clap | The format of clap, also in uv (research section 8). No JSON. | The clap lines are foreign text, so rule 15 puts them on a cause. Some clap errors put the names of the missing arguments on the lines after the first line. |
 
 ## 13. Risks
 
@@ -1304,36 +1207,7 @@ because no cause exists yet. Step 2 adds those tests.
 | The redaction of today does not hide a `${NAME}` value of a header or of `env` in a body that a server echoes. | A leak in the text of a cause. | The same is true today in the message. A wider redaction needs a separate proposal, because it changes the handling of secrets. |
 | A message does not name its server after `ncp` no longer writes the prefix. | The user cannot see which server failed. | The style check (rule 12) fails the test. |
 | An rmcp or reqwest update changes a cause text. | A test of library text fails. | Tests examine the text of `ncp` and only a short part of library text, for example `HTTP 404`. |
-| B78 reads `HTTP 404` from the Display text of the error. | The check fails when the Display text no longer holds the chain. | `is_not_found` reads the whole source chain. The test with a local `404` server stays. |
+| B78 reads `HTTP 404` from the Display text of the error. | The check fails when the Display text no longer holds the chain. | `is_not_found` reads the whole source chain (step 6). The test with a local `404` server stays. |
 | A value from a server has a backtick. | The spans of the message do not pair. | Rule 14 shows such a value in double quotes with escapes. `printable` (B15) does not escape a backtick. |
 | A body of a server or a list of pages is long. | Hints go out of view. | Rule 16 cuts a cause and the data lines at 20 lines or 2048 bytes. |
-| About 150 checks change. | Review is slow, and a wrong text can pass. | Steps by area, the style check from step 2, and the hint sentences of section 5.1. |
-
-## 14. Place in the plan
-
-This work is milestone 20 of [plan.md](../plan.md). It comes after
-milestone 19 and before the distribution, which is always the last
-milestone.
-
-## 15. Differences from uv
-
-| Item | uv 0.13.0 | `ncp` | Reason |
-|---|---|---|---|
-| Message form | "Failed to VERB OBJECT", with no subject | A full sentence with a subject | ASD-STE100 rule 4.2: no omitted words |
-| Article before a kind word | Mostly "Package `x`" | "The server `x`" | ASD-STE100 rule 4.5 |
-| Semicolons | Permitted | Not permitted | ASD-STE100 rule 8.1 |
-| Fix in the message | Four forms | Only a hint | One place for each fix, and JSON has `hints` |
-| "Did you mean `X`?" | On the message line | A hint | A suggestion is a fix, and each fix is a hint |
-| Value after a final colon | `MESSAGE: value`, with no backticks | Not used. The value is in the sentence, in backticks. | One rule for each value, and clear for an agent |
-| A value with a backtick or a control character | In backticks, as it is | In double quotes, with the escapes of Rust `Debug` | Backtick spans stay in pairs. A new line cannot start a line. |
-| Repeated cause text | Shown | Not shown | rmcp and reqwest repeat the inner text |
-| Data lines of the author | The indent of the author | 7 spaces (error) or 9 (warning) | B60: a line from a server cannot start at column 0 |
-| A new line in a hint | Column 0 | Not possible: a hint is one line | Hints are `ncp` text, and rule 14 quotes a value with a new line |
-| Long cause or data | Shown in full | Cut at 20 lines or 2048 bytes, with a mark | Hints stay in view |
-| Line wrap on a terminal | Messages and causes | None | Copy of a long command, and `grep` of a whole line. A wrap is optional later work. |
-| Color | Labels in color | No color | B60 |
-| JSON errors | None | JSON Lines in a pipe, with `data`, `causes`, `hints` and `command` | Requirement I1 and cli.md section 4 |
-| clap errors in JSON | No JSON | An `ncp` message, the clap lines as a cause, and a hint for a clap suggestion | Rules 15 and 25 |
-| Repeated warning | Only `_once` warnings show one time | Each warning of an elicitation shows one time | B63: up to 8 rounds of one request |
-| `-qq` | No output, also no error | The same as `-q` | An agent reads the code, the server and the hints of the JSON error. The exit code alone does not tell which server or which fix. |
-| Exit codes | 1 and 2 | 1 to 5 and 130 | Requirement I3. Not in the scope of this change. clap usage errors give 2 in both. |
+| About 150 checks change. | Review is slow, and a wrong text can pass. | Steps by area, the style check from step 2, and the hint sentences of section 4.1. |
