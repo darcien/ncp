@@ -49,6 +49,15 @@ pub fn save(path: &Path, cache: &VersionCache) -> Result<(), CacheError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_texts_follow_the_message_rules() {
+        let error = CacheError {
+            path: "/c/versions.json".into(),
+            source: std::io::Error::other("x"),
+        };
+        crate::style::assert_style(&[error.to_string()]);
+    }
     use crate::{config::Target, protocol_version::ProtocolVersion, server::ServerName};
 
     fn scratch(test: &str) -> PathBuf {

@@ -347,7 +347,7 @@ pub fn select<'a>(loaded: &'a Loaded, name: &str, ui: Ui) -> Result<&'a Server, 
         .warnings()
         .iter()
         .filter(|warning| warning.server.as_deref() == Some(name))
-        .for_each(|warning| ui.warn(&unknown_key(warning)));
+        .for_each(|warning| ui.warn(&unknown_key(warning, loaded)));
     Ok(server)
 }
 
@@ -367,10 +367,11 @@ fn blocked(name: &str, project: &Project, in_global: bool) -> Failure {
                 .hint(trust);
         }
         Trust::Untrusted { changed: true } => "which changed after you trusted it",
-        _ => "which you did not trust",
+        // `blocked_by` gives no trusted file.
+        Trust::Untrusted { changed: false } | Trust::Trusted => "which you did not trust",
     };
-    let failure = super::render::project_entries(&project.entries, "")
-        .lines()
+    let failure = super::render::project_entries(&project.entries)
+        .into_iter()
         .fold(
             Failure::usage(format!("{head}, {state}:")).about(name),
             Failure::data,
@@ -386,14 +387,17 @@ fn blocked(name: &str, project: &Project, in_global: bool) -> Failure {
     }
 }
 
-/// The warning for a key that `ncp` does not know.
+/// The warning for a key that `ncp` does not know. An entry names its
+/// file, because a project file and the global file can have the same
+/// server.
 #[must_use]
-pub fn unknown_key(warning: &config::Warning) -> Warning {
+pub fn unknown_key(warning: &config::Warning, loaded: &Loaded) -> Warning {
     let key = code(&warning.key);
     match &warning.server {
         Some(server) => Warning::new(format!(
-            "The entry of the server {} has the unknown key {key}. ncp ignores it.",
-            code(server)
+            "The entry of the server {} in {} has the unknown key {key}. ncp ignores it.",
+            code(server),
+            code(&loaded.file_of(server).display().to_string())
         ))
         .about(server.as_str()),
         None => Warning::new(format!(

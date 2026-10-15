@@ -181,7 +181,7 @@ pub fn project_rows(project: &Project) -> Vec<Row> {
 /// from the file is a shell word, so that a word cannot look like two
 /// parts. `table` escapes each cell.
 #[must_use]
-pub fn project_entries(entries: &[UnexpandedEntry], indent: &str) -> String {
+pub fn project_entries(entries: &[UnexpandedEntry]) -> Vec<String> {
     let rows: Vec<Vec<String>> = entries
         .iter()
         .map(|entry| {
@@ -219,10 +219,18 @@ pub fn project_entries(entries: &[UnexpandedEntry], indent: &str) -> String {
             vec![entry.name.clone(), details.join("   ")]
         })
         .collect();
-    table(&rows).lines().fold(String::new(), |mut text, line| {
-        let _ = writeln!(text, "{indent}{line}");
-        text
-    })
+    table(&rows).lines().map(str::to_string).collect()
+}
+
+/// The rows of a project file with an indent, one on each line.
+#[must_use]
+pub fn indented_entries(entries: &[UnexpandedEntry], indent: &str) -> String {
+    project_entries(entries)
+        .iter()
+        .fold(String::new(), |mut text, line| {
+            let _ = writeln!(text, "{indent}{line}");
+            text
+        })
 }
 
 // The URL as the client sends it. The parse removes tabs and encodes spaces,
@@ -259,7 +267,7 @@ fn project_text(project: &Project, state: &str) -> String {
     format!(
         "{} {state}\n{}",
         path_text(&project.file),
-        project_entries(&project.entries, "  ")
+        indented_entries(&project.entries, "  ")
     )
 }
 

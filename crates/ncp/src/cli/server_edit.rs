@@ -332,7 +332,7 @@ fn untrusted(project: &Project) -> Failure {
     Failure::usage(format!(
         "{} {state}, and ncp changes only a trusted project file:\n{}",
         project.file.display(),
-        render::project_entries(&project.entries, "  ").trim_end()
+        render::indented_entries(&project.entries, "  ").trim_end()
     ))
     .hint("ncp trust --show")
 }

@@ -240,15 +240,6 @@ pub struct Warning {
     pub key: String,
 }
 
-impl std::fmt::Display for Warning {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.server {
-            Some(server) => write!(f, "server {server}: unknown key {:?} ignored", self.key),
-            None => write!(f, "unknown key {:?} ignored", self.key),
-        }
-    }
-}
-
 /// An error in the file as a whole. No server can load.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigError {
@@ -1142,10 +1133,12 @@ mod tests {
                 .map(|client| client.client_id.as_str()),
             Some("c1")
         );
-        let text: Vec<String> = config.warnings().iter().map(ToString::to_string).collect();
         assert_eq!(
-            text,
-            ["server r: unknown key \"oauth.callbackPort\" ignored"]
+            config.warnings(),
+            [Warning {
+                server: Some("r".into()),
+                key: "oauth.callbackPort".into()
+            }]
         );
         assert!(config.server("bad").is_err());
     }
@@ -1256,13 +1249,17 @@ mod tests {
                 "s": {"command": "srv", "disabled": true, "headers": {}}
             }}"#,
         );
-        let text: Vec<String> = config.warnings().iter().map(ToString::to_string).collect();
+        let keys: Vec<(Option<&str>, &str)> = config
+            .warnings()
+            .iter()
+            .map(|warning| (warning.server.as_deref(), warning.key.as_str()))
+            .collect();
         assert_eq!(
-            text,
+            keys,
             [
-                "unknown key \"theme\" ignored",
-                "server s: unknown key \"disabled\" ignored",
-                "server s: unknown key \"headers\" ignored",
+                (None, "theme"),
+                (Some("s"), "disabled"),
+                (Some("s"), "headers"),
             ]
         );
         assert!(config.server("s").is_ok());

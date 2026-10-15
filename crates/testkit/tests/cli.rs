@@ -68,11 +68,14 @@ fn server_list_shows_servers_invalid_entries_and_unknown_keys() {
         })
     );
     assert_eq!(
-        run.stderr(),
-        [json!({"warning": {"server": "local",
-                "message": "The entry of the server `local` has the unknown key `disabled`. \
-                    ncp ignores it.",
-                "data": [], "causes": [], "hints": []}})]
+        run.warnings(),
+        [json!({"server": "local",
+            "message": format!(
+                "The entry of the server `local` in `{}` has the unknown key `disabled`. \
+                 ncp ignores it.",
+                file.display()
+            ),
+            "data": [], "causes": [], "hints": []})]
     );
 }
 
@@ -1245,11 +1248,8 @@ fn copy_check_of_a_slow_native_store_stops_at_its_limit_and_leaves_no_program() 
         cause.starts_with("The credential store gave no answer in"),
         "{cause}"
     );
-    // Only the hint of the store error: no command can fix an unknown copy.
-    assert_eq!(
-        common::hints(warning),
-        ["If the store shows an unlock prompt, answer it. Then run the command again."]
-    );
+    // The value is stored, so no command fits.
+    assert_eq!(common::hints(warning), Vec::<String>::new());
     assert!(notes(&run, "hint").is_empty(), "{}", run.describe());
     let program = home.root.join("keychain/security").display().to_string();
     let found = Command::new("pgrep")

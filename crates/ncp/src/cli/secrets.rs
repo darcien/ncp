@@ -394,9 +394,6 @@ fn clone_error(error: &StoreError) -> StoreError {
     }
 }
 
-/// A store error. The native store and its time limit are authorization
-/// errors (exit 4). A credential file that `ncp` cannot read or write is a
-/// local error (exit 3).
 /// A store failure with a message that names the work, and the hints of
 /// the call site after the hints of the store error. Ctrl-C stays the
 /// interrupt, with no other message and no hint.
@@ -413,6 +410,9 @@ pub(super) fn store_failure_of(
     }
 }
 
+/// A store error. The native store and its time limit are authorization
+/// errors (exit 4). A credential file that `ncp` cannot read or write is a
+/// local error (exit 3).
 pub(super) fn store_failure(error: &StoreError) -> Failure {
     let exit = match error {
         StoreError::Interrupted => return session::interrupted(None),
@@ -714,15 +714,17 @@ async fn warn_about_copies(
         (Ok(false) | Err(StoreError::Interrupted), _)
         | (Err(StoreError::Unavailable(_)), CredentialPlace::Native) => return,
         (Err(error), _) => {
-            // `ncp` knows no copy, so no command can fix it.
-            let message = format!(
-                "ncp cannot check {} for a copy of {}",
-                place_text(other),
-                code(name.as_str())
+            // The value is stored, and `ncp` knows no copy. Thus no command
+            // and no hint of the store error fits: the warning gives only
+            // the reason.
+            context.ui.warn(
+                &Warning::new(format!(
+                    "ncp cannot check {} for a copy of {}",
+                    place_text(other),
+                    code(name.as_str())
+                ))
+                .caused_by(&error),
             );
-            context
-                .ui
-                .warn(&Warning::from(store_failure_of(&error, message, [])));
             return;
         }
         (Ok(true), CredentialPlace::File) => format!(

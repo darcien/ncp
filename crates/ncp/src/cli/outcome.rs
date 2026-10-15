@@ -8,7 +8,7 @@ pub use crate::text::{chain, chain_text};
 use crate::{
     credential::Destination,
     elicit::Page,
-    text::{kept_causes, source_texts},
+    text::{code, kept_causes, source_texts},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +74,7 @@ impl Hint {
     pub fn run(goal: &str, command: impl Into<String>) -> Self {
         let command = command.into();
         Self {
-            message: format!("To {goal}, run `{command}`"),
+            message: format!("To {goal}, run {}", code(&command)),
             command: Some(command),
         }
     }
@@ -83,7 +83,7 @@ impl Hint {
     /// must decide to run it, so it is not data.
     #[must_use]
     pub fn run_text(goal: &str, command: &str) -> Self {
-        Self::text(format!("To {goal}, run `{command}`"))
+        Self::text(format!("To {goal}, run {}", code(command)))
     }
 
     #[must_use]
@@ -191,7 +191,11 @@ impl Diagnostic {
 
     fn prefixed(self, server: String) -> Self {
         match self.server {
-            Some(About::Named(_)) => self,
+            Some(About::Named(ref named)) => {
+                // A remap names the same server as the inner failure.
+                debug_assert_eq!(*named, server, "two servers for one failure");
+                self
+            }
             _ => Self {
                 server: Some(About::Prefixed(server)),
                 ..self

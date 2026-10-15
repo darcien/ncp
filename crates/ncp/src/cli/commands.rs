@@ -67,7 +67,7 @@ pub async fn tool(context: &Context<'_>, command: ToolCommand) -> Result<(), Fai
 async fn server_list(context: &Context<'_>) -> Result<(), Failure> {
     let loaded = session::load(context, None).await?;
     for warning in loaded.config.warnings() {
-        context.ui.warn(&session::unknown_key(warning));
+        context.ui.warn(&session::unknown_key(warning, &loaded));
     }
     let rows = list_rows(&loaded);
     if rows.is_empty() {
