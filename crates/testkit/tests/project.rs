@@ -43,7 +43,7 @@ fn untrusted_project_entry_stops_with_its_entries_and_starts_nothing() {
     let home = home.project("app", &json!({"fs": entry}));
     let run = home.run(&["tool", "list", "fs"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let error = run.error();
+    let error = run.old_error();
     let message = error["message"].as_str().unwrap();
     let file = home.project_file();
     assert!(
@@ -58,7 +58,7 @@ fn untrusted_project_entry_stops_with_its_entries_and_starts_nothing() {
         "{message}"
     );
     assert!(message.contains("env: NCP_FIXTURE_PID_FILE"), "{message}");
-    assert_eq!(error["hint"], "ncp trust");
+    assert_eq!(common::hints(&error)[0], "ncp trust");
     assert!(!marker.exists());
 }
 
@@ -81,8 +81,7 @@ fn name_in_both_files_stops_and_names_the_ignore_option() {
     let home = home.project("app", &json!({"fx": {"command": "false"}}));
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "ncp trust");
-    assert_eq!(messages(&run, "hint"), ["ncp trust --ignore"]);
+    assert_eq!(run.hints(), ["ncp trust", "ncp trust --ignore"]);
     // With the file ignored, the global entry runs.
     assert_eq!(home.run(&["trust", "--ignore"]).code(), 0);
     let run = home.run(&["tool", "list", "fx"]);
@@ -119,7 +118,7 @@ fn a_changed_byte_asks_again_and_says_that_the_file_changed() {
     std::fs::write(&file, format!("{text} ")).unwrap();
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let message = run.error()["message"].as_str().unwrap().to_string();
+    let message = run.old_error()["message"].as_str().unwrap().to_string();
     assert!(
         message.contains("which changed since you trusted it"),
         "{message}"
@@ -163,7 +162,7 @@ fn no_at_the_question_ignores_the_file_until_ncp_trust() {
         error["error"]["message"],
         format!("fx is in {}, which you ignored", file.display())
     );
-    assert_eq!(error["error"]["hint"], "ncp trust");
+    assert_eq!(common::hints(&error["error"])[0], "ncp trust");
     // No question after a change of the file.
     let text = std::fs::read_to_string(&file).unwrap();
     std::fs::write(&file, format!("{text}\n")).unwrap();
@@ -250,7 +249,7 @@ fn search_finds_the_file_in_a_parent_and_stops_at_the_git_root() {
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert!(
-        run.error()["message"]
+        run.old_error()["message"]
             .as_str()
             .unwrap()
             .starts_with("no server")
@@ -351,7 +350,7 @@ fn listing_commands_and_completion_never_ask_and_skip_an_untrusted_file() {
     assert_eq!(run.stderr_text(), "");
     // Did-you-mean does not offer the name of the untrusted file.
     let run = home.unset("NCP_TEST_TTY").run(&["tool", "list", "f"]);
-    assert!(!run.error()["message"].as_str().unwrap().contains("fs"));
+    assert!(!run.old_error()["message"].as_str().unwrap().contains("fs"));
 }
 
 #[test]
@@ -391,13 +390,13 @@ fn secret_set_names_the_untrusted_file_that_uses_the_name() {
     assert_eq!(run.code(), 2, "{}", run.describe());
     let file = home.project_file();
     assert_eq!(
-        run.error()["message"],
+        run.old_error()["message"],
         format!(
             "server web names ${{WEB_TOKEN}} in {}, which is not trusted",
             file.display()
         )
     );
-    assert_eq!(run.error()["hint"], "ncp trust");
+    assert_eq!(run.hints()[0], "ncp trust");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -474,7 +473,7 @@ fn the_shown_entry_is_the_entry_that_runs() {
     );
     let run = home.run(&["tool", "list", "fs"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let message = run.error()["message"].as_str().unwrap().to_string();
+    let message = run.old_error()["message"].as_str().unwrap().to_string();
     assert!(message.contains("fs  sh -c 'touch x'"), "{message}");
     let out = home.run(&["trust", "--show"]).stdout();
     assert_eq!(out["servers"][0]["target"], "sh -c 'touch x'");
@@ -605,7 +604,7 @@ fn delete_unused_stops_when_an_untrusted_entry_names_the_secret() {
     let run = home.run(&["secret", "delete", "WEB_TOKEN", "--unused"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert!(
-        run.error()["message"]
+        run.old_error()["message"]
             .as_str()
             .unwrap()
             .ends_with("which is not trusted; ncp cannot know which items it uses"),

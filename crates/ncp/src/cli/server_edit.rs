@@ -17,7 +17,7 @@ use super::{
     args::{AddArgs, CredentialPlace},
     ask,
     auth::{self, TokenRemoval},
-    outcome::Failure,
+    outcome::{Failure, Warning, chain_text},
     project_file::{self, Change, ProjectFile},
     render,
     secrets::{self, SecretRow},
@@ -188,7 +188,7 @@ fn request(args: &AddArgs) -> Result<Request, Failure> {
 }
 
 fn add_failure(name: &str, error: &AddError) -> Failure {
-    let failure = Failure::usage(error.to_string()).server(name);
+    let failure = Failure::usage(chain_text(&error)).server(name);
     match error {
         AddError::CredentialHeader(header) => failure.hint(format!(
             "--header '{header}: Bearer ${{NAME}}' --secret NAME"
@@ -236,7 +236,10 @@ async fn add_target(
             let folder = std::env::current_dir()
                 .and_then(fs::canonicalize)
                 .map_err(|error| {
-                    Failure::protocol(format!("cannot find the current folder: {error}"))
+                    Failure::protocol(format!(
+                        "cannot find the current folder: {error}",
+                        error = chain_text(&error)
+                    ))
                 })?;
             let home = context
                 .env
@@ -280,7 +283,8 @@ fn read(file: &Path) -> Result<Option<String>, Failure> {
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
         Err(error) => Err(Failure::protocol(format!(
             "cannot read {}: {error}",
-            file.display()
+            file.display(),
+            error = chain_text(&error)
         ))),
     }
 }
@@ -405,9 +409,15 @@ async fn lock(context: &Context<'_>) -> Result<private_file::Lock, Failure> {
     });
     match secrets::interruptible(context, wait).await {
         Ok(Ok(lock)) => Ok(lock),
-        Err(StoreError::Interrupted) => Err(session::interrupted()),
-        Ok(Err(error)) => Err(Failure::protocol(format!("cannot lock {shown}: {error}"))),
-        Err(error) => Err(Failure::protocol(format!("cannot lock {shown}: {error}"))),
+        Err(StoreError::Interrupted) => Err(session::interrupted(None)),
+        Ok(Err(error)) => Err(Failure::protocol(format!(
+            "cannot lock {shown}: {error}",
+            error = chain_text(&error)
+        ))),
+        Err(error) => Err(Failure::protocol(format!(
+            "cannot lock {shown}: {error}",
+            error = chain_text(&error)
+        ))),
     }
 }
 
@@ -457,7 +467,11 @@ fn unchanged(target: &Target, real: &Path, base: Option<&String>) -> Result<(), 
 }
 
 fn edit_failure(target: &Target, error: &EditError) -> Failure {
-    let message = format!("{}: {error}", target.file.display());
+    let message = format!(
+        "{}: {error}",
+        target.file.display(),
+        error = chain_text(&error)
+    );
     match error {
         EditError::SelfCheck => Failure::protocol(format!("{message}; ncp did not change it")),
         EditError::Exists(name) => Failure::usage(message).hint(remove_command(name, target.scope)),
@@ -472,8 +486,7 @@ fn trust_written(context: &Context<'_>, target: &Target, text: &str) {
     if target.scope == Scope::Project
         && let Err(failure) = project_file::trust_written(&context.paths, &target.file, text)
     {
-        context.ui.warning(None, &failure.message);
-        context.ui.hint(None, "ncp trust");
+        context.ui.warn(&Warning::from(failure).hint("ncp trust"));
     }
 }
 

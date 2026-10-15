@@ -210,11 +210,48 @@ impl Run {
             .collect()
     }
 
+    /// The error object, after a check of the message rules.
     pub fn error(&self) -> Value {
+        let error = self.old_error();
+        check_style(&error, &self.describe());
+        error
+    }
+
+    /// The error object of a message of the older form, with no check.
+    pub fn old_error(&self) -> Value {
         self.stderr()
             .into_iter()
             .find_map(|line| line.get("error").cloned())
             .unwrap_or_else(|| panic!("no error: {}", self.describe()))
+    }
+
+    /// The warning objects, after a check of the message rules.
+    pub fn warnings(&self) -> Vec<Value> {
+        let warnings = self.old_warnings();
+        for warning in &warnings {
+            check_style(warning, &self.describe());
+        }
+        warnings
+    }
+
+    /// The warning objects of messages of the older form, with no check.
+    pub fn old_warnings(&self) -> Vec<Value> {
+        self.stderr()
+            .into_iter()
+            .filter_map(|line| line.get("warning").cloned())
+            .collect()
+    }
+
+    /// The hint messages of the error, in their order.
+    pub fn hints(&self) -> Vec<String> {
+        hints(&self.old_error())
+    }
+
+    /// The message, the data lines and the causes of the error, one on
+    /// each line. A check of a text that can move from the message to a
+    /// cause reads this.
+    pub fn error_text(&self) -> String {
+        error_text(&self.old_error())
     }
 
     pub fn describe(&self) -> String {
@@ -224,5 +261,71 @@ impl Run {
             String::from_utf8_lossy(&self.0.stdout),
             String::from_utf8_lossy(&self.0.stderr)
         )
+    }
+}
+
+/// The hint messages of an error or a warning object.
+pub fn hints(object: &Value) -> Vec<String> {
+    object["hints"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no hints: {object}"))
+        .iter()
+        .map(|hint| hint["message"].as_str().unwrap_or_default().to_string())
+        .collect()
+}
+
+/// The message, the data lines and the causes of an error or a warning
+/// object, one on each line.
+pub fn error_text(object: &Value) -> String {
+    let strings = |key: &str| {
+        object[key]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    std::iter::once(object["message"].as_str().unwrap_or_default().to_string())
+        .chain(strings("data"))
+        .chain(strings("causes"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+// The rules of docs/design/output-messages.md that a test can check on the
+// output: the first letter (3), no semicolon (5), no hint two times (9), the
+// server in the message (12), and no empty backticks (14).
+fn check_style(object: &Value, run: &str) {
+    let message = object["message"].as_str().unwrap_or_default();
+    let hints = hints(object);
+    for text in std::iter::once(message).chain(hints.iter().map(String::as_str)) {
+        let first = text.chars().next();
+        assert!(
+            first.is_some_and(|c| c.is_uppercase() || c == '`') || text.starts_with("ncp"),
+            "rule 3: {text:?} does not start with a capital letter, a backtick or ncp\n{run}"
+        );
+        assert!(
+            !text.contains(';'),
+            "rule 5: {text:?} has a semicolon\n{run}"
+        );
+        assert!(
+            !text.contains("``"),
+            "rule 14: {text:?} has empty backticks\n{run}"
+        );
+    }
+    let mut unique = hints.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(
+        unique.len(),
+        hints.len(),
+        "rule 9: a hint shows two times\n{run}"
+    );
+    if let Some(server) = object["server"].as_str() {
+        assert!(
+            message.contains(&format!("`{server}`")),
+            "rule 12: {message:?} does not name the server {server}\n{run}"
+        );
     }
 }

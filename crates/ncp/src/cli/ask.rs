@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     auth::OpenBrowser,
-    outcome::{Exit, Failure},
+    outcome::{Exit, Failure, Hint, chain_text},
     session::{self, Context},
     ui::{self, Ui},
 };
@@ -204,8 +204,13 @@ impl Asker {
         let request = match elicit::parse(params) {
             Ok(request) => request,
             Err(error) => {
-                self.ui
-                    .warning(Some(server), &format!("cannot ask: {error}; ncp declines"));
+                self.ui.warning(
+                    Some(server),
+                    &format!(
+                        "cannot ask: {error}; ncp declines",
+                        error = chain_text(&error)
+                    ),
+                );
                 return Ok(Action::Decline);
             }
         };
@@ -260,7 +265,10 @@ impl Asker {
                         if let Err(error) = (self.open_browser)(url.as_str()) {
                             self.ui.warning(
                                 Some(server),
-                                &format!("cannot open a browser: {error}; open the URL above"),
+                                &format!(
+                                    "cannot open a browser: {error}; open the URL above",
+                                    error = chain_text(&error)
+                                ),
                             );
                         }
                         Action::Opened
@@ -286,21 +294,18 @@ impl Asker {
     // person knows when the work on the page is complete.
     async fn open_pages(&self, failure: Failure) -> Failure {
         let mut opened = false;
-        for page in &failure.pages {
+        for page in failure.pages() {
             let params =
                 serde_json::json!({"mode": "url", "message": page.message, "url": page.url});
             match self.ask(&params).await {
                 Ok(action) => opened |= action == Action::Opened,
                 Err(Stop::End | Stop::TimedOut) => {}
-                Err(Stop::Interrupted) => return session::interrupted().server(&self.server),
+                Err(Stop::Interrupted) => return session::interrupted(Some(&self.server)),
             }
         }
         if opened {
             // This hint replaces "open the page": the page is open.
-            Failure {
-                hints: Box::new(["when the page is done, run the command again".into()]),
-                ..failure
-            }
+            failure.with_hints([Hint::text("when the page is done, run the command again")])
         } else {
             failure
         }
@@ -380,14 +385,14 @@ pub async fn confirm(context: &Context<'_>, question: &str) -> Result<Option<boo
             line.trim().to_ascii_lowercase().as_str(),
             "y" | "yes"
         ))),
-        Err(Stop::Interrupted) => Err(session::interrupted()),
+        Err(Stop::Interrupted) => Err(session::interrupted(None)),
         Err(Stop::End | Stop::TimedOut) => Ok(None),
     }
 }
 
 fn unanswered(stop: Stop, context: &Context<'_>, server: &str) -> Failure {
     match stop {
-        Stop::Interrupted => session::interrupted().server(server),
+        Stop::Interrupted => session::interrupted(Some(server)),
         Stop::TimedOut | Stop::End => Failure::new(
             Exit::InputRequired,
             format!(
@@ -421,7 +426,7 @@ pub async fn with_rounds<R: Rounds>(
     let mut round = 1;
     loop {
         let response = match run(continuation.as_ref()).await {
-            Err(failure) if context.interactive && !failure.pages.is_empty() => {
+            Err(failure) if context.interactive && !failure.pages().is_empty() => {
                 return Err(asker.open_pages(failure).await);
             }
             other => other?,

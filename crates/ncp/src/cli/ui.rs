@@ -10,7 +10,7 @@ use std::{
 
 use serde_json::{Value, json};
 
-use super::outcome::Failure;
+use super::outcome::{Diagnostic, Failure, Warning};
 use crate::client::stdio::ServerLog;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,7 +33,8 @@ impl Format {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Verbosity {
-    /// `-q`: no hints and no warnings. Errors stay.
+    /// `-q`: no hints, no warnings and no progress. An error shows with
+    /// its causes and hints.
     Quiet,
     Normal,
     /// `-v`: where each value comes from, the proxy route, the protocol version.
@@ -82,9 +83,18 @@ impl Ui {
         }
     }
 
+    /// A warning of the older form, with `server NAME:` before the message.
     pub fn warning(self, server: Option<&str>, message: &str) {
+        let warning = Warning::new(message);
+        self.warn(&match server {
+            Some(server) => warning.server(server),
+            None => warning,
+        });
+    }
+
+    pub fn warn(self, warning: &Warning) {
         if self.verbosity > Verbosity::Quiet {
-            self.note(&note("warning", self.format, server, message));
+            self.note(&warning_text(self.format, warning));
         }
     }
 
@@ -159,36 +169,27 @@ impl Ui {
     }
 }
 
-/// # Errors
-///
-/// Returns a failure when `ncp` cannot write to stdout.
-pub fn write_stdout_bytes(bytes: &[u8]) -> Result<(), Failure> {
-    let mut stdout = std::io::stdout().lock();
-    match stdout.write_all(bytes).and_then(|()| stdout.flush()) {
-        Err(error) if error.kind() != ErrorKind::BrokenPipe => Err(Failure::protocol(format!(
-            "cannot write the result to stdout: {error}"
-        ))),
-        _ => Ok(()),
-    }
-}
-
 /// A closed pipe (for example `ncp ... | head`) is not an error of the command,
 /// but a full disk is.
 ///
 /// # Errors
 ///
 /// Returns a failure when `ncp` cannot write to stdout.
-pub fn write_stdout(text: &str) -> Result<(), Failure> {
+pub fn write_stdout_bytes(bytes: &[u8]) -> Result<(), Failure> {
     let mut stdout = std::io::stdout().lock();
-    match stdout
-        .write_all(text.as_bytes())
-        .and_then(|()| stdout.flush())
-    {
-        Err(error) if error.kind() != ErrorKind::BrokenPipe => Err(Failure::protocol(format!(
-            "cannot write the result to stdout: {error}"
-        ))),
+    match stdout.write_all(bytes).and_then(|()| stdout.flush()) {
+        Err(error) if error.kind() != ErrorKind::BrokenPipe => {
+            Err(Failure::protocol("ncp cannot write the result to stdout").caused_by(&error))
+        }
         _ => Ok(()),
     }
+}
+
+/// # Errors
+///
+/// Returns a failure when `ncp` cannot write to stdout.
+pub fn write_stdout(text: &str) -> Result<(), Failure> {
+    write_stdout_bytes(text.as_bytes())
 }
 
 /// Each control character becomes an escape, except new line, tab, and the
@@ -369,8 +370,8 @@ fn is_raw_control(c: char) -> bool {
     ('\u{7f}'..='\u{9f}').contains(&c)
 }
 
-/// A warning or a hint. Text: `warning: message`. JSON:
-/// `{"warning": {"server": "...", "message": "..."}}`.
+/// A standalone hint or a debug line. Text: `hint: message`. JSON:
+/// `{"hint": {"server": "...", "message": "..."}}`.
 #[must_use]
 pub fn note(kind: &str, format: Format, server: Option<&str>, message: &str) -> String {
     match format {
@@ -388,108 +389,299 @@ pub fn note(kind: &str, format: Format, server: Option<&str>, message: &str) -> 
     }
 }
 
-/// The error. Text: `error: message` and a `hint: hint` line for each
-/// hint. JSON: the error object of the design, on one line, with the first
-/// hint. Each other hint follows as a hint note (B3).
+/// The error. Text: the `error:` line, the data lines, the `cause:` lines
+/// and the hints. JSON: the error object of the design, on one line.
 #[must_use]
 pub fn error_text(format: Format, failure: &Failure) -> String {
+    let diagnostic = failure.diagnostic();
     match format {
-        Format::Text => {
-            let server = failure
-                .server
-                .as_deref()
-                .map(|server| format!("server {server}: "))
-                .unwrap_or_default();
-            let hints: String = failure
-                .hints
-                .iter()
-                .map(|hint| note("hint", format, None, hint))
-                .collect();
-            format!("error: {server}{}\n{hints}", indented(&failure.message))
-        }
+        Format::Text => diagnostic_text("error", ERROR_DATA_INDENT, diagnostic),
         Format::Json => {
-            let mut body = json!({
-                "code": failure.exit.name(),
-                "exit": failure.exit.code(),
-                "message": failure.message,
-            });
-            if let Some(server) = &failure.server {
-                body["server"] = json!(server);
-            }
-            if let Some(hint) = failure.hints.first() {
-                body["hint"] = json!(hint);
-            }
-            if let Some(destination) = &failure.destination {
+            let mut body = diagnostic_json(diagnostic);
+            body["code"] = json!(failure.exit().name());
+            body["exit"] = json!(failure.exit().code());
+            if let Some(destination) = failure.destination() {
                 body["destination"] = super::secrets::destination_json(destination);
             }
-            if !failure.pages.is_empty() {
+            if !failure.pages().is_empty() {
                 let pages: Vec<Value> = failure
-                    .pages
+                    .pages()
                     .iter()
                     .map(|page| json!({"url": page.url, "message": page.message}))
                     .collect();
                 body["pages"] = json!(pages);
             }
-            let more: String = failure
-                .hints
-                .iter()
-                .skip(1)
-                .map(|hint| note("hint", format, failure.server.as_deref(), hint))
-                .collect();
-            json_line(&json!({ "error": body })) + &more
+            json_line(&json!({ "error": body }))
         }
+    }
+}
+
+/// The warning, in the format of an error with no exit code.
+#[must_use]
+pub fn warning_text(format: Format, warning: &Warning) -> String {
+    let diagnostic = warning.diagnostic();
+    match format {
+        Format::Text => diagnostic_text("warning", WARNING_DATA_INDENT, diagnostic),
+        Format::Json => json_line(&json!({ "warning": diagnostic_json(diagnostic) })),
+    }
+}
+
+// A data line starts at the column of the message text.
+const ERROR_DATA_INDENT: &str = "       ";
+const WARNING_DATA_INDENT: &str = "         ";
+const CAUSE_LABEL: &str = "  cause: ";
+const CAUSE_INDENT: &str = "         ";
+
+// Only a label or an empty line starts at column 0. Thus a line of a
+// server cannot look like a line of `ncp` (B60).
+fn diagnostic_text(label: &str, data_indent: &str, diagnostic: &Diagnostic) -> String {
+    let prefix = diagnostic
+        .prefix()
+        .map(|server| format!("server {server}: "))
+        .unwrap_or_default();
+    let head = format!("{label}: {prefix}{}", indented(diagnostic.message()));
+    let data = shown_data(diagnostic.data())
+        .into_iter()
+        .map(|line| format!("{data_indent}{}", indent_lines(&line, data_indent)));
+    let causes = diagnostic
+        .causes()
+        .iter()
+        .map(|cause| format!("{CAUSE_LABEL}{}", indent_lines(&shown(cause), CAUSE_INDENT)));
+    let hints = diagnostic
+        .hints()
+        .iter()
+        .map(|hint| format!("\nhint: {}", one_line(hint.message())));
+    std::iter::once(head)
+        .chain(data)
+        .chain(causes)
+        .chain(hints)
+        .map(|line| line + "\n")
+        .collect::<Vec<_>>()
+        .concat()
+}
+
+fn diagnostic_json(diagnostic: &Diagnostic) -> Value {
+    let causes: Vec<String> = diagnostic
+        .causes()
+        .iter()
+        .map(|cause| shown(cause).into_owned())
+        .collect();
+    let hints: Vec<Value> = diagnostic
+        .hints()
+        .iter()
+        .map(|hint| match hint.command() {
+            Some(command) => json!({"message": hint.message(), "command": command}),
+            None => json!({"message": hint.message()}),
+        })
+        .collect();
+    let mut body = json!({
+        "message": diagnostic.message(),
+        "data": shown_data(diagnostic.data()),
+        "causes": causes,
+        "hints": hints,
+    });
+    if let Some(server) = diagnostic.server() {
+        body["server"] = json!(server);
+    }
+    body
+}
+
+// Each line after the first gets the indent. An empty line stays empty.
+fn indent_lines(text: &str, indent: &str) -> String {
+    text.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .split('\n')
+        .enumerate()
+        .map(|(index, line)| match (index, line.is_empty()) {
+            (0, _) | (_, true) => line.to_string(),
+            _ => format!("{indent}{line}"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+const SHOWN_LINES: usize = 20;
+const SHOWN_BYTES: usize = 2048;
+
+// A long body of a server hides the hints. Thus a text shows at most 20
+// lines and 2048 bytes, and a last line tells how much did not show
+// (design rule 16).
+fn shown(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.len() <= SHOWN_BYTES && text.lines().count() <= SHOWN_LINES {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let whole_lines = text
+        .split_inclusive('\n')
+        .take(SHOWN_LINES)
+        .scan(0, |end, line| {
+            *end += line.len();
+            (*end <= SHOWN_BYTES).then_some(*end)
+        })
+        .last()
+        .unwrap_or(0);
+    let end = if whole_lines > 0 {
+        whole_lines
+    } else {
+        (0..=SHOWN_BYTES)
+            .rev()
+            .find(|index| text.is_char_boundary(*index))
+            .unwrap_or(0)
+    };
+    let kept = text[..end].strip_suffix('\n').unwrap_or(&text[..end]);
+    std::borrow::Cow::Owned(format!(
+        "{kept}\n(ncp did not show {} bytes)",
+        text.len() - kept.len()
+    ))
+}
+
+// The data lines of one diagnostic share one limit.
+fn shown_data(lines: &[String]) -> Vec<String> {
+    let joined = lines.join("\n");
+    match shown(&joined) {
+        std::borrow::Cow::Borrowed(_) => lines.to_vec(),
+        std::borrow::Cow::Owned(text) => text.split('\n').map(str::to_string).collect(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::outcome::Exit;
+    use crate::cli::outcome::{Exit, Hint};
 
     fn failure() -> Failure {
-        Failure::new(Exit::Auth, "the server needs a login")
-            .server("github")
-            .hint("ncp auth login github")
+        Failure::new(Exit::Auth, "The server `github` needs a login")
+            .about("github")
+            .cause("HTTP 401")
+            .hint(Hint::run("log in", "ncp auth login github"))
+            .hint("Examine the token")
     }
 
     #[test]
-    fn json_error_is_one_line_with_code_exit_server_message_and_hint() {
+    fn json_error_is_one_line_with_each_part_of_the_design() {
         let line = error_text(Format::Json, &failure());
         assert!(line.ends_with('\n') && line.lines().count() == 1);
         let value: Value = serde_json::from_str(&line).unwrap();
         assert_eq!(
             value,
             json!({"error": {"code": "auth", "exit": 4, "server": "github",
-                "message": "the server needs a login", "hint": "ncp auth login github"}})
+                "message": "The server `github` needs a login", "data": [],
+                "causes": ["HTTP 401"],
+                "hints": [
+                    {"message": "To log in, run `ncp auth login github`",
+                        "command": "ncp auth login github"},
+                    {"message": "Examine the token"}]}})
         );
     }
 
     #[test]
-    fn a_second_hint_follows_the_error_as_its_own_line() {
-        let failure = failure().hint("ncp secret list");
-        assert_eq!(
-            error_text(Format::Text, &failure),
-            "error: server github: the server needs a login\n\
-             hint: ncp auth login github\nhint: ncp secret list\n"
-        );
-        let text = error_text(Format::Json, &failure);
-        let lines: Vec<Value> = text
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        assert_eq!(lines[0]["error"]["hint"], "ncp auth login github");
-        assert_eq!(
-            lines[1],
-            json!({"hint": {"message": "ncp secret list", "server": "github"}})
-        );
-    }
-
-    #[test]
-    fn text_error_names_the_server_and_gives_the_hint_on_its_own_line() {
+    fn text_error_has_its_causes_then_an_empty_line_before_each_hint() {
         assert_eq!(
             error_text(Format::Text, &failure()),
-            "error: server github: the server needs a login\nhint: ncp auth login github\n"
+            "error: The server `github` needs a login\n  cause: HTTP 401\n\n\
+             hint: To log in, run `ncp auth login github`\n\nhint: Examine the token\n"
         );
+    }
+
+    #[test]
+    fn a_message_of_the_older_form_keeps_the_server_prefix() {
+        let failure = Failure::usage("the entry is not valid").server("fx");
+        assert_eq!(
+            error_text(Format::Text, &failure),
+            "error: server fx: the entry is not valid\n"
+        );
+        let value: Value = serde_json::from_str(&error_text(Format::Json, &failure)).unwrap();
+        assert_eq!(value["error"]["server"], "fx");
+        assert_eq!(value["error"]["hints"], json!([]));
+    }
+
+    #[test]
+    fn a_line_from_a_server_cannot_start_at_column_0() {
+        let failure = Failure::protocol("x\nhint: run evil")
+            .data("d\nerror: e")
+            .cause("a\nerror: b\n\nc")
+            .hint("a\nb");
+        assert_eq!(
+            error_text(Format::Text, &failure),
+            "error: x\n  hint: run evil\n       d\n       error: e\n\
+             \x20 cause: a\n         error: b\n\n         c\n\nhint: a\\nb\n"
+        );
+        let warning = Warning::new("w").data("d\ne");
+        assert_eq!(
+            warning_text(Format::Text, &warning),
+            "warning: w\n         d\n         e\n"
+        );
+    }
+
+    #[test]
+    fn a_long_cause_shows_its_first_lines_and_the_size_of_the_rest() {
+        let lines: Vec<String> = (1..=30).map(|n| format!("line {n}")).collect();
+        let text = lines.join("\n");
+        let failure = Failure::protocol("m").cause(text.clone());
+        let value: Value = serde_json::from_str(&error_text(Format::Json, &failure)).unwrap();
+        let shown = value["error"]["causes"][0].as_str().unwrap().to_string();
+        let kept = lines[..20].join("\n");
+        assert_eq!(
+            shown,
+            format!(
+                "{kept}\n(ncp did not show {} bytes)",
+                text.len() - kept.len()
+            )
+        );
+        let text_form = error_text(Format::Text, &failure);
+        assert!(text_form.contains("\n         line 20\n         (ncp did not show"));
+        let long = "é".repeat(1500);
+        let failure = Failure::protocol("m").cause(long);
+        let value: Value = serde_json::from_str(&error_text(Format::Json, &failure)).unwrap();
+        assert_eq!(
+            value["error"]["causes"][0],
+            format!("{}\n(ncp did not show 952 bytes)", "é".repeat(1024))
+        );
+    }
+
+    #[test]
+    fn all_data_lines_share_one_limit() {
+        let failure = (1..=25).fold(Failure::usage("m:"), |failure, n| {
+            failure.data(format!("row {n}"))
+        });
+        let value: Value = serde_json::from_str(&error_text(Format::Json, &failure)).unwrap();
+        let data = value["error"]["data"].as_array().unwrap();
+        assert_eq!(data.len(), 21);
+        assert_eq!(data[19], "row 20");
+        assert!(data[20].as_str().unwrap().starts_with("(ncp did not show"));
+    }
+
+    #[test]
+    fn warnings_have_text_and_json_forms() {
+        let warning = Warning::new("The server `s` sent an unknown key")
+            .about("s")
+            .cause("c")
+            .hint("h");
+        assert_eq!(
+            warning_text(Format::Text, &warning),
+            "warning: The server `s` sent an unknown key\n  cause: c\n\nhint: h\n"
+        );
+        let value: Value = serde_json::from_str(&warning_text(Format::Json, &warning)).unwrap();
+        assert_eq!(
+            value,
+            json!({"warning": {"server": "s", "message": "The server `s` sent an unknown key",
+                "data": [], "causes": ["c"], "hints": [{"message": "h"}]}})
+        );
+        assert_eq!(
+            warning_text(Format::Text, &Warning::new("unknown key").server("s")),
+            "warning: server s: unknown key\n"
+        );
+    }
+
+    #[test]
+    fn standalone_hints_have_text_and_json_forms() {
+        assert_eq!(note("hint", Format::Text, None, "x"), "hint: x\n");
+        assert_eq!(
+            note("hint", Format::Text, None, "a\r\nerror: b"),
+            "hint: a\n  error: b\n"
+        );
+        let value: Value =
+            serde_json::from_str(&note("hint", Format::Json, Some("s"), "x")).unwrap();
+        assert_eq!(value, json!({"hint": {"message": "x", "server": "s"}}));
     }
 
     #[test]
@@ -533,16 +725,7 @@ mod tests {
     }
 
     #[test]
-    fn a_line_in_a_message_cannot_look_like_a_note() {
-        let failure = Failure::new(Exit::Protocol, "x\nhint: run evil").hint("a\nb");
-        assert_eq!(
-            error_text(Format::Text, &failure),
-            "error: x\n  hint: run evil\nhint: a\n  b\n"
-        );
-        assert_eq!(
-            note("warning", Format::Text, None, "a\r\nerror: b"),
-            "warning: a\n  error: b\n"
-        );
+    fn a_progress_message_stays_on_one_line() {
         let progress = crate::client::Progress {
             progress: 1.0,
             total: None,
@@ -580,17 +763,5 @@ mod tests {
             progress_line(Format::Text, "fx", &half),
             "progress: server fx: 0.5\n"
         );
-    }
-
-    #[test]
-    fn notes_have_text_and_json_forms() {
-        assert_eq!(
-            note("warning", Format::Text, Some("s"), "unknown key"),
-            "warning: server s: unknown key\n"
-        );
-        assert_eq!(note("hint", Format::Text, None, "x"), "hint: x\n");
-        let value: Value =
-            serde_json::from_str(&note("hint", Format::Json, Some("s"), "x")).unwrap();
-        assert_eq!(value, json!({"hint": {"message": "x", "server": "s"}}));
     }
 }

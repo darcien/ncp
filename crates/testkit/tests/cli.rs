@@ -69,7 +69,10 @@ fn server_list_shows_servers_invalid_entries_and_unknown_keys() {
     );
     assert_eq!(
         run.stderr(),
-        [json!({"warning": {"server": "local", "message": "unknown key \"disabled\" ignored"}})]
+        [
+            json!({"warning": {"server": "local", "message": "unknown key \"disabled\" ignored",
+            "data": [], "causes": [], "hints": []}})
+        ]
     );
 }
 
@@ -82,7 +85,7 @@ fn configuration_file_that_does_not_parse_is_a_usage_error() {
     let run = home.run(&["server", "list"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert!(run.stdout_is_empty());
-    assert_eq!(run.error()["code"], "usage");
+    assert_eq!(run.old_error()["code"], "usage");
 }
 
 #[test]
@@ -168,7 +171,7 @@ fn tool_call_checks_arguments_before_the_call_unless_told_not_to() {
     let run = home.run(&["tool", "call", "fx", "wait", "ms=soon"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert!(run.stdout_is_empty());
-    let message = run.error()["message"].as_str().unwrap().to_string();
+    let message = run.old_error()["message"].as_str().unwrap().to_string();
     assert!(message.contains("/ms:"), "{message}");
     assert!(message.contains("ms (integer, optional)"), "{message}");
     let run = home.run(&[
@@ -189,7 +192,7 @@ fn tool_error_result_goes_to_stdout_with_exit_1() {
     let run = home.run(&["tool", "call", "fx", "fail", "text=bad"]);
     assert_eq!(run.code(), 1, "{}", run.describe());
     assert_eq!(run.stdout()["isError"], true);
-    assert_eq!(run.error()["code"], "tool");
+    assert_eq!(run.old_error()["code"], "tool");
 }
 
 #[test]
@@ -199,7 +202,7 @@ fn input_required_result_goes_to_stdout_with_exit_5() {
     let run = home.run(&["tool", "call", "fx", "ask"]);
     assert_eq!(run.code(), 5, "{}", run.describe());
     assert_eq!(run.stdout()["requestState"], "state-1");
-    assert_eq!(run.error()["code"], "input_required");
+    assert_eq!(run.old_error()["code"], "input_required");
 }
 
 #[test]
@@ -207,10 +210,7 @@ fn joined_server_and_tool_name_gives_the_two_word_command() {
     let home = Home::new("joined");
     let run = home.run(&["tool", "call", "github.search_issues", "q=x"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(
-        run.error()["hint"],
-        "ncp tool call github search_issues q=x"
-    );
+    assert_eq!(run.hints()[0], "ncp tool call github search_issues q=x");
 }
 
 #[test]
@@ -218,14 +218,14 @@ fn argument_in_place_of_the_tool_gives_missing_tool_name() {
     let home = Home::new("missing-tool");
     let run = home.run(&["tool", "call", "github", "q=x"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let error = run.error();
+    let error = run.old_error();
     assert!(
         error["message"]
             .as_str()
             .unwrap()
             .starts_with("missing tool name")
     );
-    assert_eq!(error["hint"], "ncp tool list github");
+    assert_eq!(common::hints(&error)[0], "ncp tool list github");
 }
 
 #[test]
@@ -234,10 +234,10 @@ fn unknown_server_and_unknown_tool_name_the_command_that_lists_them() {
     home.configure(&json!({"fx": stdio("modern")}));
     let run = home.run(&["tool", "list", "nope"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "ncp server list");
+    assert_eq!(run.hints()[0], "ncp server list");
     let run = home.run(&["tool", "call", "fx", "nope"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "ncp tool list fx");
+    assert_eq!(run.hints()[0], "ncp tool list fx");
 }
 
 #[test]
@@ -246,7 +246,7 @@ fn unset_variable_in_args_gives_a_usage_error_with_the_fix() {
     home.configure(&json!({"fx": {"command": FIXTURE, "args": ["${env:FIXTURE_MODE}"]}}));
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "export FIXTURE_MODE=<value>");
+    assert_eq!(run.hints()[0], "export FIXTURE_MODE=<value>");
     let home = home.set("FIXTURE_MODE", "modern");
     assert_eq!(home.run(&["tool", "list", "fx"]).code(), 0);
 }
@@ -266,19 +266,19 @@ fn name_that_no_place_has_names_the_secret_set_command() {
     home.configure(&env_server());
     let run = env_value(&home);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let error = run.error();
+    let error = run.old_error();
     assert_eq!(
         error["message"],
         "FIXTURE_TOKEN is not set, and not stored for stdio servers. ncp did not start server fx."
     );
-    assert_eq!(error["hint"], "ncp secret set FIXTURE_TOKEN --server fx");
-    assert_eq!(error["destination"], Value::Null);
-    assert!(
-        run.stderr()
-            .contains(&json!({"hint": {"message": "ncp secret list", "server": "fx"}})),
-        "{}",
-        run.describe()
+    assert_eq!(
+        common::hints(&error),
+        [
+            "ncp secret set FIXTURE_TOKEN --server fx",
+            "ncp secret list"
+        ]
     );
+    assert_eq!(error["destination"], Value::Null);
 }
 
 #[test]
@@ -288,13 +288,13 @@ fn name_with_no_native_store_names_the_file_option() {
     let run = env_value(&home);
     assert_eq!(run.code(), 4, "{}", run.describe());
     assert_eq!(
-        run.error()["hint"],
+        run.hints()[0],
         "ncp secret set FIXTURE_TOKEN --server fx --credential-store file"
     );
     let run = home.run_with_stdin(&["secret", "set", "FIXTURE_TOKEN"], "v\n");
     assert_eq!(run.code(), 4, "{}", run.describe());
     assert_eq!(
-        run.error()["hint"],
+        run.hints()[0],
         "ncp secret set FIXTURE_TOKEN --server fx --credential-store file"
     );
 }
@@ -420,7 +420,7 @@ fn native_store_comes_before_the_file_and_list_shows_both_places() {
     );
     let run = home.run(&["secret", "delete", "FIXTURE_TOKEN"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "ncp secret list");
+    assert_eq!(run.hints()[0], "ncp secret list");
 }
 
 #[test]
@@ -431,7 +431,7 @@ fn secret_set_rejects_a_bad_name_and_an_empty_value() {
     assert_eq!(run.code(), 2, "{}", run.describe());
     let run = home.run_with_stdin(&["secret", "set", "A", "--credential-store", "file"], "\n");
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["message"], "the value of A is empty");
+    assert_eq!(run.old_error()["message"], "the value of A is empty");
 }
 
 #[test]
@@ -462,7 +462,7 @@ fn secret_set_stops_when_a_pipe_gives_no_value_in_the_time_limit() {
     assert_eq!(run.code(), 3, "{}", run.describe());
     // The exit does not wait for the read that is still open.
     assert!(started.elapsed() < std::time::Duration::from_millis(2500));
-    assert_eq!(run.error()["message"], "no value of A came in 1 s");
+    assert_eq!(run.old_error()["message"], "no value of A came in 1 s");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -508,12 +508,12 @@ async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
 
     let run = set(&[]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let message = run.error()["message"].as_str().unwrap().to_string();
+    let message = run.old_error()["message"].as_str().unwrap().to_string();
     assert!(
         message.contains(&web) && message.contains(&other),
         "{message}"
     );
-    assert_eq!(run.error()["hint"], "ncp secret set K --server <SERVER>");
+    assert_eq!(run.hints()[0], "ncp secret set K --server <SERVER>");
 
     let run = set(&["--server", "web"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
@@ -525,14 +525,14 @@ async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
     let run = home.run(&["tool", "list", "other"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert_eq!(
-        run.error()["message"],
+        run.old_error()["message"],
         format!(
             "K is not set, and not stored for {other}. ncp sent nothing to server other. \
              If this URL is correct, store the value for it."
         )
     );
-    assert_eq!(run.error()["destination"], other.as_str());
-    assert_eq!(run.error()["hint"], "ncp secret set K --server other");
+    assert_eq!(run.old_error()["destination"], other.as_str());
+    assert_eq!(run.hints()[0], "ncp secret set K --server other");
 
     assert_eq!(set(&["--server", "other"]).code(), 0);
     let list = home.run(&["secret", "list"]);
@@ -553,7 +553,7 @@ async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
     let run = home.run(&["secret", "delete", "K"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert!(
-        run.error()["message"]
+        run.old_error()["message"]
             .as_str()
             .unwrap()
             .ends_with("ncp deleted nothing"),
@@ -575,7 +575,7 @@ async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
     assert_eq!(run.stdout()["deleted"][0]["destination"], web.as_str());
     let run = home.run(&["secret", "delete", "K", "--all"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["message"], "K is not stored");
+    assert_eq!(run.old_error()["message"], "K is not stored");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -588,19 +588,16 @@ async fn rejected_stored_header_value_gives_the_secret_hint_before_the_login_hin
     assert_eq!(run.code(), 0, "{}", run.describe());
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "ncp secret set K --server web");
-    assert!(
-        run.stderr()
-            .contains(&json!({"hint": {"message": "ncp auth login web", "server": "web"}})),
-        "{}",
-        run.describe()
+    assert_eq!(
+        run.hints(),
+        ["ncp secret set K --server web", "ncp auth login web"]
     );
     // `ncp` does not store a value from the environment, so only the login hint
     // shows.
     let home = home.set("K", "old");
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "ncp auth login web");
+    assert_eq!(run.hints()[0], "ncp auth login web");
 }
 
 #[test]
@@ -609,7 +606,7 @@ fn secret_set_with_no_entry_tells_the_user_to_add_it_first() {
     let run = home.run_with_stdin(&["secret", "set", "A", "--credential-store", "file"], "v");
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert_eq!(
-        run.error()["message"],
+        run.old_error()["message"],
         "no entry names ${A} in env, headers or oauth.clientSecret; add the entry first"
     );
 }
@@ -633,7 +630,7 @@ fn one_entry_with_two_destinations_for_a_name_needs_two_names() {
         "v",
     );
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert!(run.error().get("hint").is_none(), "{}", run.describe());
+    assert_eq!(run.hints(), Vec::<String>::new(), "{}", run.describe());
 }
 
 #[test]
@@ -644,7 +641,7 @@ fn secret_delete_unused_needs_a_valid_file_and_an_unused_item() {
     let run = home.run(&["secret", "delete", "A", "--unused"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert!(
-        run.error()["message"]
+        run.old_error()["message"]
             .as_str()
             .unwrap()
             .contains("cannot know which items it uses"),
@@ -654,7 +651,7 @@ fn secret_delete_unused_needs_a_valid_file_and_an_unused_item() {
     home.configure(&json!({"s": {"command": "s", "env": {"A": "${A}"}}}));
     let run = home.run(&["secret", "delete", "A", "--unused"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["message"], "no stored item of A is unused");
+    assert_eq!(run.old_error()["message"], "no stored item of A is unused");
 }
 
 #[test]
@@ -666,14 +663,14 @@ fn secret_delete_with_a_locked_native_store_needs_a_flag() {
     let run = home.run(&["secret", "delete", "A"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
     assert!(
-        run.error()["message"]
+        run.old_error()["message"]
             .as_str()
             .unwrap()
             .ends_with("ncp deleted nothing"),
         "{}",
         run.describe()
     );
-    assert_eq!(run.error()["hint"], "ncp secret delete A --server <SERVER>");
+    assert_eq!(run.hints()[0], "ncp secret delete A --server <SERVER>");
     // Each item in the file is in use, and the native store cannot list.
     let run = home.run(&["secret", "delete", "A", "--unused"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
@@ -697,7 +694,7 @@ fn stored_value_needs_a_literal_origin_and_an_environment_value_does_not() {
     let run = home.run_with_stdin(&["secret", "set", "K", "--credential-store", "file"], "v");
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert!(
-        run.error()["message"]
+        run.old_error()["message"]
             .as_str()
             .unwrap()
             .contains("only to a literal origin"),
@@ -707,7 +704,7 @@ fn stored_value_needs_a_literal_origin_and_an_environment_value_does_not() {
     home.store_in_file("secret/http://127.0.0.1:1/K", "v");
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let message = run.error()["message"].as_str().unwrap().to_string();
+    let message = run.old_error()["message"].as_str().unwrap().to_string();
     assert!(message.contains("only to a literal origin"), "{message}");
     // The message shows the URL as the file writes it.
     assert!(message.contains("${PORT}"), "{message}");
@@ -739,7 +736,7 @@ fn client_secret_is_stored_for_the_origin_of_the_issuer() {
     // A header at the origin of the MCP server cannot read it.
     let run = home.run(&["tool", "list", "x"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["destination"], "https://mcp.acme.example");
+    assert_eq!(run.old_error()["destination"], "https://mcp.acme.example");
 }
 
 #[test]
@@ -787,9 +784,9 @@ fn request_timeout_exits_with_3_and_names_the_option() {
     let run = home.run(&["tool", "call", "fx", "wait", "ms=30000", "--timeout", "1"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
     assert!(run.stdout_is_empty());
-    let error = run.error();
+    let error = run.old_error();
     assert_eq!(error["code"], "protocol");
-    assert!(error["hint"].as_str().unwrap().contains("--timeout"));
+    assert!(common::hints(&error)[0].as_str().contains("--timeout"));
 }
 
 #[test]
@@ -798,7 +795,7 @@ fn server_that_cannot_start_exits_with_3() {
     home.configure(&json!({"fx": {"command": "/nonexistent/ncp-server"}}));
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
-    assert_eq!(run.error()["server"], "fx");
+    assert_eq!(run.old_error()["server"], "fx");
 }
 
 #[test]
@@ -806,7 +803,22 @@ fn usage_error_from_the_parser_is_a_json_error_in_a_pipe() {
     let home = Home::new("parse-error");
     let run = home.run(&["tool", "frob"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["code"], "usage");
+    let error = run.error();
+    assert_eq!(error["code"], "usage");
+    assert_eq!(error["message"], "The command line is not valid");
+    assert_eq!(error["causes"], json!(["unrecognized subcommand 'frob'"]));
+    assert_eq!(
+        error["hints"].as_array().unwrap().last(),
+        Some(&json!({"message": "To see the commands, run `ncp --help`",
+            "command": "ncp --help"}))
+    );
+    let run = home.run(&["servr", "list"]);
+    assert_eq!(
+        run.hints()[0],
+        "Did you mean `secret` or `server`?",
+        "{}",
+        run.describe()
+    );
     let run = home.run(&["--version"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
 }
@@ -829,7 +841,7 @@ async fn http_server_that_needs_a_login_exits_with_4() {
     home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    assert_eq!(run.error()["code"], "auth");
+    assert_eq!(run.old_error()["code"], "auth");
     home.configure(&json!({"web": {"type": "http", "url": fixture.url,
         "headers": {"Authorization": "Bearer t0ken"}}}));
     assert_eq!(home.run(&["tool", "list", "web"]).code(), 0);
@@ -883,7 +895,7 @@ fn unknown_tool_with_no_check_is_a_usage_error() {
     home.configure(&json!({"fx": stdio("modern")}));
     let run = home.run(&["tool", "call", "fx", "nope", "--no-validate"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "ncp tool list fx");
+    assert_eq!(run.hints()[0], "ncp tool list fx");
 }
 
 #[test]
@@ -892,7 +904,7 @@ fn sse_entry_is_a_usage_error_that_names_the_file() {
     home.configure(&json!({"old": {"type": "sse", "url": "https://example.com/sse"}}));
     let run = home.run(&["tool", "list", "old"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let message = run.error()["message"].as_str().unwrap().to_string();
+    let message = run.old_error()["message"].as_str().unwrap().to_string();
     assert!(message.contains("mcp.json"), "{message}");
 }
 
@@ -916,11 +928,22 @@ fn era_cache_that_cannot_be_written_gives_a_warning_only() {
 }
 
 #[test]
-fn no_command_says_missing_command() {
+fn no_command_gives_the_help_command_as_a_hint() {
     let home = Home::new("no-command");
     let run = home.run(&[]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["message"], "missing command");
+    assert_eq!(
+        run.error(),
+        json!({"code": "usage", "exit": 2, "message": "The command line has no command",
+            "data": [], "causes": [],
+            "hints": [{"message": "To see the commands, run `ncp --help`",
+                "command": "ncp --help"}]})
+    );
+    let run = home.run(&["tool"]);
+    assert_eq!(
+        run.error()["message"],
+        "The command `ncp tool` has no subcommand"
+    );
 }
 
 #[test]
@@ -1006,11 +1029,9 @@ fn secret_set_warns_when_another_place_wins() {
         messages[0].contains("the new value is not used"),
         "{messages:?}"
     );
-    assert!(
-        run.stderr()
-            .contains(&json!({"hint": {"message": "ncp secret delete A --server s"}})),
-        "{}",
-        run.describe()
+    assert_eq!(
+        common::hints(&run.old_warnings()[0]),
+        ["ncp secret delete A --server s"]
     );
     let run = home.run_with_stdin(
         &["secret", "set", "SHADOWED", "--credential-store", "file"],
@@ -1038,7 +1059,7 @@ fn secret_commands_work_with_no_native_store_and_no_noise() {
     );
     let run = home.run(&["secret", "delete", "TYPO"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["message"], "TYPO is not stored");
+    assert_eq!(run.old_error()["message"], "TYPO is not stored");
 }
 
 #[test]
@@ -1063,13 +1084,13 @@ fn name_used_only_in_args_is_not_used_and_names_the_rule() {
         "modern",
     );
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "export ARG_ONLY=<value>");
+    assert_eq!(run.hints()[0], "export ARG_ONLY=<value>");
     home.store_in_file("secret/ARG_ONLY", "modern");
     let list = home.run(&["secret", "list"]);
     assert_eq!(list.stdout()["secrets"][0]["used"], false);
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let message = run.error()["message"].as_str().unwrap().to_string();
+    let message = run.old_error()["message"].as_str().unwrap().to_string();
     assert!(message.contains("only in env and headers"), "{message}");
 }
 
@@ -1089,7 +1110,9 @@ fn copy_check_of_a_slow_native_store_stops_at_its_limit_and_leaves_no_program() 
         run.describe()
     );
     assert!(
-        !run.stderr().iter().any(|line| line.get("hint").is_some()),
+        run.old_warnings()
+            .iter()
+            .all(|warning| common::hints(warning).is_empty()),
         "{}",
         run.describe()
     );
@@ -1110,12 +1133,11 @@ async fn loopback_server_through_a_remote_proxy_gives_the_no_proxy_hint() {
     home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
-    let error = run.error();
-    assert_eq!(error["hint"], "export NO_PROXY=localhost,127.0.0.1,::1");
-    let message = error["message"].as_str().unwrap();
+    let hint = run.hints().pop().unwrap_or_default();
     assert!(
-        message.contains("proxy.invalid") && message.contains("HTTP_PROXY"),
-        "{message}"
+        hint.contains("`http://proxy.invalid:3128/` from `HTTP_PROXY`")
+            && hint.contains("run `export NO_PROXY=localhost,127.0.0.1,::1`"),
+        "{hint}"
     );
 }
 
@@ -1183,7 +1205,7 @@ async fn ssl_cert_file_without_the_root_of_the_server_fails_with_a_hint() {
     home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
-    let hint = run.error()["hint"].as_str().unwrap_or_default().to_string();
+    let hint = run.hints()[0].clone();
     assert!(
         hint.contains("SSL_CERT_FILE") && hint.contains("each root"),
         "{}",
@@ -1218,7 +1240,7 @@ fn unreadable_ssl_cert_file_gives_a_local_error_that_names_the_variable() {
     home.configure(&json!({"web": {"type": "http", "url": "https://127.0.0.1:9/mcp"}}));
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
-    let message = run.error()["message"].as_str().unwrap().to_string();
+    let message = run.old_error()["message"].as_str().unwrap().to_string();
     assert!(
         message.contains("SSL_CERT_FILE") && message.contains(&missing),
         "{message}"
@@ -1508,7 +1530,7 @@ async fn login_stops_before_the_browser_when_the_server_names_another_issuer() {
     .await;
     let run = home.run(&LOGIN_TO_FILE);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    let error = run.error();
+    let error = run.old_error();
     let message = error["message"].as_str().unwrap();
     assert!(message.contains("on purpose"), "{message}");
     assert!(message.contains(&auth.issuer()) && message.contains("https://as.example"));
@@ -1516,7 +1538,7 @@ async fn login_stops_before_the_browser_when_the_server_names_another_issuer() {
         message.contains("did not send the client secret"),
         "{message}"
     );
-    let hint = error["hint"].as_str().unwrap();
+    let hint = common::hints(&error)[0].clone();
     assert!(hint.contains("https://as.test/register-a-client"), "{hint}");
     assert!(hint.contains("tell the owner of the server"), "{hint}");
     let record = auth.record();
@@ -1528,7 +1550,7 @@ async fn login_with_no_registration_and_no_client_names_the_registration_page() 
     let (_auth, _fixture, home) = pre_registered("login-no-dcr", |_| json!({})).await;
     let run = home.run(&LOGIN_TO_FILE);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    let hint = run.error()["hint"].as_str().unwrap().to_string();
+    let hint = run.hints()[0].clone();
     assert!(hint.contains("https://as.test/register-a-client"), "{hint}");
     assert!(hint.contains("\"clientSecret\""), "{hint}");
 }
@@ -1542,7 +1564,7 @@ async fn login_with_a_client_secret_and_no_issuer_names_the_issuer_of_the_server
     .await;
     let run = home.run(&LOGIN_TO_FILE);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let hint = run.error()["hint"].as_str().unwrap().to_string();
+    let hint = run.hints()[0].clone();
     assert!(hint.contains(&auth.issuer()), "{hint}");
     assert!(!run.describe().contains("s3cr3t-value"));
     assert_eq!(auth.record().authorize_calls, 0);
@@ -1562,7 +1584,7 @@ async fn refresh_stops_and_keeps_the_tokens_when_the_issuer_changes() {
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
     assert!(
-        run.error()["message"]
+        run.old_error()["message"]
             .as_str()
             .unwrap()
             .contains("did not send the client secret")
@@ -1608,7 +1630,7 @@ async fn login_reports_a_refusal_of_the_authorization_server() {
     let run = home.run(&LOGIN_TO_FILE);
     assert_eq!(run.code(), 4, "{}", run.describe());
     assert!(
-        run.error()["message"]
+        run.old_error()["message"]
             .as_str()
             .unwrap()
             .contains("access_denied"),
@@ -1730,10 +1752,7 @@ async fn tool_list_sends_the_stored_token_after_a_login() {
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
     // The test has no native store, so a login can go only to the file.
-    assert_eq!(
-        run.error()["hint"],
-        "ncp auth login web --credential-store file"
-    );
+    assert_eq!(run.hints()[0], "ncp auth login web --credential-store file");
     assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
@@ -1784,7 +1803,7 @@ async fn stored_token_for_another_server_url_is_not_sent() {
     });
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    let error = run.error();
+    let error = run.old_error();
     let message = error["message"].as_str().unwrap();
     assert!(
         message.contains("did not send the stored token"),
@@ -1792,7 +1811,7 @@ async fn stored_token_for_another_server_url_is_not_sent() {
     );
     // A stored URL can hold an old secret, so it does not show.
     assert!(!message.contains("other.example"), "{message}");
-    assert_eq!(error["hint"], "ncp auth login web");
+    assert_eq!(common::hints(&error)[0], "ncp auth login web");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1806,7 +1825,7 @@ async fn stored_token_with_no_binding_is_not_sent_until_a_new_login() {
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
     assert!(
-        run.error()["message"]
+        run.old_error()["message"]
             .as_str()
             .unwrap()
             .contains("on purpose")
@@ -1828,7 +1847,7 @@ async fn rejected_refresh_asks_for_a_new_login() {
     assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "ncp auth login web");
+    assert_eq!(run.hints()[0], "ncp auth login web");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1868,12 +1887,12 @@ async fn step_up_keeps_the_scopes(name: &str, native: bool) {
     let call = ["tool", "call", "web", "echo", "text=hi"];
     let run = home.run(&call);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    let error = run.error();
+    let error = run.old_error();
     assert!(
         error["message"].as_str().unwrap().contains("scopes b"),
         "{error}"
     );
-    assert_eq!(error["hint"], "ncp auth login web");
+    assert_eq!(common::hints(&error)[0], "ncp auth login web");
     let run = home.run(login);
     assert_eq!(run.code(), 0, "{}", run.describe());
     let scope = auth.record().authorize_scope.unwrap();
@@ -2011,7 +2030,7 @@ async fn request_that_needs_a_login_after_an_open_handshake_uses_the_stored_logi
     let call = ["tool", "call", "web", "echo", "text=hi"];
     let run = home.run(&call);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "ncp auth login web");
+    assert_eq!(run.hints()[0], "ncp auth login web");
     assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
     let run = home.run(&call);
     assert_eq!(run.code(), 0, "{}", run.describe());
@@ -2114,8 +2133,18 @@ async fn native_store_that_cannot_answer_gives_its_reason_and_not_a_login_hint()
     std::fs::write(home.root.join("keychain/fail"), "36").unwrap();
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    let error = run.error();
-    assert_ne!(error["hint"], "ncp auth login web", "{error}");
+    let error = run.old_error();
+    assert!(
+        error["hints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(
+                |hint| hint.get("command") != Some(&json!("ncp auth login web"))
+                    && hint["message"] != "ncp auth login web"
+            ),
+        "{error}"
+    );
     assert!(
         !error["message"].as_str().unwrap().contains("needs a login"),
         "{error}"
@@ -2170,7 +2199,7 @@ async fn login_that_gets_no_redirect_stops_at_the_time_limit() {
     assert_eq!(run.code(), 3, "{}", run.describe());
     assert!(started.elapsed() < std::time::Duration::from_secs(10));
     assert_eq!(
-        run.error()["hint"],
+        run.hints()[0],
         "give a longer limit with --timeout <SECONDS>"
     );
 }
@@ -2181,7 +2210,7 @@ async fn login_to_a_server_that_names_no_authorization_server_is_an_error() {
     let home = oauth_home("login-no-as", &fixture.url);
     let run = home.run(&LOGIN_TO_FILE);
     assert_eq!(run.code(), 3, "{}", run.describe());
-    let message = run.error()["message"].as_str().unwrap().to_string();
+    let message = run.old_error()["message"].as_str().unwrap().to_string();
     assert!(
         message.contains("names no authorization server"),
         "{message}"
@@ -2229,8 +2258,8 @@ async fn refresh_that_cannot_write_the_credential_file_is_a_local_error() {
     let run = home.run(&["tool", "list", "web"]);
     mode(0o700);
     assert_eq!(run.code(), 3, "{}", run.describe());
-    let error = run.error();
-    assert!(error.get("hint").is_none(), "{error}");
+    let error = run.old_error();
+    assert_eq!(error["hints"], json!([]), "{error}");
     assert!(
         !error["message"].as_str().unwrap().contains("local:"),
         "{error}"
@@ -2274,8 +2303,10 @@ fn quiet_hides_warnings_and_hints_but_not_errors() {
     assert!(quiet.stderr().is_empty(), "{}", quiet.describe());
     let failed = home.run(&["-q", "tool", "list", "nothing"]);
     assert_eq!(failed.code(), 2);
-    assert_eq!(failed.error()["code"], "usage");
-    assert_eq!(home.run(&["-q", "-v", "server", "list"]).code(), 2);
+    assert_eq!(failed.old_error()["code"], "usage");
+    let conflict = home.run(&["-q", "-v", "server", "list"]);
+    assert_eq!(conflict.code(), 2);
+    assert_eq!(conflict.hints().len(), 1, "{}", conflict.describe());
 }
 
 #[test]
@@ -2293,11 +2324,12 @@ fn config_file_option_reads_that_file_and_a_missing_one_is_a_usage_error() {
     let missing = home.root.join("missing.json");
     let run = home.run(&["--config-file", missing.to_str().unwrap(), "server", "list"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert!(
-        run.error()["message"]
-            .as_str()
-            .unwrap()
-            .contains("does not exist")
+    assert_eq!(
+        run.error()["message"],
+        format!(
+            "The configuration file `{}` does not exist",
+            missing.display()
+        )
     );
 }
 
@@ -2321,11 +2353,11 @@ fn unknown_names_get_the_nearest_known_name() {
     home.configure(&json!({"fx": stdio("modern")}));
     let run = home.run(&["tool", "list", "fz"]);
     assert_eq!(run.code(), 2);
-    let message = run.error()["message"].as_str().unwrap().to_string();
+    let message = run.old_error()["message"].as_str().unwrap().to_string();
     assert!(message.ends_with("did you mean \"fx\"?"), "{message}");
     let run = home.run(&["tool", "show", "fx", "ech"]);
     assert_eq!(run.code(), 2);
-    let message = run.error()["message"].as_str().unwrap().to_string();
+    let message = run.old_error()["message"].as_str().unwrap().to_string();
     assert!(message.ends_with("did you mean \"echo\"?"), "{message}");
 }
 
@@ -2358,7 +2390,7 @@ fn resource_read_gives_json_in_a_pipe_and_raw_contents_on_request() {
     assert_eq!(run.0.stdout, b"\x89PNG\r\n\x1a\n");
     let run = home.run(&["resource", "read", "fx", "fixture://none"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "ncp resource list fx");
+    assert_eq!(run.hints()[0], "ncp resource list fx");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2396,7 +2428,7 @@ fn prompt_list_and_get_use_the_prompt_arguments() {
     );
     let run = home.run(&["prompt", "get", "fx", "greet"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "ncp prompt list fx");
+    assert_eq!(run.hints()[0], "ncp prompt list fx");
     let run = home.run(&["prompt", "get", "fx", "greet", "name:=1"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
 }
@@ -2407,14 +2439,14 @@ fn server_that_stops_at_its_start_gives_its_exit_status_and_its_log() {
     home.configure(&json!({"fx": {"command": "/bin/sh", "args": ["-c", "echo boom >&2; exit 7"]}}));
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
-    let error = run.error();
+    let error = run.old_error();
     let message = error["message"].as_str().unwrap();
     assert!(
         message.contains("stopped before the handshake") && message.contains('7'),
         "{message}"
     );
     assert!(
-        error["hint"].as_str().unwrap().contains("/bin/sh"),
+        common::hints(&error)[0].as_str().contains("/bin/sh"),
         "{error}"
     );
     let logs = notes(&run, "serverLog");
@@ -2536,7 +2568,12 @@ fn list_with_a_repeated_cursor_stops_with_exit_3() {
     home.configure(&json!({"fx": stdio("repeat-cursor")}));
     let run = home.run(&["prompt", "list", "fx"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
-    assert!(run.error()["message"].as_str().unwrap().contains("cursor"));
+    assert!(
+        run.old_error()["message"]
+            .as_str()
+            .unwrap()
+            .contains("cursor")
+    );
 }
 
 #[test]
@@ -2855,7 +2892,7 @@ fn legacy_question_with_no_tty_gets_invalid_params_and_exit_5() {
     let run = home.run(&["tool", "call", "fx", "elicit-legacy", "text=x"]);
     assert_eq!(run.code(), 5, "{}", run.describe());
     assert!(
-        run.error()["message"]
+        run.old_error()["message"]
             .as_str()
             .unwrap()
             .contains("cannot ask with no terminal")
@@ -3008,7 +3045,7 @@ fn a_request_that_needs_a_page_gives_exit_5_with_the_pages() {
     home.configure(&json!({"fx": stdio("modern")}));
     let run = home.run(&["tool", "call", "fx", "needs-page", "text=x"]);
     assert_eq!(run.code(), 5, "{}", run.describe());
-    let error = run.error();
+    let error = run.old_error();
     assert_eq!(
         error["pages"],
         json!([{"url": "https://login.example.test/start", "message": "Connect your account"}])
@@ -3022,7 +3059,7 @@ fn a_request_that_needs_a_page_gives_exit_5_with_the_pages() {
     // A real TTY echoes the new line of the answer. A pipe does not.
     let last: Value = serde_json::from_str(&stderr[stderr.rfind("{\"error\"").unwrap()..]).unwrap();
     assert_eq!(
-        last["error"]["hint"],
+        common::hints(&last["error"])[0],
         "open the page, then run the command again"
     );
 }
@@ -3033,7 +3070,7 @@ fn a_page_that_is_not_safe_is_refused_and_no_page_is_a_protocol_error() {
     home.configure(&json!({"fx": stdio("modern")}));
     let run = home.run(&["tool", "call", "fx", "needs-page", "text=unsafe"]);
     assert_eq!(run.code(), 5, "{}", run.describe());
-    let error = run.error();
+    let error = run.old_error();
     assert!(error.get("pages").is_none(), "{error}");
     let message = error["message"].as_str().unwrap();
     assert!(
@@ -3080,7 +3117,7 @@ fn http_server_that_redirects_stops_and_sends_no_header_to_the_new_location() {
     );
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
-    let error = run.error();
+    let error = run.old_error();
     let message = error["message"].as_str().unwrap();
     assert!(message.contains("308"), "{message}");
     assert!(
@@ -3088,7 +3125,7 @@ fn http_server_that_redirects_stops_and_sends_no_header_to_the_new_location() {
         "{message}"
     );
     assert!(!run.describe().contains("k1-secret"), "{message}");
-    assert!(error["hint"].as_str().unwrap().contains("new URL"));
+    assert!(common::hints(&error)[0].as_str().contains("new URL"));
     assert_eq!(target_hits.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
 
@@ -3198,7 +3235,7 @@ async fn login_to_an_authorization_server_with_an_unknown_issuer_gives_the_ssl_c
         .set("SSL_CERT_FILE", ncp_testkit::OTHER_CA);
     let run = home.run(&LOGIN_TO_FILE);
     assert_ne!(run.code(), 0, "{}", run.describe());
-    let hint = run.error()["hint"].as_str().unwrap_or_default().to_string();
+    let hint = run.hints()[0].clone();
     assert!(hint.contains("SSL_CERT_FILE"), "{}", run.describe());
 }
 
@@ -3248,6 +3285,38 @@ fn issuer_lookup_of_a_slow_server_keeps_the_usage_error() {
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert!(started.elapsed() < std::time::Duration::from_secs(4));
     drop(silent);
+}
+
+#[test]
+fn each_part_of_an_error_hides_a_value_of_the_server_url() {
+    let refused = "http://127.0.0.1:9/mcp".to_string();
+    let (unauthorized, _server) = raw_server(
+        "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Bearer\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            .to_string(),
+    );
+    for (test, url) in [
+        ("redact-refused", refused),
+        ("redact-discovery", unauthorized),
+    ] {
+        let home = Home::new(test).set("APIKEY", "SECRETKEY123");
+        home.configure(&json!({"web": {"type": "http", "url": format!("{url}?key=${{APIKEY}}")}}));
+        for command in [
+            &["tool", "list", "web"][..],
+            &["auth", "login", "web", "--credential-store", "file"][..],
+        ] {
+            for format in ["json", "text"] {
+                let args: Vec<&str> = ["--output-format", format]
+                    .into_iter()
+                    .chain(command.iter().copied())
+                    .collect();
+                let run = home.run(&args);
+                assert_ne!(run.code(), 0, "{}", run.describe());
+                let stderr = run.stderr_text();
+                assert!(stderr.contains("error"), "{stderr}");
+                assert!(!stderr.contains("SECRETKEY123"), "{stderr}");
+            }
+        }
+    }
 }
 
 #[test]

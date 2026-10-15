@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     diagnostics,
-    outcome::{Exit, Failure},
+    outcome::{Exit, Failure, Hint, chain_text, code},
     project_file::{self, Change, ProjectFile},
     timings::Timings,
     ui::{Ui, Verbosity},
@@ -155,12 +155,18 @@ pub fn load_config(paths: &Paths, env: &Env, search: bool) -> Result<Loaded, Fai
         Err(error) => {
             return Err(Failure::protocol(format!(
                 "cannot read {}: {error}",
-                path.display()
+                path.display(),
+                error = chain_text(&error)
             )));
         }
     };
-    let global = config::parse(&text, env)
-        .map_err(|error| Failure::usage(format!("{}: {error}", path.display())))?;
+    let global = config::parse(&text, env).map_err(|error| {
+        Failure::usage(format!(
+            "{}: {error}",
+            path.display(),
+            error = chain_text(&error)
+        ))
+    })?;
     let loaded = Loaded {
         config: global,
         path: path.clone(),
@@ -179,8 +185,13 @@ fn trusted(loaded: Loaded, env: &Env) -> Result<Loaded, Failure> {
     let ProjectFile::Read(project) = loaded.project else {
         return Ok(loaded);
     };
-    let entries = config::parse(&project.text, env)
-        .map_err(|error| Failure::usage(format!("{}: {error}", project.file.display())))?;
+    let entries = config::parse(&project.text, env).map_err(|error| {
+        Failure::usage(format!(
+            "{}: {error}",
+            project.file.display(),
+            error = chain_text(&error)
+        ))
+    })?;
     Ok(Loaded {
         config: loaded.config.with_project(entries),
         project: ProjectFile::Read(Project {
@@ -370,7 +381,8 @@ pub fn unknown_key(key: &str) -> String {
 fn entry_failure(name: &str, error: &EntryError, path: &Path) -> Failure {
     let failure = Failure::usage(format!(
         "the entry in {} is not valid: {error}",
-        path.display()
+        path.display(),
+        error = chain_text(&error)
     ))
     .server(name);
     match error {
@@ -379,13 +391,11 @@ fn entry_failure(name: &str, error: &EntryError, path: &Path) -> Failure {
         EntryError::Variable {
             error: ExpandError::Unset(variable),
             ..
-        } => Failure {
-            message: format!(
-                "{}; a stored secret can go only in env and headers values",
-                failure.message
-            ),
-            ..failure
-        }
+        } => Failure::usage(format!(
+            "{}; a stored secret can go only in env and headers values",
+            failure.message()
+        ))
+        .server(name)
         .hint(format!("export {variable}=<value>")),
         _ => failure,
     }
@@ -458,10 +468,7 @@ async fn stored_login(
     )
     .await
     .map_err(|failure| {
-        let failure = Failure {
-            message: hide_expanded_url(login.server, failure.message.clone()),
-            ..failure
-        };
+        let failure = failure.map_text(|text| hide_expanded_url(login.server, text));
         with_tls_hint(context.env, &login.notes.get(), failure)
     })
 }
@@ -555,7 +562,7 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
     let ui = context.ui;
     let cache = if context.cache.writes() {
         protocol_version_file::load(&context.paths.version_cache).unwrap_or_else(|error| {
-            ui.warning(None, &error.to_string());
+            ui.warning(None, &chain_text(&error));
             VersionCache::default()
         })
     } else {
@@ -582,7 +589,7 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
             }
             Some(
                 client::http::client(context.env, &observer, &notes)
-                    .map_err(|error| Failure::protocol(error.to_string()).server(name))?,
+                    .map_err(|error| Failure::protocol(chain_text(&error)).server(name))?,
             )
         }
         _ => None,
@@ -610,7 +617,8 @@ impl Prepared {
         server: &Server,
         error: &ConnectError,
     ) -> Failure {
-        let failure = connect_failure(context.env, server, error, &self.notes.get());
+        let failure = connect_failure(context.env, server, error, &self.notes.get())
+            .map_text(|text| hide_expanded_url(server, text));
         if error.needs_authorization() {
             with_secret_hints(failure, server, &self.stored)
         } else {
@@ -651,7 +659,7 @@ impl Prepared {
             .cache
             .record(server.name.clone(), server.target.clone(), version.clone());
         if let Err(error) = protocol_version_file::save(&context.paths.version_cache, &cache) {
-            ui.warning(None, &error.to_string());
+            ui.warning(None, &chain_text(&error));
         }
     }
 }
@@ -692,13 +700,13 @@ fn connect_failure(
     if notes.unknown_issuer {
         let failure = Failure::protocol(format!(
             "{}: {UNKNOWN_ISSUER}",
-            hide_expanded_url(server, error.to_string())
+            hide_expanded_url(server, chain_text(&error))
         ))
         .server(server.name.as_str());
         return with_tls_hint(env, notes, failure);
     }
     let exit = match error {
-        ConnectError::Cancelled => return interrupted().server(server.name.as_str()),
+        ConnectError::Cancelled => return interrupted(Some(server.name.as_str())),
         _ if error.needs_authorization() => Exit::Auth,
         _ => Exit::Protocol,
     };
@@ -706,7 +714,7 @@ fn connect_failure(
         _ if error.needs_authorization() => "the server needs a login or more scopes".to_string(),
         ConnectError::Handshake { phase, source } => match source.as_ref() {
             ClientInitializeError::TransportError { error, .. } => {
-                format!("{phase} failed: {}", causes(error.error.as_ref()))
+                format!("{phase} failed: {}", chain_text(error.error.as_ref()))
             }
             other => format!("{phase} failed: {other}"),
         },
@@ -742,7 +750,7 @@ fn connect_failure(
 // with no `/mcp`. rmcp keeps only the text of the status, as `HTTP 404`.
 // Thus the check reads the text of the pinned version.
 fn is_not_found(error: &ConnectError) -> bool {
-    matches!(error, ConnectError::Handshake { .. }) && error.to_string().contains("HTTP 404")
+    matches!(error, ConnectError::Handshake { .. }) && chain_text(&error).contains("HTTP 404")
 }
 
 /// The text for a certificate of an unknown issuer. rmcp keeps no cause of
@@ -763,20 +771,25 @@ pub fn with_tls_hint(env: &Env, notes: &client::http::Notes, failure: Failure) -
 
 // A request to a loopback host through a proxy on another host cannot
 // reach the server, because no exception for loopback exists (design C5).
-// The failure then names the route and the fix.
+// The hint then names the route and the fix.
 fn through_proxy(env: &Env, url: &crate::server::ServerUrl, failure: Failure) -> Failure {
     let Ok(target) = url::Url::parse(url.as_str()) else {
         return failure;
     };
     let route = crate::proxy::route(env, &target);
-    if route.sends_loopback_away(&target) {
-        Failure {
-            message: format!("{}; the request went through the {route}", failure.message),
-            ..failure
+    match &route {
+        crate::proxy::Route::Proxy { url, source } if route.sends_loopback_away(&target) => {
+            let source = match source {
+                crate::proxy::Source::Variable(name) => code(name),
+                crate::proxy::Source::SystemSettings => "the system settings".to_string(),
+            };
+            failure.hint(format!(
+                "ncp sent the request to the proxy {} from {source}. To send requests to a \
+                 loopback host directly, run `export NO_PROXY=localhost,127.0.0.1,::1`.",
+                code(url)
+            ))
         }
-        .hint("export NO_PROXY=localhost,127.0.0.1,::1")
-    } else {
-        failure
+        _ => failure,
     }
 }
 
@@ -833,20 +846,6 @@ pub(super) fn hide_expanded_url(server: &Server, message: String) -> String {
     }
 }
 
-// The error and its causes, with no repeated text. Transport errors wrap
-// each other, and the outer text often holds the inner text.
-fn causes(error: &(dyn std::error::Error + 'static)) -> String {
-    std::iter::successors(Some(error), |error| error.source())
-        .map(ToString::to_string)
-        .fold(Vec::<String>::new(), |mut parts, text| {
-            if parts.last().is_none_or(|last| !last.contains(&text)) {
-                parts.push(text);
-            }
-            parts
-        })
-        .join(": ")
-}
-
 // The hints of a `401` or `403` after a request with a stored header
 // value. A new value comes first: after the user changes the key at one
 // origin, the key at another origin can be old (B51).
@@ -855,12 +854,12 @@ fn with_secret_hints(failure: Failure, server: &Server, stored: &[SecretName]) -
         return failure;
     }
     let word = super::render::shell_word(server.name.as_str());
-    let hints = stored
+    let hints: Vec<Hint> = stored
         .iter()
-        .map(|name| format!("ncp secret set {name} --server {word}"))
-        .chain(failure.hints.iter().cloned())
+        .map(|name| Hint::text(format!("ncp secret set {name} --server {word}")))
+        .chain(failure.hints().iter().cloned())
         .collect();
-    Failure { hints, ..failure }
+    failure.with_hints(hints)
 }
 
 fn login_hint(server: &Server) -> String {
@@ -872,8 +871,18 @@ fn login_hint(server: &Server) -> String {
 
 /// Ctrl-C. `ncp` sent the cancel request or stopped the server first.
 #[must_use]
-pub fn interrupted() -> Failure {
-    Failure::new(Exit::Interrupted, "interrupted")
+pub fn interrupted(server: Option<&str>) -> Failure {
+    match server {
+        Some(server) => Failure::new(
+            Exit::Interrupted,
+            format!(
+                "ncp stopped the work with the server {} because of an interrupt",
+                code(server)
+            ),
+        )
+        .about(server),
+        None => Failure::new(Exit::Interrupted, "ncp stopped because of an interrupt"),
+    }
 }
 
 // The store can fail at the save of a refresh. A read after the refresh
@@ -929,10 +938,9 @@ fn page_failure(method: &str, data: &rmcp::ErrorData) -> Option<Failure> {
     Some(if pages.is_empty() {
         failure
     } else {
-        Failure {
-            pages,
-            ..failure.hint("open the page, then run the command again")
-        }
+        failure
+            .hint("open the page, then run the command again")
+            .with_pages(pages)
     })
 }
 
@@ -941,9 +949,11 @@ pub fn request_failure(server: &Server, method: &str, error: &RequestError) -> F
         return token_store_failure(server, &text);
     }
     let failure = match error {
-        RequestError::Cancelled => interrupted(),
-        RequestError::Timeout(_) => Failure::protocol(format!("{method}: {error}"))
-            .hint("give a longer limit with --timeout <SECONDS>"),
+        RequestError::Cancelled => interrupted(Some(server.name.as_str())),
+        RequestError::Timeout(_) => {
+            Failure::protocol(format!("{method}: {error}", error = chain_text(&error)))
+                .hint("give a longer limit with --timeout <SECONDS>")
+        }
         _ if error.needs_authorization() => {
             let need = match error.required_scopes() {
                 Some(scopes) if !scopes.is_empty() => {
@@ -951,10 +961,9 @@ pub fn request_failure(server: &Server, method: &str, error: &RequestError) -> F
                 }
                 _ => "the server needs a login or more scopes".to_string(),
             };
-            Failure {
-                login_challenge: error.login_challenge(),
-                ..Failure::new(Exit::Auth, format!("{method}: {need}")).hint(login_hint(server))
-            }
+            Failure::new(Exit::Auth, format!("{method}: {need}"))
+                .hint(login_hint(server))
+                .with_login_challenge(error.login_challenge())
         }
         RequestError::Service(rmcp::ServiceError::McpError(data))
             if data.code.0 == crate::elicit::URL_REQUIRED =>
@@ -963,15 +972,15 @@ pub fn request_failure(server: &Server, method: &str, error: &RequestError) -> F
         }
         RequestError::Service(rmcp::ServiceError::McpError(data)) => server_error(method, data),
         RequestError::Service(rmcp::ServiceError::TransportSend(error)) => {
-            Failure::protocol(format!("{method}: {}", causes(error.error.as_ref())))
+            Failure::protocol(format!("{method}: {}", chain_text(error.error.as_ref())))
         }
-        _ => Failure::protocol(format!("{method}: {error}")),
+        _ => Failure::protocol(format!("{method}: {error}", error = chain_text(&error))),
     };
-    let failure = failure.server(server.name.as_str());
-    Failure {
-        message: hide_expanded_url(server, failure.message.clone()),
-        ..failure
-    }
+    let failure = match failure.server_name() {
+        Some(_) => failure,
+        None => failure.server(server.name.as_str()),
+    };
+    failure.map_text(|text| hide_expanded_url(server, text))
 }
 
 #[cfg(test)]
@@ -992,11 +1001,11 @@ mod tests {
         };
         let set = env(&[("SSL_CERT_FILE", "/roots.pem")]);
         let failure = || Failure::protocol("x");
-        assert_eq!(with_tls_hint(&set, &noted, failure()).hints.len(), 1);
-        assert!(with_tls_hint(&env(&[]), &noted, failure()).hints.is_empty());
+        assert_eq!(with_tls_hint(&set, &noted, failure()).hints().len(), 1);
+        assert_eq!(with_tls_hint(&env(&[]), &noted, failure()).hints(), []);
         assert_eq!(
             with_tls_hint(&set, &client::http::Notes::default(), failure())
-                .hints
+                .hints()
                 .len(),
             0
         );
@@ -1022,10 +1031,10 @@ mod tests {
             },
             Path::new("/c/mcp.json"),
         );
-        assert_eq!(failure.exit, Exit::Usage);
-        assert!(failure.message.contains("/c/mcp.json"), "{failure:?}");
+        assert_eq!(failure.exit(), Exit::Usage);
+        assert!(failure.message().contains("/c/mcp.json"), "{failure:?}");
         assert_eq!(
-            failure.hints.first().map(String::as_str),
+            failure.hints().first().map(Hint::message),
             Some("export TOKEN=<value>")
         );
     }
@@ -1052,9 +1061,9 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(failure.message.contains("does not exist"), "{failure:?}");
+        assert!(failure.message().contains("does not exist"), "{failure:?}");
         assert_eq!(
-            failure.hints.first().map(String::as_str),
+            failure.hints().first().map(Hint::message),
             Some("ncp server list")
         );
     }

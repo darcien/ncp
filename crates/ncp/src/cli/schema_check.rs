@@ -3,6 +3,7 @@
 //! The check runs with no network and no file access. Thus a `$ref` to
 //! another document does not resolve, and the schema is not usable.
 
+use super::outcome::chain_text;
 use rmcp::model::JsonObject;
 use serde_json::Value;
 
@@ -27,14 +28,14 @@ pub enum Outcome {
 pub fn check(schema: &JsonObject, arguments: &JsonObject) -> Outcome {
     let validator = match jsonschema::validator_for(&Value::Object(schema.clone())) {
         Ok(validator) => validator,
-        Err(error) => return Outcome::SchemaNotUsable(error.to_string()),
+        Err(error) => return Outcome::SchemaNotUsable(chain_text(&error)),
     };
     let instance = Value::Object(arguments.clone());
     let problems: Vec<Problem> = validator
         .iter_errors(&instance)
         .map(|error| Problem {
             path: error.instance_path().to_string(),
-            message: error.to_string(),
+            message: chain_text(&error),
         })
         .collect();
     if problems.is_empty() {

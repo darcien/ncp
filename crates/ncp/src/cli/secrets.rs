@@ -21,7 +21,7 @@ use serde_json::json;
 use super::{
     args::{CredentialPlace, SecretCommand},
     ask,
-    outcome::{Exit, Failure},
+    outcome::{Exit, Failure, Warning, chain_text},
     project_file::ProjectFile,
     render,
     session::{self, Context},
@@ -101,7 +101,7 @@ pub(super) async fn call<T: Send + 'static>(
 }
 
 pub(super) fn secret_name(name: &str) -> Result<SecretName, Failure> {
-    SecretName::parse(name).map_err(|error| Failure::usage(error.to_string()))
+    SecretName::parse(name).map_err(|error| Failure::usage(chain_text(&error)))
 }
 
 /// The values of an entry, and the names whose values came from a store.
@@ -115,7 +115,7 @@ pub(super) async fn resolve(context: &Context<'_>, server: &Server) -> Result<Re
     let (values, stored) = values_of(context, server, server.value_names(), destination).await?;
     let values = server
         .expand_values(&values)
-        .map_err(|error| Failure::usage(error.to_string()).server(server.name.as_str()))?;
+        .map_err(|error| Failure::usage(chain_text(&error)).server(server.name.as_str()))?;
     Ok(Resolved { values, stored })
 }
 
@@ -140,7 +140,7 @@ pub(super) async fn client_secret(
                 field: "oauth.clientSecret".into(),
                 error,
             };
-            Failure::usage(error.to_string()).server(server.name.as_str())
+            Failure::usage(chain_text(&error)).server(server.name.as_str())
         })
 }
 
@@ -194,7 +194,8 @@ async fn values_of(
 fn not_literal(names: &[&str], error: &OriginError) -> Failure {
     Failure::usage(format!(
         "{} is not set, and ncp sends a stored value only to a literal origin: {error}",
-        names.join(", ")
+        names.join(", "),
+        error = chain_text(&error)
     ))
 }
 
@@ -253,7 +254,7 @@ async fn find(
         }
     }
     if let Err(StoreError::Interrupted) = native {
-        return Err(session::interrupted());
+        return Err(session::interrupted(None));
     }
     let wanted = key.clone();
     if let Some(secret) = call(context, file, move |store| store.load(&wanted))
@@ -295,12 +296,13 @@ fn miss(
         Some(error) => Failure::new(
             Exit::Auth,
             format!(
-                "{name} is not set, and the native store gave no value for {destination}: {error}"
+                "{name} is not set, and the native store gave no value for {destination}: {error}",
+                error = chain_text(&error)
             ),
         )
         .hint(format!("{set} --credential-store file")),
     };
-    failure.destination(destination.clone())
+    failure.with_destination(destination.clone())
 }
 
 // The error again, for a second use. A store error holds no secret.
@@ -319,7 +321,7 @@ fn clone_error(error: &StoreError) -> StoreError {
 /// local error (exit 3).
 pub(super) fn store_failure(error: &StoreError) -> Failure {
     let exit = match error {
-        StoreError::Interrupted => return session::interrupted(),
+        StoreError::Interrupted => return session::interrupted(None),
         StoreError::Io { .. } | StoreError::OpenPermissions(_) | StoreError::Corrupt(_) => {
             Exit::Protocol
         }
@@ -328,7 +330,7 @@ pub(super) fn store_failure(error: &StoreError) -> Failure {
         | StoreError::Failure(_)
         | StoreError::NoAnswer(_) => Exit::Auth,
     };
-    Failure::new(exit, error.to_string())
+    Failure::new(exit, chain_text(&error))
 }
 
 pub(super) async fn command(context: &Context<'_>, command: SecretCommand) -> Result<(), Failure> {
@@ -415,7 +417,7 @@ fn set_target<'a>(
         TargetError::NotLiteral { server, error } => Failure::usage(format!(
             "server {} names ${{{name}}}, and ncp sends a stored value only to a literal origin: {error}",
             server.name.as_str()
-        )),
+        , error = chain_text(&error))),
         TargetError::Several(targets) => {
             let list: Vec<String> = targets
                 .iter()
@@ -582,7 +584,11 @@ async fn warn_about_copies(
             // `ncp` knows no copy, so no command can fix it.
             context.ui.warning(
                 None,
-                &format!("ncp cannot check {} for a copy: {error}", place_text(other)),
+                &format!(
+                    "ncp cannot check {} for a copy: {error}",
+                    place_text(other),
+                    error = chain_text(&error)
+                ),
             );
             return;
         }
@@ -593,16 +599,12 @@ async fn warn_about_copies(
             "the native store also has {name} for {destination}, and ncp reads it first: the new value is not used"
         ),
     };
-    context.ui.warning(None, &message);
     // The command removes the copies of this destination. Then the user
     // stores the value again in one place.
-    context.ui.hint(
-        None,
-        &format!(
-            "ncp secret delete {name} --server {}",
-            render::shell_word(server.name.as_str())
-        ),
-    );
+    context.ui.warn(&Warning::new(message).hint(format!(
+        "ncp secret delete {name} --server {}",
+        render::shell_word(server.name.as_str())
+    )));
 }
 
 enum Unread {
@@ -633,14 +635,15 @@ async fn read_value(
         read_piped(context).await
     };
     let text = text.map_err(|unread| match unread {
-        Unread::Interrupted => session::interrupted(),
+        Unread::Interrupted => session::interrupted(None),
         Unread::TimedOut => Failure::protocol(format!(
             "no value of {name} came in {} s",
             context.request_limit.as_secs()
         ))
         .hint("give a longer limit with --timeout <SECONDS>"),
         Unread::Failed(error) => Failure::usage(format!(
-            "cannot read the value of {name} from stdin: {error}"
+            "cannot read the value of {name} from stdin: {error}",
+            error = chain_text(&error)
         )),
     })?;
     let line = text.strip_suffix('\n').unwrap_or(&text);
@@ -786,7 +789,11 @@ fn warn_unlisted(context: &Context<'_>, failed: &[(CredentialPlace, StoreError)]
     for (place, error) in failed {
         context.ui.warning(
             None,
-            &format!("ncp cannot list {}: {error}", place_text(*place)),
+            &format!(
+                "ncp cannot list {}: {error}",
+                place_text(*place),
+                error = chain_text(&error)
+            ),
         );
     }
 }
@@ -812,11 +819,11 @@ fn items_by_place(
 async fn stored_items(context: &Context<'_>, native: &Opened) -> Result<Stored, Failure> {
     let (native_keys, native_failed) = secrets_in(context, native).await;
     if context.cancel.is_cancelled() {
-        return Err(session::interrupted());
+        return Err(session::interrupted(None));
     }
     let (file_keys, file_failed) = secrets_in(context, &Ok(file(context))).await;
     if context.cancel.is_cancelled() {
-        return Err(session::interrupted());
+        return Err(session::interrupted(None));
     }
     let failed = [
         native_failed.map(|error| (CredentialPlace::Native, error)),
@@ -895,7 +902,7 @@ pub(super) async fn store_for_add(
     place: CredentialPlace,
 ) -> Result<(), Failure> {
     let destination =
-        binding::value_destination(server).map_err(|error| Failure::usage(error.to_string()))?;
+        binding::value_destination(server).map_err(|error| Failure::usage(chain_text(&error)))?;
     let key = CredentialKey::Secret {
         destination: destination.clone(),
         name: name.clone(),
@@ -920,7 +927,7 @@ pub(super) async fn store_for_add(
         match call(context, &store, move |store| store.load(&wanted)).await {
             Ok(Some(value)) => stored.push((other, value)),
             Ok(None) => {}
-            Err(StoreError::Interrupted) => return Err(session::interrupted()),
+            Err(StoreError::Interrupted) => return Err(session::interrupted(None)),
             Err(error) => return Err(store_failure(&error)),
         }
     }
@@ -978,7 +985,7 @@ pub(super) async fn rows_of_entry(
             stored.items
         }
         Err(failure) => {
-            context.ui.warning(None, &failure.message);
+            context.ui.warn(&Warning::from(failure));
             BTreeMap::new()
         }
     };
@@ -1004,10 +1011,9 @@ async fn list(context: &Context<'_>) -> Result<(), Failure> {
     let loaded = match session::load(context, None).await {
         Ok(loaded) => Some(loaded),
         Err(failure) => {
-            context.ui.warning(
-                None,
-                &format!("{}; no secret shows as used", failure.message),
-            );
+            context.ui.warn(&Warning::from(
+                failure.context("ncp cannot read the configuration. No secret shows as used."),
+            ));
             None
         }
     };
@@ -1141,18 +1147,12 @@ async fn chosen(
         unlisted,
     };
     match (pick, failed.first()) {
-        (Pick::One, Some((place, error))) => {
-            let failure = store_failure(error);
-            Err(Failure {
-                message: format!(
-                    "ncp cannot list {}: {}; ncp deleted nothing",
-                    place_text(*place),
-                    failure.message
-                ),
-                ..failure
-            }
-            .hint(format!("ncp secret delete {name} --server <SERVER>")))
-        }
+        (Pick::One, Some((place, error))) => Err(store_failure(error)
+            .context(format!(
+                "ncp cannot list {}; ncp deleted nothing",
+                place_text(*place)
+            ))
+            .hint(format!("ncp secret delete {name} --server <SERVER>"))),
         (Pick::All | Pick::Unused { .. }, Some((_, error))) if stored.is_empty() => {
             Err(store_failure(error))
         }
@@ -1204,11 +1204,16 @@ async fn strict_config(
 ) -> Result<session::Loaded, Failure> {
     let unknown =
         |reason: String| Failure::usage(format!("{reason}; ncp cannot know which items it uses"));
-    let loaded = session::load(context, None)
-        .await
-        .map_err(|failure| Failure::usage(failure.message))?;
+    let loaded = session::load(context, None).await.map_err(|failure| {
+        failure
+            .context("ncp cannot know which items the configuration uses")
+            .with_exit(Exit::Usage)
+    })?;
     if let Some((server, error)) = loaded.config.invalid().next() {
-        return Err(unknown(format!("server {server}: {error}")));
+        return Err(unknown(format!(
+            "server {server}: {error}",
+            error = chain_text(&error)
+        )));
     }
     let waiting = match &loaded.project {
         ProjectFile::Unusable { file, reason } => {
@@ -1227,7 +1232,11 @@ async fn strict_config(
         })
     });
     if let Some((server, error)) = invalid {
-        return Err(unknown(format!("server {server}: {error}")).hint("ncp trust"));
+        return Err(unknown(format!(
+            "server {server}: {error}",
+            error = chain_text(&error)
+        ))
+        .hint("ncp trust"));
     }
     if let Some(reason) = untrusted_use(&loaded, name, None) {
         return Err(unknown(reason).hint("ncp trust"));
@@ -1303,11 +1312,15 @@ async fn delete(context: &Context<'_>, name: &str, removal: Removal) -> Result<(
             match result {
                 Ok(true) => places.push(*place),
                 Ok(false) => {}
-                Err(StoreError::Interrupted) => return Err(session::interrupted()),
+                Err(StoreError::Interrupted) => return Err(session::interrupted(None)),
                 Err(error) => {
                     context.ui.warning(
                         None,
-                        &format!("ncp cannot change {}: {error}", place_text(*place)),
+                        &format!(
+                            "ncp cannot change {}: {error}",
+                            place_text(*place),
+                            error = chain_text(&error)
+                        ),
                     );
                     if store_is_down(&error) {
                         *slot = None;
@@ -1434,11 +1447,11 @@ mod tests {
     #[test]
     fn store_errors_map_to_auth_or_local_exit_codes() {
         assert_eq!(
-            store_failure(&StoreError::NoAnswer(std::time::Duration::from_secs(60))).exit,
+            store_failure(&StoreError::NoAnswer(std::time::Duration::from_secs(60))).exit(),
             Exit::Auth
         );
         assert_eq!(
-            store_failure(&StoreError::Corrupt("/x".into())).exit,
+            store_failure(&StoreError::Corrupt("/x".into())).exit(),
             Exit::Protocol
         );
     }

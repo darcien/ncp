@@ -20,3 +20,5 @@ pub mod proxy;
 pub mod redact;
 pub mod server;
 pub mod store;
+#[cfg(test)]
+mod style;

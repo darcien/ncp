@@ -31,7 +31,7 @@ use tokio_util::sync::CancellationToken;
 
 use self::{
     args::{Cli, Command, OutputFormat},
-    outcome::{Exit, Failure},
+    outcome::{Exit, Failure, Hint, code},
     session::Context,
     timings::Timings,
     ui::{Format, Ui, Verbosity},
@@ -107,9 +107,9 @@ pub fn main_with(platform: Platform) -> ExitCode {
     let runtime = match runtime() {
         Ok(runtime) => runtime,
         Err(error) => {
-            let failure = Failure::protocol(format!("cannot start the async runtime: {error}"));
+            let failure = Failure::protocol("ncp cannot start the async runtime").caused_by(&error);
             ui.error(&failure);
-            return failure.exit.into();
+            return failure.exit().into();
         }
     };
     let exit = runtime.block_on(run(cli, &env, ui, timings.clone(), platform));
@@ -154,7 +154,8 @@ async fn run(
     platform: Platform,
 ) -> Exit {
     let result = async {
-        let paths = Paths::from_env(env).map_err(|error| Failure::protocol(error.to_string()))?;
+        let paths = Paths::from_env(env)
+            .map_err(|error| Failure::protocol("ncp cannot find its files").caused_by(&error))?;
         let paths = match &cli.options.config_file {
             Some(path) => Paths {
                 config_file: named_config_file(path)?,
@@ -196,7 +197,7 @@ async fn run(
         Ok(()) => Exit::Success,
         Err(failure) => {
             ui.error(&failure);
-            failure.exit
+            failure.exit()
         }
     }
 }
@@ -205,14 +206,19 @@ async fn run(
 // file, it must exist: a typing error in the path must not look like an
 // empty configuration.
 fn named_config_file(path: &std::path::Path) -> Result<std::path::PathBuf, Failure> {
-    let path = std::path::absolute(path)
-        .map_err(|error| Failure::usage(format!("{}: {error}", path.display())))?;
+    let path = std::path::absolute(path).map_err(|error| {
+        Failure::usage(format!(
+            "ncp cannot make the path {} absolute",
+            code(&path.display().to_string())
+        ))
+        .caused_by(&error)
+    })?;
     if path.is_file() {
         Ok(path)
     } else {
         Err(Failure::usage(format!(
-            "the configuration file {} does not exist",
-            path.display()
+            "The configuration file {} does not exist",
+            code(&path.display().to_string())
         )))
     }
 }
@@ -250,21 +256,161 @@ fn parse_failure(ui: Ui, error: &clap::Error) -> ExitCode {
             }
         }
         (_, Format::Json) => {
-            let message = match error.kind() {
-                // clap gives the help text as the error for these kinds.
-                ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
-                | ErrorKind::MissingSubcommand => "missing command".to_string(),
-                _ => error
-                    .to_string()
-                    .lines()
-                    .next()
-                    .unwrap_or_default()
-                    .trim_start_matches("error: ")
-                    .to_string(),
-            };
-            let failure = Failure::usage(message).hint("ncp --help");
+            let words: Vec<String> = std::env::args().skip(1).collect();
+            let failure = usage_failure(error, &subcommands(&words));
             ui.error(&failure);
-            failure.exit.into()
+            failure.exit().into()
         }
+    }
+}
+
+// The JSON error of a parse error. The text of clap is foreign text, so it
+// is a cause (design rule 25).
+fn usage_failure(error: &clap::Error, command: &[String]) -> Failure {
+    let help = Hint::run("see the commands", "ncp --help");
+    match error.kind() {
+        // clap gives the help text as the error for these kinds.
+        ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand | ErrorKind::MissingSubcommand => {
+            let message = if command.is_empty() {
+                "The command line has no command".to_string()
+            } else {
+                format!(
+                    "The command {} has no subcommand",
+                    code(&format!("ncp {}", command.join(" ")))
+                )
+            };
+            Failure::usage(message).hint(help)
+        }
+        _ => {
+            let failure = Failure::usage("The command line is not valid").cause(clap_cause(error));
+            match suggestion(error) {
+                Some(names) => failure.hint(format!("Did you mean {names}?")).hint(help),
+                None => failure.hint(help),
+            }
+        }
+    }
+}
+
+// The lines of clap up to `Usage:`, with no empty line and no `tip:` line.
+fn clap_cause(error: &clap::Error) -> String {
+    error
+        .to_string()
+        .lines()
+        .take_while(|line| !line.starts_with("Usage:"))
+        .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with("tip:"))
+        .map(|line| line.strip_prefix("error: ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+// The names that clap suggests for a word with a typing error.
+fn suggestion(error: &clap::Error) -> Option<String> {
+    use clap::error::{ContextKind, ContextValue};
+    let names = [ContextKind::SuggestedSubcommand, ContextKind::SuggestedArg]
+        .into_iter()
+        .find_map(|kind| match error.get(kind)? {
+            ContextValue::String(name) => Some(vec![name.clone()]),
+            ContextValue::Strings(names) => Some(names.clone()),
+            _ => None,
+        })?;
+    let names: Vec<String> = names.iter().map(|name| code(name)).collect();
+    match names.split_last()? {
+        (last, []) => Some(last.clone()),
+        (last, rest) => Some(format!("{} or {last}", rest.join(", "))),
+    }
+}
+
+// The subcommands in the words of the command line, for example `tool`
+// in `ncp --timeout 5 tool`.
+fn subcommands(words: &[String]) -> Vec<String> {
+    use clap::CommandFactory as _;
+    words
+        .iter()
+        .scan(Cli::command(), |command, word| {
+            let next = command.find_subcommand(word).cloned();
+            Some(next.map(|next| {
+                *command = next;
+                word.clone()
+            }))
+        })
+        .flatten()
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn failure_of(words: &[&str]) -> Failure {
+        let words: Vec<String> = words.iter().map(ToString::to_string).collect();
+        let error = Cli::try_parse_from(std::iter::once("ncp".to_string()).chain(words.clone()))
+            .expect_err("a parse error");
+        usage_failure(&error, &subcommands(&words))
+    }
+
+    fn hint_messages(failure: &Failure) -> Vec<&str> {
+        failure.hints().iter().map(Hint::message).collect()
+    }
+
+    #[test]
+    fn no_command_gives_the_help_hint_as_a_command() {
+        let failure = failure_of(&[]);
+        assert_eq!(failure.message(), "The command line has no command");
+        assert_eq!(failure.hints()[0].command(), Some("ncp --help"));
+    }
+
+    #[test]
+    fn a_command_with_no_subcommand_names_the_command() {
+        let failure = failure_of(&["--timeout", "5", "tool"]);
+        assert_eq!(
+            failure.message(),
+            "The command `ncp tool` has no subcommand"
+        );
+    }
+
+    #[test]
+    fn a_missing_argument_gives_the_lines_of_clap_as_one_cause() {
+        let failure = failure_of(&["tool", "list"]);
+        assert_eq!(failure.message(), "The command line is not valid");
+        assert_eq!(
+            failure.diagnostic().causes(),
+            ["the following required arguments were not provided:\n  <SERVER>"]
+        );
+        assert_eq!(
+            hint_messages(&failure),
+            ["To see the commands, run `ncp --help`"]
+        );
+    }
+
+    #[test]
+    fn a_typing_error_gives_the_names_that_clap_suggests() {
+        let failure = failure_of(&["server", "lst"]);
+        assert_eq!(
+            failure.diagnostic().causes(),
+            ["unrecognized subcommand 'lst'"]
+        );
+        assert_eq!(
+            hint_messages(&failure),
+            [
+                "Did you mean `list`?",
+                "To see the commands, run `ncp --help`"
+            ]
+        );
+        let failure = failure_of(&["servr", "list"]);
+        assert_eq!(
+            hint_messages(&failure)[0],
+            "Did you mean `secret` or `server`?"
+        );
+        let failure = failure_of(&["server", "list", "--verbos"]);
+        assert_eq!(hint_messages(&failure)[0], "Did you mean `--verbose`?");
+    }
+
+    #[test]
+    fn the_tip_of_clap_does_not_go_into_the_cause() {
+        let failure = failure_of(&["tool", "list", "fx", "--bogus"]);
+        assert_eq!(
+            failure.diagnostic().causes(),
+            ["unexpected argument '--bogus' found"]
+        );
     }
 }

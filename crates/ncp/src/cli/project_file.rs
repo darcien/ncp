@@ -2,6 +2,7 @@
 //! the owner check, and the trust records. The rules are in
 //! `crate::project` and in docs/design/project-config.md.
 
+use super::outcome::chain_text;
 use std::{
     fs::OpenOptions,
     io::{ErrorKind, Read as _},
@@ -68,7 +69,7 @@ pub fn find(paths: &Paths, env: &Env, search: bool) -> ProjectFile {
             let read = read_owned(&file).and_then(|text| {
                 config::unexpanded_entries(&text)
                     .map(|entries| (entries, text))
-                    .map_err(|error| error.to_string())
+                    .map_err(|error| chain_text(&error))
             });
             match read {
                 Ok((entries, text)) => {
@@ -97,8 +98,8 @@ fn read_owned(file: &Path) -> Result<String, String> {
         .read(true)
         .custom_flags(OFlag::O_NONBLOCK.bits())
         .open(file)
-        .map_err(|error| error.to_string())?;
-    let metadata = handle.metadata().map_err(|error| error.to_string())?;
+        .map_err(|error| chain_text(&error))?;
+    let metadata = handle.metadata().map_err(|error| chain_text(&error))?;
     if !metadata.is_file() {
         return Err("it is not a regular file".into());
     }
@@ -109,7 +110,7 @@ fn read_owned(file: &Path) -> Result<String, String> {
     handle
         .take(project::MAX_BYTES + 1)
         .read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| chain_text(&error))?;
     if bytes.len() as u64 > project::MAX_BYTES {
         return Err("it is larger than 1 MiB".into());
     }
@@ -172,7 +173,10 @@ pub fn trust_written(paths: &Paths, file: &Path, text: &str) -> Result<(), Failu
 }
 
 fn record_failure(error: &std::io::Error) -> Failure {
-    Failure::protocol(format!("cannot write the trust record: {error}"))
+    Failure::protocol(format!(
+        "cannot write the trust record: {error}",
+        error = chain_text(&error)
+    ))
 }
 
 fn remove(path: &Path) -> std::io::Result<()> {

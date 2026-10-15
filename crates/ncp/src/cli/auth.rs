@@ -18,7 +18,7 @@ use tokio::{
 use super::{
     args::{AuthCommand, CredentialPlace},
     diagnostics,
-    outcome::{Exit, Failure},
+    outcome::{Exit, Failure, Warning, chain_text},
     secrets,
     session::{self, Context},
 };
@@ -112,10 +112,7 @@ fn login_failure(
     failure: Failure,
 ) -> Failure {
     let failure = match loaded.config.server(word).ok() {
-        Some(server) => Failure {
-            message: session::hide_expanded_url(server, failure.message.clone()),
-            ..failure
-        },
+        Some(server) => failure.map_text(|text| session::hide_expanded_url(server, text)),
         None => failure,
     };
     session::with_tls_hint(context.env, &notes.get(), failure)
@@ -131,7 +128,7 @@ pub(super) async fn limited<T>(
 ) -> Result<T, Failure> {
     tokio::select! {
         result = work => result,
-        () = context.cancel.cancelled() => Err(session::interrupted()),
+        () = context.cancel.cancelled() => Err(session::interrupted(None)),
         () = tokio::time::sleep(limit) => Err(timeout),
     }
 }
@@ -156,7 +153,7 @@ fn auth_failure(step: &str, error: &AuthError) -> Failure {
         | AuthError::AuthorizationServerMissingIssuer { .. } => Exit::Auth,
         _ => Exit::Protocol,
     };
-    Failure::new(exit, format!("{step}: {error}"))
+    Failure::new(exit, format!("{step}: {error}", error = chain_text(&error)))
 }
 
 // rmcp falls back to endpoints that it makes from the server URL. `ncp`
@@ -247,7 +244,7 @@ async fn login(
         session::shown_url(server),
     );
     let http = OAuthHttp::new(context.env, &observer, notes)
-        .map_err(|error| Failure::protocol(error.to_string()).server(name))?;
+        .map_err(|error| Failure::protocol(chain_text(&error)).server(name))?;
     let mut manager = AuthorizationManager::new_with_oauth_http_client(
         remote.url.without_query(),
         Arc::new(http),
@@ -306,9 +303,10 @@ async fn login(
     let read_stdin = no_browser || std::io::stdin().is_terminal();
     show_url(context, name, &url, read_stdin);
     if !no_browser && let Err(error) = (context.open_browser)(&url) {
-        context
-            .ui
-            .warning(Some(name), &format!("cannot open a browser: {error}"));
+        context.ui.warning(
+            Some(name),
+            &format!("cannot open a browser: {error}", error = chain_text(&error)),
+        );
     }
     let expected = expected_redirect(state, &metadata);
     let callback = wait_for_redirect(listener, &redirect, &expected, read_stdin)
@@ -360,7 +358,10 @@ fn expected_redirect(state: String, metadata: &AuthorizationMetadata) -> callbac
 // The redirect uses a random loopback port (RFC 8252 §7.3).
 async fn listen() -> Result<(TcpListener, RedirectUri), Failure> {
     let failure = |error: std::io::Error| {
-        Failure::protocol(format!("cannot listen for the redirect: {error}"))
+        Failure::protocol(format!(
+            "cannot listen for the redirect: {error}",
+            error = chain_text(&error)
+        ))
     };
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.map_err(failure)?;
     let port = listener.local_addr().map_err(failure)?.port();
@@ -392,7 +393,7 @@ async fn hold_tokens_lock(
         Ok(Err(error)) if error.kind() == std::io::ErrorKind::TimedOut => {
             context
                 .ui
-                .warning(Some(server.as_str()), &error.to_string());
+                .warning(Some(server.as_str()), &chain_text(&error));
             None
         }
         _ => None,
@@ -406,11 +407,15 @@ fn token_failure(error: &AuthError, name: &str, place: CredentialPlace) -> Failu
     match error {
         AuthError::CredentialStoreError(text) => match crate::oauth::store::file_failure(text) {
             Some(text) => Failure::protocol(format!("cannot keep the tokens: {text}")).server(name),
-            None if place == CredentialPlace::Native => {
-                Failure::new(Exit::Auth, format!("cannot keep the tokens: {error}"))
-                    .hint(format!("ncp auth login {name} --credential-store file"))
-                    .server(name)
-            }
+            None if place == CredentialPlace::Native => Failure::new(
+                Exit::Auth,
+                format!(
+                    "cannot keep the tokens: {error}",
+                    error = chain_text(&error)
+                ),
+            )
+            .hint(format!("ncp auth login {name} --credential-store file"))
+            .server(name),
             None => auth_failure("OAuth token request", error).server(name),
         },
         error => auth_failure("OAuth token request", error).server(name),
@@ -447,12 +452,12 @@ pub(super) async fn stored_login(
     let name = server.name.as_str();
     let (store, secret) = found;
     let item =
-        parse_item(&secret).map_err(|error| Failure::protocol(error.to_string()).server(name))?;
+        parse_item(&secret).map_err(|error| Failure::protocol(chain_text(&error)).server(name))?;
     let client_id = item.tokens.client_id.clone();
     let stored_binding = item.binding.clone();
     context.ui.debug(Some(name), "read the stored OAuth tokens");
     let oauth_http = OAuthHttp::new(context.env, observer, notes)
-        .map_err(|error| Failure::protocol(error.to_string()).server(name))?;
+        .map_err(|error| Failure::protocol(chain_text(&error)).server(name))?;
     let mut manager = AuthorizationManager::new_with_oauth_http_client(
         remote.url.without_query(),
         Arc::new(oauth_http),
@@ -584,12 +589,9 @@ pub(super) async fn remember_scopes(context: &Context<'_>, server: &Server, erro
     };
     let name = server.name.as_str();
     if let Err(failure) = add_required_scopes(context, server, &scopes).await {
-        context.ui.warning(
-            Some(name),
-            &format!(
-                "cannot keep the scopes for the next login: {}",
-                failure.message
-            ),
+        context.ui.warn(
+            &Warning::from(failure.context("cannot keep the scopes for the next login"))
+                .server(name),
         );
     }
 }
@@ -605,12 +607,15 @@ async fn add_required_scopes(
     let key = CredentialKey::OAuthTokens(server.name.clone());
     if let Some((store, secret)) = find_tokens(context, server).await? {
         let mut tokens: Value = serde_json::from_str(secret.expose()).map_err(|error| {
-            Failure::protocol(format!("the stored tokens are not JSON: {error}"))
+            Failure::protocol(format!(
+                "the stored tokens are not JSON: {error}",
+                error = chain_text(&error)
+            ))
         })?;
         let required = scopes::union(&scopes::list(tokens.get(items::REQUIRED_SCOPES)), scopes);
         tokens[items::REQUIRED_SCOPES] = json!(required);
         let secret = items::to_secret("tokens", &tokens)
-            .map_err(|error| Failure::protocol(error.to_string()))?;
+            .map_err(|error| Failure::protocol(chain_text(&error)))?;
         let saved = key.clone();
         let started = std::time::Instant::now();
         let result = secrets::call(context, &store, move |store| store.save(&saved, &secret)).await;
@@ -703,7 +708,9 @@ impl TokenPlaces {
             match secrets::call(context, &native, move |store| store.load(&wanted)).await {
                 Ok(Some(secret)) => return Ok(Some((native, secret))),
                 Ok(None) => {}
-                Err(crate::store::StoreError::Interrupted) => return Err(session::interrupted()),
+                Err(crate::store::StoreError::Interrupted) => {
+                    return Err(session::interrupted(None));
+                }
                 Err(error) if secrets::store_is_down(&error) => {
                     self.native = None;
                     self.down = Some(error);
@@ -717,10 +724,13 @@ impl TokenPlaces {
             .map_err(|error| secrets::store_failure(&error))?;
         match (found, &self.down) {
             (Some(secret), _) => Ok(Some((file, secret))),
-            (None, Some(crate::store::StoreError::Interrupted)) => Err(session::interrupted()),
+            (None, Some(crate::store::StoreError::Interrupted)) => Err(session::interrupted(None)),
             (None, Some(error)) => Err(Failure::new(
                 Exit::Auth,
-                format!("the file has no tokens, and the native store gave none: {error}"),
+                format!(
+                    "the file has no tokens, and the native store gave none: {error}",
+                    error = chain_text(&error)
+                ),
             )
             .hint(format!(
                 "ncp auth login {} --credential-store file",
@@ -825,11 +835,14 @@ async fn remove_old_tokens(
             .debug(Some(name), "removed the old tokens of the other place"),
         Ok(false) => {}
         Err(crate::store::StoreError::Interrupted) => {
-            return Err(session::interrupted().server(name));
+            return Err(session::interrupted(Some(name)));
         }
         Err(error) => context.ui.warning(
             Some(name),
-            &format!("cannot remove the old tokens of the other place: {error}"),
+            &format!(
+                "cannot remove the old tokens of the other place: {error}",
+                error = chain_text(&error)
+            ),
         ),
     }
     Ok(())
@@ -871,7 +884,7 @@ async fn client_request(
     .map_err(|error| secrets::store_failure(&error))?
     .map(|secret| ClientItem::from_secret(&secret))
     .transpose()
-    .map_err(|error| Failure::protocol(error.to_string()))?;
+    .map_err(|error| Failure::protocol(chain_text(&error)))?;
     let client = if let Some(item) = stored.filter(|item| item.is_for(&issuer)) {
         item
     } else {
@@ -881,7 +894,7 @@ async fn client_request(
         let item = register(manager, &issuer, redirect, scopes).await?;
         let secret = item
             .to_secret()
-            .map_err(|error| Failure::protocol(error.to_string()))?;
+            .map_err(|error| Failure::protocol(chain_text(&error)))?;
         secrets::call(context, store, move |store| store.save(&key, &secret))
             .await
             .map_err(|error| secrets::store_failure(&error))?;
@@ -1119,11 +1132,14 @@ async fn redirect_of(
             let _ = stream.write_all(page("200 OK", message).as_bytes()).await;
         }
         Err(error) if error.is_for_this_login() => {
-            let message = format!("The login failed: {error}.");
+            let message = format!("The login failed: {error}.", error = chain_text(&error));
             let _ = stream.write_all(page("200 OK", &message).as_bytes()).await;
         }
         Err(error) => {
-            let message = format!("This redirect is not for the login that waits: {error}.");
+            let message = format!(
+                "This redirect is not for the login that waits: {error}.",
+                error = chain_text(&error)
+            );
             let _ = stream
                 .write_all(page("400 Bad Request", &message).as_bytes())
                 .await;
@@ -1201,7 +1217,7 @@ async fn wait_for_redirect(
         result = from_listener(listener, redirect, expected) => result,
         result = from_stdin => result,
     };
-    result.map_err(|error| Failure::new(Exit::Auth, error.to_string()))
+    result.map_err(|error| Failure::new(Exit::Auth, chain_text(&error)))
 }
 
 async fn logout(context: &Context<'_>, word: &str) -> Result<(), Failure> {
@@ -1283,7 +1299,8 @@ pub(super) async fn remove_bound_items(
                 Some(server.as_str()),
                 &format!(
                     "ncp cannot check {} for tokens, and they stay: {error}",
-                    secrets::place_text(place)
+                    secrets::place_text(place),
+                    error = chain_text(&error)
                 ),
             ),
         }
@@ -1345,7 +1362,10 @@ async fn remove_everywhere(
         Err(crate::store::StoreError::Unavailable(_)) => {}
         Err(error) => context.ui.warning(
             Some(name),
-            &format!("the native store gave no answer: {error}"),
+            &format!(
+                "the native store gave no answer: {error}",
+                error = chain_text(&error)
+            ),
         ),
     }
     let file = secrets::file(context);
@@ -1379,7 +1399,12 @@ async fn status(context: &Context<'_>, word: Option<&str>) -> Result<(), Failure
     for server in servers {
         let tokens = match places.find(context, server).await? {
             Some((_, secret)) => Some(serde_json::from_str::<Value>(secret.expose()).map_err(
-                |error| Failure::protocol(format!("the stored tokens are not JSON: {error}")),
+                |error| {
+                    Failure::protocol(format!(
+                        "the stored tokens are not JSON: {error}",
+                        error = chain_text(&error)
+                    ))
+                },
             )?),
             None => None,
         };
@@ -1438,9 +1463,9 @@ mod tests {
         let server = config.server("web").unwrap();
         let resource = binding_failure(server, &items::BindingMismatch::Resource);
         assert!(
-            resource.message.contains("another URL"),
+            resource.message().contains("another URL"),
             "{}",
-            resource.message
+            resource.message()
         );
         let issuer = binding_failure(
             server,
@@ -1449,8 +1474,8 @@ mod tests {
             },
         );
         for failure in [&resource, &issuer] {
-            assert!(!failure.message.contains("k3y"), "{}", failure.message);
-            assert!(failure.message.contains("on purpose"));
+            assert!(!failure.message().contains("k3y"), "{}", failure.message());
+            assert!(failure.message().contains("on purpose"));
         }
     }
 
@@ -1468,7 +1493,7 @@ mod tests {
         assert!(check_https(&metadata("http://localhost:9")).is_ok());
         let failure = check_https(&metadata("http://as.test")).unwrap_err();
         assert!(
-            failure.message.contains("http://as.test/authorize"),
+            failure.message().contains("http://as.test/authorize"),
             "{failure:?}"
         );
     }

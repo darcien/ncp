@@ -20,7 +20,7 @@ pub struct Paths {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("HOME is not set to an absolute path, so ncp cannot find its files")]
+#[error("The variable `HOME` is not set to an absolute path")]
 pub struct NoHome;
 
 impl Paths {
@@ -65,6 +65,11 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn the_error_text_follows_the_message_rules() {
+        crate::style::assert_style(&NoHome.to_string());
     }
 
     #[test]

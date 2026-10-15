@@ -3,6 +3,7 @@
 //! object, and the text of a file comes from the shell, for example
 //! `key="$(cat FILE)"` (design B57).
 
+use super::outcome::chain_text;
 use std::collections::BTreeSet;
 
 use serde_json::Value;
@@ -73,7 +74,7 @@ pub fn object(text: &str) -> Result<JsonObject, ArgumentError> {
     match serde_json::from_str::<Value>(text) {
         Ok(Value::Object(map)) => Ok(map),
         Ok(_) => Err(ArgumentError::NotObject("it is another JSON value".into())),
-        Err(error) => Err(ArgumentError::NotObject(error.to_string())),
+        Err(error) => Err(ArgumentError::NotObject(chain_text(&error))),
     }
 }
 

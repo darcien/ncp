@@ -13,7 +13,7 @@ use tokio::io::AsyncReadExt;
 
 use super::{
     args::{CallArgs, Cli, PromptCommand, ResourceCommand, ServerCommand, ToolCommand},
-    outcome::{Exit, Failure},
+    outcome::{Exit, Failure, chain_text},
     render,
     schema_check::{self, Outcome},
     session::{self, Context, Loaded},
@@ -114,7 +114,7 @@ fn list_rows(loaded: &Loaded) -> Vec<render::Row> {
         render::Row {
             name: name.to_string(),
             target: None,
-            error: Some(error.to_string()),
+            error: Some(chain_text(&error)),
             file,
             trust,
             shown: None,
@@ -163,17 +163,20 @@ async fn with_connection<T>(
     let result = asked(server, &connection, work(&connection).await);
     let authorized = connection.is_authorized();
     connection.close().await;
-    match result {
-        Err(Failure {
-            login_challenge: Some(challenge),
-            ..
-        }) if !authorized => {
+    let challenge = result
+        .as_ref()
+        .err()
+        .and_then(Failure::login_challenge)
+        .filter(|_| !authorized)
+        .map(str::to_string);
+    match challenge {
+        Some(challenge) => {
             let connection = session::open_with_login(context, server, Some(&challenge)).await?;
             let result = asked(server, &connection, work(&connection).await);
             connection.close().await;
             result
         }
-        other => other,
+        None => result,
     }
 }
 
@@ -284,7 +287,11 @@ fn keep_tools(
             if let Err(error) = list_cache::save(&path, &cached) {
                 context.ui.warning(
                     None,
-                    &format!("cannot write the list cache {}: {error}", path.display()),
+                    &format!(
+                        "cannot write the list cache {}: {error}",
+                        path.display(),
+                        error = chain_text(&error)
+                    ),
                 );
             }
         }
@@ -432,7 +439,7 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
     let input = if call.help {
         Input::Pairs(Vec::new())
     } else {
-        tool_args::parse(&call.arguments).map_err(|error| Failure::usage(error.to_string()))?
+        tool_args::parse(&call.arguments).map_err(|error| Failure::usage(chain_text(&error)))?
     };
     let loaded = session::load(context, Some(word)).await?;
     let server = session::select(&loaded, word, context.ui)?;
@@ -665,7 +672,8 @@ fn raw_contents(result: &Value) -> Result<Vec<u8>, Failure> {
         .unwrap_or_default();
     base64::Engine::decode(&base64::engine::general_purpose::STANDARD, blob).map_err(|error| {
         Failure::protocol(format!(
-            "the server sent a blob that is not base64: {error}"
+            "the server sent a blob that is not base64: {error}",
+            error = chain_text(&error)
         ))
     })
 }
@@ -719,7 +727,7 @@ async fn prompt_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
 
 // The arguments of a prompt: text only, as the spec gives them.
 fn prompt_arguments(words: &[String]) -> Result<JsonObject, Failure> {
-    match tool_args::parse(words).map_err(|error| Failure::usage(error.to_string()))? {
+    match tool_args::parse(words).map_err(|error| Failure::usage(chain_text(&error)))? {
         Input::Pairs(pairs) => Ok(pairs
             .into_iter()
             .map(|(key, text)| (key, Value::String(text)))
@@ -809,11 +817,11 @@ async fn read_stdin_object(context: &Context<'_>) -> Result<JsonObject, Failure>
     let mut stdin = tokio::io::stdin();
     tokio::select! {
         read = stdin.read_to_string(&mut text) => read.map_err(|error| {
-            Failure::usage(format!("cannot read the arguments from stdin: {error}"))
+            Failure::usage(format!("cannot read the arguments from stdin: {error}", error = chain_text(&error)))
         })?,
-        () = context.cancel.cancelled() => return Err(session::interrupted()),
+        () = context.cancel.cancelled() => return Err(session::interrupted(None)),
     };
-    tool_args::object(&text).map_err(|error| Failure::usage(error.to_string()))
+    tool_args::object(&text).map_err(|error| Failure::usage(chain_text(&error)))
 }
 
 fn check_arguments(

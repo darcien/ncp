@@ -180,7 +180,7 @@ fn another_entry_of_the_name_is_an_error() {
     assert_eq!(add_global(&home, "web", WEB, &[]).code(), 0);
     let run = add_global(&home, "web", "https://other.example.com/mcp", &[]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "ncp server remove web --global");
+    assert_eq!(run.hints()[0], "ncp server remove web --global");
 }
 
 #[test]
@@ -197,7 +197,7 @@ fn a_duplicate_key_of_the_name_is_an_error() {
     let run = add_global(&home, "web", WEB, &[]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert!(
-        run.error()["message"]
+        run.old_error()["message"]
             .as_str()
             .unwrap()
             .contains("more than one time")
@@ -223,7 +223,7 @@ fn a_literal_credential_header_is_an_error_that_shows_no_value() {
         run.describe()
     );
     assert_eq!(
-        run.error()["hint"],
+        run.hints()[0],
         "--header 'Authorization: Bearer ${NAME}' --secret NAME"
     );
     assert!(!home.config_path().exists());
@@ -292,7 +292,7 @@ fn an_untrusted_project_file_is_not_changed_with_no_tty() {
     let before = std::fs::read_to_string(&file).unwrap();
     let run = home.run(&["server", "add", "web", WEB]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "ncp trust --show");
+    assert_eq!(run.hints()[0], "ncp trust --show");
     assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
 }
 
@@ -309,7 +309,7 @@ fn a_no_at_the_question_ignores_the_file_and_changes_nothing() {
     let home = home.unset("NCP_TEST_TTY");
     let run = home.run(&["server", "add", "web", WEB]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "--global");
+    assert_eq!(run.hints()[0], "--global");
 }
 
 #[test]
@@ -365,7 +365,7 @@ fn a_project_file_that_ncp_does_not_use_is_not_changed() {
     home.cwd = dir.clone();
     let run = home.run(&["server", "add", "web", "https://w.example.com/mcp"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "--global");
+    assert_eq!(run.hints()[0], "--global");
     assert_eq!(
         std::fs::read_to_string(dir.join(".mcp.json")).unwrap(),
         "{ not json"
@@ -676,7 +676,7 @@ fn remove_of_an_unknown_name_gives_the_nearest_name() {
     let run = home.run(&["server", "remove", "gg"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert!(
-        run.error()["message"]
+        run.old_error()["message"]
             .as_str()
             .unwrap()
             .contains("did you mean \"g\"")
@@ -689,7 +689,7 @@ fn remove_global_of_a_project_name_names_the_project_file() {
     assert_eq!(home.run(&["trust"]).code(), 0);
     let run = home.run(&["server", "remove", "p", "--global"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "ncp server remove p");
+    assert_eq!(run.hints()[0], "ncp server remove p");
 }
 
 #[test]
@@ -697,7 +697,7 @@ fn remove_from_an_untrusted_project_file_needs_the_trust() {
     let home = both_files("r-untrusted");
     let run = home.run(&["server", "remove", "p"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "ncp trust --show");
+    assert_eq!(run.hints()[0], "ncp trust --show");
     let home = home.set("NCP_TEST_TTY", "1");
     let run = home.run_with_stdin(&["server", "remove", "p"], "y\n");
     assert_eq!(run.code(), 0, "{}", run.describe());
@@ -727,7 +727,7 @@ fn remove_from_an_ignored_project_file_is_an_error_unless_the_global_file_has_it
     assert_eq!(home.run(&["trust", "--ignore"]).code(), 0);
     let run = home.run(&["server", "remove", "only"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["hint"], "ncp trust");
+    assert_eq!(run.hints()[0], "ncp trust");
     let run = home.run(&["server", "remove", "both"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert_eq!(run.stdout()["scope"], "global");
@@ -828,10 +828,7 @@ fn a_url_with_a_wrong_path_gives_a_hint_at_the_first_connect() {
     let run = home.run(&["server", "show", "web"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
     assert!(
-        run.error()["hint"]
-            .as_str()
-            .unwrap()
-            .starts_with("check the path of the URL"),
+        run.hints()[0].starts_with("check the path of the URL"),
         "{}",
         run.describe()
     );
@@ -930,7 +927,7 @@ fn a_global_duplicate_key_with_the_name_keeps_the_tokens_of_the_name() {
     let run = home.run(&["server", "remove", "p"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert!(
-        run.error()["message"]
+        run.old_error()["message"]
             .as_str()
             .unwrap()
             .contains("more than one time")
@@ -955,4 +952,14 @@ fn a_value_that_starts_with_two_hyphens_is_not_in_the_error() {
     let run = add_global(&home, "web", WEB, &["--secret", "--sk-live-abc"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert!(!run.stderr_text().contains("sk-live"), "{}", run.describe());
+}
+
+#[test]
+fn add_with_a_url_that_is_not_valid_names_the_reason() {
+    let home = Home::new("e-add-bad-url");
+    let run = add_global(&home, "web", "http://example.com/mcp", &[]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    let text = run.error_text();
+    assert!(text.contains("loopback"), "{text}");
+    assert!(!home.config_path().exists());
 }

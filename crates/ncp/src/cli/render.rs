@@ -3,6 +3,7 @@
 //! The JSON output copies MCP objects with no change, so it needs no code
 //! here. Text output is for reading, and can change between versions.
 
+use super::outcome::chain_text;
 use std::{
     fmt::Write as _,
     path::{Path, PathBuf},
@@ -125,7 +126,7 @@ pub fn project_rows(project: &Project) -> Vec<Row> {
                 target: shape.map(|shape| (shape.transport, target_text(&shape.target))),
                 error: match &entry.shape {
                     Ok(shape) => shape.problem.as_ref().map(ToString::to_string),
-                    Err(error) => Some(error.to_string()),
+                    Err(error) => Some(chain_text(&error)),
                 },
                 file: project.file.clone(),
                 trust: Some(project.trust),
@@ -185,7 +186,7 @@ pub fn project_entries(entries: &[UnexpandedEntry]) -> String {
                         .map(|problem| format!("not valid: {problem}")),
                 )
                 .collect(),
-                Err(error) => vec![format!("not valid: {error}")],
+                Err(error) => vec![format!("not valid: {error}", error = chain_text(&error))],
             };
             vec![entry.name.clone(), details.join("   ")]
         })
