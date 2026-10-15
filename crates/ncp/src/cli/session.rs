@@ -1015,6 +1015,26 @@ mod tests {
     }
 
     #[test]
+    fn redaction_hides_a_url_value_in_each_part_of_a_failure() {
+        let env = Env::from([("K".to_string(), "s3cr3t".to_string())]);
+        let config = config::parse(
+            r#"{"mcpServers": {"web": {"type": "http", "url": "https://h/mcp?key=${K}"}}}"#,
+            &env,
+        )
+        .unwrap();
+        let server = config.server("web").unwrap();
+        let url = "https://h/mcp?key=s3cr3t";
+        let failure = Failure::protocol(format!("m {url}"))
+            .data(format!("d {url}"))
+            .cause(format!("error sending request for url ({url})"))
+            .hint(format!("h {url}"))
+            .map_text(|text| hide_expanded_url(server, text));
+        let shown = format!("{failure:?}");
+        assert!(!shown.contains("s3cr3t"), "{shown}");
+        assert_eq!(failure.diagnostic().causes().len(), 1);
+    }
+
+    #[test]
     fn finds_joined_server_and_tool_names() {
         assert_eq!(split_joined("github.search"), Some(("github", "search")));
         assert_eq!(split_joined("github:a.b"), Some(("github", "a.b")));

@@ -456,22 +456,21 @@ fn diagnostic_text(label: &str, data_indent: &str, diagnostic: &Diagnostic) -> S
         .chain(causes)
         .chain(hints)
         .map(|line| line + "\n")
-        .collect::<Vec<_>>()
-        .concat()
+        .collect()
 }
 
 fn diagnostic_json(diagnostic: &Diagnostic) -> Value {
     let causes: Vec<String> = diagnostic
         .causes()
         .iter()
-        .map(|cause| shown(cause).into_owned())
+        .map(|cause| shown(cause))
         .collect();
     let hints: Vec<Value> = diagnostic
         .hints()
         .iter()
         .map(|hint| match hint.command() {
-            Some(command) => json!({"message": hint.message(), "command": command}),
-            None => json!({"message": hint.message()}),
+            Some(command) => json!({"message": one_line(hint.message()), "command": command}),
+            None => json!({"message": one_line(hint.message())}),
         })
         .collect();
     let mut body = json!({
@@ -480,7 +479,7 @@ fn diagnostic_json(diagnostic: &Diagnostic) -> Value {
         "causes": causes,
         "hints": hints,
     });
-    if let Some(server) = diagnostic.server() {
+    if let Some(server) = diagnostic.server_name() {
         body["server"] = json!(server);
     }
     body
@@ -506,41 +505,54 @@ const SHOWN_BYTES: usize = 2048;
 // A long body of a server hides the hints. Thus a text shows at most 20
 // lines and 2048 bytes, and a last line tells how much did not show
 // (design rule 16).
-fn shown(text: &str) -> std::borrow::Cow<'_, str> {
+fn shown(text: &str) -> String {
+    let text = line_ends(text);
     if text.len() <= SHOWN_BYTES && text.lines().count() <= SHOWN_LINES {
-        return std::borrow::Cow::Borrowed(text);
+        return text;
     }
-    let whole_lines = text
+    let (end, count) = text
         .split_inclusive('\n')
         .take(SHOWN_LINES)
         .scan(0, |end, line| {
             *end += line.len();
             (*end <= SHOWN_BYTES).then_some(*end)
         })
+        .zip(1..)
         .last()
-        .unwrap_or(0);
-    let end = if whole_lines > 0 {
-        whole_lines
-    } else {
+        .unwrap_or((0, 0));
+    // A line that does not fit shows its first bytes, because a body of
+    // one long line usually holds the reason.
+    let end = if count < SHOWN_LINES {
         (0..=SHOWN_BYTES)
             .rev()
             .find(|index| text.is_char_boundary(*index))
-            .unwrap_or(0)
+            .unwrap_or(end)
+    } else {
+        end
     };
     let kept = text[..end].strip_suffix('\n').unwrap_or(&text[..end]);
-    std::borrow::Cow::Owned(format!(
+    format!(
         "{kept}\n(ncp did not show {} bytes)",
         text.len() - kept.len()
-    ))
+    )
 }
 
-// The data lines of one diagnostic share one limit.
+// A terminal also starts a new line at a carriage return. Thus each line
+// end counts in the limit, and text and JSON have the same lines.
+fn line_ends(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+// The data lines of one diagnostic share one limit. A data line with a
+// line end is two data lines.
 fn shown_data(lines: &[String]) -> Vec<String> {
-    let joined = lines.join("\n");
-    match shown(&joined) {
-        std::borrow::Cow::Borrowed(_) => lines.to_vec(),
-        std::borrow::Cow::Owned(text) => text.split('\n').map(str::to_string).collect(),
+    if lines.is_empty() {
+        return Vec::new();
     }
+    shown(&lines.join("\n"))
+        .split('\n')
+        .map(str::to_string)
+        .collect()
 }
 
 #[cfg(test)]
@@ -635,6 +647,40 @@ mod tests {
         assert_eq!(
             value["error"]["causes"][0],
             format!("{}\n(ncp did not show 952 bytes)", "é".repeat(1024))
+        );
+    }
+
+    #[test]
+    fn a_carriage_return_counts_as_a_line_end_in_the_limit() {
+        let failure = Failure::protocol("m").cause("x\r".repeat(500));
+        let text = error_text(Format::Text, &failure);
+        assert_eq!(text.lines().count(), 22, "{text}");
+        let value: Value = serde_json::from_str(&error_text(Format::Json, &failure)).unwrap();
+        let cause = value["error"]["causes"][0].as_str().unwrap();
+        assert!(!cause.contains('\r'), "{cause}");
+        assert_eq!(cause.lines().count(), 21);
+    }
+
+    #[test]
+    fn a_long_line_after_the_first_line_shows_its_first_bytes() {
+        let failure = Failure::protocol("m").cause(format!("Client error:\n{}", "b".repeat(5000)));
+        let value: Value = serde_json::from_str(&error_text(Format::Json, &failure)).unwrap();
+        let cause = value["error"]["causes"][0].as_str().unwrap();
+        let kept = format!("Client error:\n{}", "b".repeat(2048 - 14));
+        assert_eq!(
+            cause,
+            format!("{kept}\n(ncp did not show {} bytes)", 5014 - kept.len())
+        );
+    }
+
+    #[test]
+    fn a_data_line_with_a_line_end_is_two_data_lines_in_text_and_json() {
+        let failure = Failure::usage("m:").data("a\nb");
+        let value: Value = serde_json::from_str(&error_text(Format::Json, &failure)).unwrap();
+        assert_eq!(value["error"]["data"], json!(["a", "b"]));
+        assert_eq!(
+            error_text(Format::Text, &failure),
+            "error: m:\n       a\n       b\n"
         );
     }
 

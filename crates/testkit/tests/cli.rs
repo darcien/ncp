@@ -961,6 +961,20 @@ fn era_cache_that_cannot_be_written_gives_a_warning_only() {
 }
 
 #[test]
+fn a_word_that_is_not_utf8_gives_the_json_error_and_not_a_crash() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let home = Home::new("non-utf8-word");
+    let output = home
+        .command(std::path::Path::new(NCP))
+        .arg(std::ffi::OsStr::from_bytes(b"\xff"))
+        .output()
+        .unwrap();
+    let run = Run(output);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(run.error()["message"], "The command line is not valid");
+}
+
+#[test]
 fn no_command_gives_the_help_command_as_a_hint() {
     let home = Home::new("no-command");
     let run = home.run(&[]);
@@ -1145,7 +1159,8 @@ fn copy_check_of_a_slow_native_store_stops_at_its_limit_and_leaves_no_program() 
     assert!(
         run.old_warnings()
             .iter()
-            .all(|warning| common::hints(warning).is_empty()),
+            .all(|warning| common::hints(warning).is_empty())
+            && notes(&run, "hint").is_empty(),
         "{}",
         run.describe()
     );

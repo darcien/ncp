@@ -257,7 +257,11 @@ fn parse_failure(ui: Ui, error: &clap::Error) -> ExitCode {
             }
         }
         (_, Format::Json) => {
-            let words: Vec<String> = std::env::args().skip(1).collect();
+            // `args` stops the program on a word that is not UTF-8.
+            let words: Vec<String> = std::env::args_os()
+                .skip(1)
+                .map(|word| word.to_string_lossy().into_owned())
+                .collect();
             let failure = usage_failure(error, &subcommands(&words));
             ui.error(&failure);
             failure.exit().into()

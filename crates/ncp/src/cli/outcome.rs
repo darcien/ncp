@@ -149,7 +149,7 @@ impl Diagnostic {
     }
 
     #[must_use]
-    pub fn server(&self) -> Option<&str> {
+    pub fn server_name(&self) -> Option<&str> {
         self.server.as_ref().map(|about| match about {
             About::Named(name) | About::Prefixed(name) => name.as_str(),
         })
@@ -400,7 +400,7 @@ impl Failure {
 
     #[must_use]
     pub fn server_name(&self) -> Option<&str> {
-        self.diagnostic.server()
+        self.diagnostic.server_name()
     }
 
     #[must_use]
@@ -671,7 +671,7 @@ mod tests {
                 .hint("y"),
         );
         let diagnostic = warning.diagnostic();
-        assert_eq!(diagnostic.server(), Some("fx"));
+        assert_eq!(diagnostic.server_name(), Some("fx"));
         assert_eq!(diagnostic.prefix(), None);
         assert_eq!(diagnostic.causes(), ["denied"]);
         assert_eq!(diagnostic.hints(), [Hint::text("y")]);
