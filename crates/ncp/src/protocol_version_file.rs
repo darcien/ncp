@@ -11,7 +11,10 @@ use std::{
 use crate::{private_file, protocol_version::VersionCache};
 
 #[derive(Debug, thiserror::Error)]
-#[error("protocol version cache {path}: {source}")]
+#[error(
+    "ncp cannot use the protocol version cache {}. ncp works the same with no cache.",
+    crate::text::code(&.path.display().to_string())
+)]
 pub struct CacheError {
     path: PathBuf,
     source: std::io::Error,

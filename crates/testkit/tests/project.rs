@@ -43,22 +43,19 @@ fn untrusted_project_entry_stops_with_its_entries_and_starts_nothing() {
     let home = home.project("app", &json!({"fs": entry}));
     let run = home.run(&["tool", "list", "fs"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let error = run.old_error();
-    let message = error["message"].as_str().unwrap();
+    let error = run.error();
     let file = home.project_file();
-    assert!(
-        message.starts_with(&format!(
-            "fs is in {}, which is not trusted:\n",
+    assert_eq!(
+        error["message"],
+        format!(
+            "The server `fs` is in `{}`, which you did not trust:",
             file.display()
-        )),
-        "{message}"
+        )
     );
-    assert!(
-        message.contains(&format!("fs  {FIXTURE} modern")),
-        "{message}"
-    );
-    assert!(message.contains("env: NCP_FIXTURE_PID_FILE"), "{message}");
-    assert_eq!(common::hints(&error)[0], "ncp trust");
+    let data = error["data"][0].as_str().unwrap();
+    assert!(data.starts_with(&format!("fs  {FIXTURE} modern")), "{data}");
+    assert!(data.contains("env: NCP_FIXTURE_PID_FILE"), "{data}");
+    assert_eq!(run.hints(), ["To trust the file, run `ncp trust`"]);
     assert!(!marker.exists());
 }
 
@@ -81,7 +78,13 @@ fn name_in_both_files_stops_and_names_the_ignore_option() {
     let home = home.project("app", &json!({"fx": {"command": "false"}}));
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.hints(), ["ncp trust", "ncp trust --ignore"]);
+    assert_eq!(
+        run.hints(),
+        [
+            "To trust the file, run `ncp trust`",
+            "To ignore the file and use the entry of the global file, run `ncp trust --ignore`"
+        ]
+    );
     // With the file ignored, the global entry runs.
     assert_eq!(home.run(&["trust", "--ignore"]).code(), 0);
     let run = home.run(&["tool", "list", "fx"]);
@@ -118,9 +121,9 @@ fn a_changed_byte_asks_again_and_says_that_the_file_changed() {
     std::fs::write(&file, format!("{text} ")).unwrap();
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let message = run.old_error()["message"].as_str().unwrap().to_string();
+    let message = run.error()["message"].as_str().unwrap().to_string();
     assert!(
-        message.contains("which changed since you trusted it"),
+        message.ends_with("which changed after you trusted it:"),
         "{message}"
     );
     // After a revert, the trust of the old bytes applies again.
@@ -160,9 +163,15 @@ fn no_at_the_question_ignores_the_file_until_ncp_trust() {
     let error: Value = serde_json::from_str(&last[last.find('{').unwrap()..]).unwrap();
     assert_eq!(
         error["error"]["message"],
-        format!("fx is in {}, which you ignored", file.display())
+        format!(
+            "The server `fx` is in `{}`, which you ignored",
+            file.display()
+        )
     );
-    assert_eq!(common::hints(&error["error"])[0], "ncp trust");
+    assert_eq!(
+        common::hints(&error["error"]),
+        ["To trust the file, run `ncp trust`"]
+    );
     // No question after a change of the file.
     let text = std::fs::read_to_string(&file).unwrap();
     std::fs::write(&file, format!("{text}\n")).unwrap();
@@ -249,10 +258,10 @@ fn search_finds_the_file_in_a_parent_and_stops_at_the_git_root() {
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert!(
-        run.old_error()["message"]
+        run.error()["message"]
             .as_str()
             .unwrap()
-            .starts_with("no server")
+            .starts_with("No server `fx` is configured")
     );
 }
 
@@ -473,8 +482,8 @@ fn the_shown_entry_is_the_entry_that_runs() {
     );
     let run = home.run(&["tool", "list", "fs"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let message = run.old_error()["message"].as_str().unwrap().to_string();
-    assert!(message.contains("fs  sh -c 'touch x'"), "{message}");
+    let data = run.error()["data"].to_string();
+    assert!(data.contains("fs  sh -c 'touch x'"), "{data}");
     let out = home.run(&["trust", "--show"]).stdout();
     assert_eq!(out["servers"][0]["target"], "sh -c 'touch x'");
 }

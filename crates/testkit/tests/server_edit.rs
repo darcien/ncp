@@ -675,12 +675,7 @@ fn remove_of_an_unknown_name_gives_the_nearest_name() {
     let home = both_files("r-unknown");
     let run = home.run(&["server", "remove", "gg"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert!(
-        run.old_error()["message"]
-            .as_str()
-            .unwrap()
-            .contains("did you mean \"g\"")
-    );
+    assert_eq!(run.error()["hints"][0]["message"], "Did you mean `g`?");
 }
 
 #[test]

@@ -113,7 +113,7 @@ that the output can go into a file or another program (B58).
 - The server and the tool are two words. No joined form: `github.search`,
   `github:search` and `github/search` are usage errors. A server name cannot
   contain `.`, `:` or `/`, so `ncp` finds a joined form and shows the correct
-  command, for example "use `ncp tool call github search_issues`".
+  command in a hint.
 - No short form `ncp <SERVER> <TOOL>`. A server with the name of a command
   (`tool`, `auth`) would collide with it.
 - The MCP spec says that a tool name SHOULD use only `A-Z`, `a-z`, `0-9`,

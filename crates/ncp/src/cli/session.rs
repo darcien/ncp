@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     diagnostics,
-    outcome::{Exit, Failure, Hint, chain_text},
+    outcome::{Exit, Failure, Hint, Warning, chain_text},
     project_file::{self, Change, ProjectFile},
     timings::Timings,
     ui::{Ui, Verbosity},
@@ -155,10 +155,10 @@ pub fn load_config(paths: &Paths, env: &Env, search: bool) -> Result<Loaded, Fai
         Err(error) if error.kind() == ErrorKind::NotFound => ("{}".to_string(), false),
         Err(error) => {
             return Err(Failure::protocol(format!(
-                "cannot read {}: {error}",
-                path.display(),
-                error = chain_text(&error)
-            )));
+                "ncp cannot read the configuration file {}",
+                code(&path.display().to_string())
+            ))
+            .caused_by(&error));
         }
     };
     let global = config::parse(&text, env).map_err(|error| {
@@ -294,9 +294,10 @@ pub fn split_joined(word: &str) -> Option<(&str, &str)> {
 
 /// The failure for a joined word, with the command to use instead.
 #[must_use]
-pub fn joined_failure(word: &str, fix: &str) -> Failure {
+pub fn joined_failure(word: &str, fix: Hint) -> Failure {
     Failure::usage(format!(
-        "{word:?} joins a server name and a tool name; give them as two words"
+        "{} joins a server name and a tool name",
+        code(word)
     ))
     .hint(fix)
 }
@@ -312,23 +313,25 @@ pub fn select<'a>(loaded: &'a Loaded, name: &str, ui: Ui) -> Result<&'a Server, 
     }
     let server = loaded.config.server(name).map_err(|error| match error {
         LookupError::NotFound(_) => {
+            let shown = |path: &Path| code(&path.display().to_string());
             let place = match (&loaded.project, loaded.exists) {
                 (ProjectFile::Read(project), _) if project.trust == Trust::Trusted => {
-                    format!("in {} or {}", loaded.path.display(), project.file.display())
+                    format!(" in {} or {}", shown(&loaded.path), shown(&project.file))
                 }
-                (_, true) => format!("in {}", loaded.path.display()),
-                (_, false) => format!("because {} does not exist", loaded.path.display()),
+                (_, true) => format!(" in {}", shown(&loaded.path)),
+                (_, false) => format!(", because {} does not exist", shown(&loaded.path)),
             };
             let names = loaded
                 .config
                 .servers()
                 .map(|server| server.name.as_str())
                 .chain(loaded.config.invalid().map(|(name, _)| name));
-            let near = super::near::nearest(name, names)
-                .map(|near| format!("; did you mean {near:?}?"))
-                .unwrap_or_default();
-            Failure::usage(format!("no server {name:?} is configured {place}{near}"))
-                .hint("ncp server list")
+            let failure = Failure::usage(format!("No server {} is configured{place}", code(name)));
+            let failure = match super::near::nearest(name, names) {
+                Some(near) => failure.hint(format!("Did you mean {}?", code(near))),
+                None => failure,
+            };
+            failure.hint(Hint::run("see the configured servers", "ncp server list"))
         }
         LookupError::Invalid { error, .. } => entry_failure(name, &error, loaded.file_of(name)),
     })?;
@@ -345,39 +348,59 @@ pub fn select<'a>(loaded: &'a Loaded, name: &str, ui: Ui) -> Result<&'a Server, 
         .warnings()
         .iter()
         .filter(|warning| warning.server.as_deref() == Some(name))
-        .for_each(|warning| ui.warning(Some(name), &unknown_key(&warning.key)));
+        .for_each(|warning| ui.warn(&unknown_key(warning)));
     Ok(server)
 }
 
 // The failure shows the entries of the file, so that the user or an agent
 // can check them before `ncp trust`.
 fn blocked(name: &str, project: &Project, in_global: bool) -> Failure {
-    let file = project.file.display();
+    let head = format!(
+        "The server {} is in {}",
+        code(name),
+        code(&project.file.display().to_string())
+    );
+    let trust = Hint::run_text("trust the file", "ncp trust");
     let state = match project.trust {
         Trust::Ignored => {
-            return Failure::usage(format!("{name} is in {file}, which you ignored"))
-                .server(name)
-                .hint("ncp trust");
+            return Failure::usage(format!("{head}, which you ignored"))
+                .about(name)
+                .hint(trust);
         }
-        Trust::Untrusted { changed: true } => "which changed since you trusted it",
-        _ => "which is not trusted",
+        Trust::Untrusted { changed: true } => "which changed after you trusted it",
+        _ => "which you did not trust",
     };
-    let failure = Failure::usage(format!(
-        "{name} is in {file}, {state}:\n{}",
-        super::render::project_entries(&project.entries).trim_end()
-    ))
-    .server(name)
-    .hint("ncp trust");
+    let failure = super::render::project_entries(&project.entries, "")
+        .lines()
+        .fold(
+            Failure::usage(format!("{head}, {state}:")).about(name),
+            Failure::data,
+        )
+        .hint(trust);
     if in_global {
-        failure.hint("ncp trust --ignore")
+        failure.hint(Hint::run_text(
+            "ignore the file and use the entry of the global file",
+            "ncp trust --ignore",
+        ))
     } else {
         failure
     }
 }
 
+/// The warning for a key that `ncp` does not know.
 #[must_use]
-pub fn unknown_key(key: &str) -> String {
-    format!("unknown key {key:?} ignored")
+pub fn unknown_key(warning: &config::Warning) -> Warning {
+    let key = code(&warning.key);
+    match &warning.server {
+        Some(server) => Warning::new(format!(
+            "The entry of the server {} has the unknown key {key}. ncp ignores it.",
+            code(server)
+        ))
+        .about(server.as_str()),
+        None => Warning::new(format!(
+            "The configuration has the unknown key {key}. ncp ignores it."
+        )),
+    }
 }
 
 fn entry_failure(name: &str, error: &EntryError, path: &Path) -> Failure {
@@ -563,7 +586,7 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
     let ui = context.ui;
     let cache = if context.cache.writes() {
         protocol_version_file::load(&context.paths.version_cache).unwrap_or_else(|error| {
-            ui.warning(None, &chain_text(&error));
+            ui.warn(&Warning::new(error.to_string()).caused_by(&error));
             VersionCache::default()
         })
     } else {
@@ -660,7 +683,7 @@ impl Prepared {
             .cache
             .record(server.name.clone(), server.target.clone(), version.clone());
         if let Err(error) = protocol_version_file::save(&context.paths.version_cache, &cache) {
-            ui.warning(None, &chain_text(&error));
+            ui.warn(&Warning::new(error.to_string()).caused_by(&error));
         }
     }
 }
@@ -1087,7 +1110,7 @@ mod tests {
         .unwrap_err();
         assert!(failure.message().contains("does not exist"), "{failure:?}");
         assert_eq!(
-            failure.hints().first().map(Hint::message),
+            failure.hints().first().and_then(Hint::command),
             Some("ncp server list")
         );
     }

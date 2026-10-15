@@ -332,7 +332,7 @@ fn untrusted(project: &Project) -> Failure {
     Failure::usage(format!(
         "{} {state}, and ncp changes only a trusted project file:\n{}",
         project.file.display(),
-        render::project_entries(&project.entries).trim_end()
+        render::project_entries(&project.entries, "  ").trim_end()
     ))
     .hint("ncp trust --show")
 }
@@ -784,7 +784,12 @@ fn report_removed(
 fn not_found(context: &Context<'_>, loaded: &Loaded, name: &str) -> Failure {
     session::select(loaded, name, context.ui)
         .err()
-        .unwrap_or_else(|| Failure::usage(format!("no server {name:?} is configured")))
+        .unwrap_or_else(|| {
+            Failure::usage(format!(
+                "No server {} is configured",
+                crate::text::code(name)
+            ))
+        })
 }
 
 // An entry that does not load has no URL to compare, so its tokens stay, and the result says so.

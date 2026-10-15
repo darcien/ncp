@@ -69,10 +69,10 @@ fn server_list_shows_servers_invalid_entries_and_unknown_keys() {
     );
     assert_eq!(
         run.stderr(),
-        [
-            json!({"warning": {"server": "local", "message": "unknown key \"disabled\" ignored",
-            "data": [], "causes": [], "hints": []}})
-        ]
+        [json!({"warning": {"server": "local",
+                "message": "The entry of the server `local` has the unknown key `disabled`. \
+                    ncp ignores it.",
+                "data": [], "causes": [], "hints": []}})]
     );
 }
 
@@ -217,7 +217,22 @@ fn joined_server_and_tool_name_gives_the_two_word_command() {
     let home = Home::new("joined");
     let run = home.run(&["tool", "call", "github.search_issues", "q=x"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.hints()[0], "ncp tool call github search_issues q=x");
+    let error = run.error();
+    assert_eq!(
+        error["message"],
+        "`github.search_issues` joins a server name and a tool name"
+    );
+    assert_eq!(
+        error["hints"],
+        json!([{"message": "To give the server and the tool as two words, run \
+            `ncp tool call github search_issues q=x`"}])
+    );
+    let run = home.run(&["tool", "show", "github.search_issues"]);
+    assert_eq!(
+        run.error()["hints"],
+        json!([{"message": "To see the tool, run `ncp tool show github search_issues`",
+            "command": "ncp tool show github search_issues"}])
+    );
 }
 
 #[test]
@@ -241,7 +256,18 @@ fn unknown_server_and_unknown_tool_name_the_command_that_lists_them() {
     home.configure(&json!({"fx": stdio("modern")}));
     let run = home.run(&["tool", "list", "nope"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.hints()[0], "ncp server list");
+    assert_eq!(
+        run.error()["message"],
+        format!(
+            "No server `nope` is configured in `{}`",
+            home.config_path().display()
+        )
+    );
+    assert_eq!(
+        run.error()["hints"],
+        json!([{"message": "To see the configured servers, run `ncp server list`",
+            "command": "ncp server list"}])
+    );
     let run = home.run(&["tool", "call", "fx", "nope"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert_eq!(run.hints()[0], "ncp tool list fx");
@@ -2452,8 +2478,7 @@ fn unknown_names_get_the_nearest_known_name() {
     home.configure(&json!({"fx": stdio("modern")}));
     let run = home.run(&["tool", "list", "fz"]);
     assert_eq!(run.code(), 2);
-    let message = run.old_error()["message"].as_str().unwrap().to_string();
-    assert!(message.ends_with("did you mean \"fx\"?"), "{message}");
+    assert_eq!(run.error()["hints"][0]["message"], "Did you mean `fx`?");
     let run = home.run(&["tool", "show", "fx", "ech"]);
     assert_eq!(run.code(), 2);
     let message = run.old_error()["message"].as_str().unwrap().to_string();

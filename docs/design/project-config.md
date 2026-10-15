@@ -165,12 +165,13 @@ Accepted risks:
      entries and asks "Trust? [y/N]", as `mise` asks. A No writes the
      ignored record, and the command continues without the file.
    - **Untrusted file, no TTY:** exit 2 before any action. The error shows
-     the entries and gives the hint `ncp trust`, as mise does. For a name
-     in both files, a second hint gives `ncp trust --ignore`, which keeps
-     the global entry. After a change of a trusted file, the message says
-     "changed since you trusted it" (rule 4 has the old hash).
-   - **Ignored file:** a named project entry gives exit 2: "NAME is in
-     FILE, which you ignored", with the hint `ncp trust`. A name in both
+     the entries, with a hint that gives `ncp trust`, as mise does. For a
+     name in both files, a second hint gives `ncp trust --ignore`, which
+     keeps the global entry. After a change of a trusted file, the message
+     says "changed after you trusted it" (rule 4 has the old hash).
+   - **Ignored file:** a named project entry gives exit 2: "The server
+     `NAME` is in `FILE`, which you ignored", with a hint that gives `ncp
+     trust`. A name in both
      files runs the global entry.
    - `server list` shows the file and its state, and never asks. Shell
      completion skips an untrusted file and writes nothing.
@@ -181,9 +182,10 @@ Accepted risks:
      $ ncp tool call linear list_issues
      ...result of linear...
      $ ncp tool call fs read_file path=README.md
-     error: fs is in /work/app/.mcp.json, which is not trusted:
-       fs  npx -y @modelcontextprotocol/server-filesystem .
-     hint: ncp trust
+     error: The server `fs` is in `/work/app/.mcp.json`, which you did not trust:
+            fs  npx -y @modelcontextprotocol/server-filesystem .
+
+     hint: To trust the file, run `ncp trust`
      ```
 
      mise checks at each command that loads its configuration. `ncp`

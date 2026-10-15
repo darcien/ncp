@@ -13,7 +13,7 @@ use tokio::io::AsyncReadExt;
 
 use super::{
     args::{CallArgs, Cli, PromptCommand, ResourceCommand, ServerCommand, ToolCommand},
-    outcome::{Exit, Failure, chain_text},
+    outcome::{Exit, Failure, Hint, chain_text},
     render,
     schema_check::{self, Outcome},
     session::{self, Context, Loaded},
@@ -67,10 +67,7 @@ pub async fn tool(context: &Context<'_>, command: ToolCommand) -> Result<(), Fai
 async fn server_list(context: &Context<'_>) -> Result<(), Failure> {
     let loaded = session::load(context, None).await?;
     for warning in loaded.config.warnings() {
-        context.ui.warning(
-            warning.server.as_deref(),
-            &session::unknown_key(&warning.key),
-        );
+        context.ui.warn(&session::unknown_key(warning));
     }
     let rows = list_rows(&loaded);
     if rows.is_empty() {
@@ -134,19 +131,22 @@ fn select<'a>(
     context: &Context<'_>,
     loaded: &'a Loaded,
     word: &str,
-    fix: impl FnOnce(&str, &str) -> String,
+    fix: impl FnOnce(&str, &str) -> Hint,
 ) -> Result<&'a Server, Failure> {
     if let Some((server, tool)) = session::split_joined(word) {
-        return Err(session::joined_failure(word, &fix(server, tool)));
+        return Err(session::joined_failure(word, fix(server, tool)));
     }
     session::select(loaded, word, context.ui)
 }
 
-fn show_fix(server: &str, tool: &str) -> String {
-    format!(
-        "ncp tool show {} {}",
-        render::shell_word(server),
-        render::shell_word(tool)
+fn show_fix(server: &str, tool: &str) -> Hint {
+    Hint::run(
+        "see the tool",
+        format!(
+            "ncp tool show {} {}",
+            render::shell_word(server),
+            render::shell_word(tool)
+        ),
     )
 }
 
@@ -433,7 +433,13 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
         .join(" ")
     };
     if let Some((server, tool)) = session::split_joined(word) {
-        return Err(session::joined_failure(word, &call_fix(server, tool)));
+        return Err(session::joined_failure(
+            word,
+            Hint::run_text(
+                "give the server and the tool as two words",
+                &call_fix(server, tool),
+            ),
+        ));
     }
     let tool_name = tool_word(word, call.tool.as_deref())?;
     let input = if call.help {
