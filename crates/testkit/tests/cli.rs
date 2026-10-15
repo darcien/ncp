@@ -1228,19 +1228,22 @@ fn copy_check_of_a_slow_native_store_stops_at_its_limit_and_leaves_no_program() 
     let elapsed = start.elapsed();
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert!(elapsed < std::time::Duration::from_secs(8), "{elapsed:?}");
-    assert!(
-        warnings(&run)[0].contains("cannot check"),
-        "{}",
-        run.describe()
+    let warning = &run.warnings()[0];
+    assert_eq!(
+        warning["message"],
+        "ncp cannot check the native store for a copy of `A`"
     );
+    let cause = warning["causes"][0].as_str().unwrap_or_default();
     assert!(
-        run.old_warnings()
-            .iter()
-            .all(|warning| common::hints(warning).is_empty())
-            && notes(&run, "hint").is_empty(),
-        "{}",
-        run.describe()
+        cause.starts_with("The credential store gave no answer in"),
+        "{cause}"
     );
+    // Only the hint of the store error: no command can fix an unknown copy.
+    assert_eq!(
+        common::hints(warning),
+        ["If the store shows an unlock prompt, answer it. Then run the command again."]
+    );
+    assert!(notes(&run, "hint").is_empty(), "{}", run.describe());
     let program = home.root.join("keychain/security").display().to_string();
     let found = Command::new("pgrep")
         .args(["-f", &program])

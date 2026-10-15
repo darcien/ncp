@@ -58,6 +58,9 @@ pub fn store_hints(error: &StoreError) -> Vec<Hint> {
             "If the store shows an unlock prompt, answer it. Then run the command again.",
         )],
         StoreError::Locked(_) => vec![Hint::text("To list the locked items, unlock the keyring")],
+        StoreError::Ambiguous(_) => vec![Hint::text(
+            "Remove the copies of the item in the keyring, and keep one",
+        )],
         _ => Vec::new(),
     }
 }

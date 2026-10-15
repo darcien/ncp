@@ -362,6 +362,7 @@ fn miss(
             ),
         )
         .caused_by(error)
+        .with_hints(super::fixes::store_hints(error))
         .hint(Hint::run_text(
             "store the value in the credential file",
             &format!("{set} --credential-store file"),
@@ -385,6 +386,8 @@ fn clone_error(error: &StoreError) -> StoreError {
         StoreError::Unavailable(detail) => StoreError::Unavailable(detail.clone()),
         StoreError::Denied(detail) => StoreError::Denied(detail.clone()),
         StoreError::Locked(count) => StoreError::Locked(*count),
+        StoreError::Ambiguous(count) => StoreError::Ambiguous(*count),
+        StoreError::Failure(detail) => StoreError::Failure(detail.clone()),
         StoreError::NoAnswer(limit) => StoreError::NoAnswer(*limit),
         StoreError::Interrupted => StoreError::Interrupted,
         other => StoreError::Failure(chain_text(other).into()),
@@ -394,6 +397,22 @@ fn clone_error(error: &StoreError) -> StoreError {
 /// A store error. The native store and its time limit are authorization
 /// errors (exit 4). A credential file that `ncp` cannot read or write is a
 /// local error (exit 3).
+/// A store failure with a message that names the work, and the hints of
+/// the call site after the hints of the store error. Ctrl-C stays the
+/// interrupt, with no other message and no hint.
+pub(super) fn store_failure_of(
+    error: &StoreError,
+    message: String,
+    hints: impl IntoIterator<Item = Hint>,
+) -> Failure {
+    match error {
+        StoreError::Interrupted => session::interrupted(None),
+        _ => hints
+            .into_iter()
+            .fold(store_failure(error).context(message), Failure::hint),
+    }
+}
+
 pub(super) fn store_failure(error: &StoreError) -> Failure {
     let exit = match error {
         StoreError::Interrupted => return session::interrupted(None),
@@ -403,6 +422,7 @@ pub(super) fn store_failure(error: &StoreError) -> Failure {
         StoreError::Unavailable(_)
         | StoreError::Denied(_)
         | StoreError::Locked(_)
+        | StoreError::Ambiguous(_)
         | StoreError::Failure(_)
         | StoreError::NoAnswer(_) => Exit::Auth,
     };
@@ -593,12 +613,14 @@ async fn set(
     let store = match place {
         CredentialPlace::Native => native(context).await.map_err(|error| {
             let word = render::shell_word(target.uses[0].server.name.as_str());
-            store_failure(&error)
-                .context("ncp cannot open the native store")
-                .hint(Hint::run_text(
+            store_failure_of(
+                &error,
+                "ncp cannot open the native store".to_string(),
+                [Hint::run_text(
                     "store the value in the credential file",
                     &format!("ncp secret set {name} --server {word} --credential-store file"),
-                ))
+                )],
+            )
         })?,
         CredentialPlace::File => file(context),
     };
@@ -609,7 +631,7 @@ async fn set(
             .filter(|host| ask::has_punycode_label(host))
     {
         context.ui.warn(&Warning::new(format!(
-            "The host {} has a Punycode label (`xn--`), so its name can look like another name.",
+            "The host {} has a Punycode label (`xn--`), so its name can look like another name",
             code(&host)
         )));
     }
@@ -621,11 +643,12 @@ async fn set(
     call(context, &store, move |store| store.save(&saved, &value))
         .await
         .map_err(|error| {
-            store_failure(&error).context(format!(
+            let message = format!(
                 "ncp cannot store the value of {} in {}",
                 code(name.as_str()),
                 place_text(place)
-            ))
+            );
+            store_failure_of(&error, message, [])
         })?;
     // A list of a server can depend on the value.
     crate::list_cache::remove_all(&context.paths.cache_dir);
@@ -692,14 +715,14 @@ async fn warn_about_copies(
         | (Err(StoreError::Unavailable(_)), CredentialPlace::Native) => return,
         (Err(error), _) => {
             // `ncp` knows no copy, so no command can fix it.
-            context.ui.warn(
-                &Warning::new(format!(
-                    "ncp cannot check {} for a copy of {}",
-                    place_text(other),
-                    code(name.as_str())
-                ))
-                .caused_by(&error),
+            let message = format!(
+                "ncp cannot check {} for a copy of {}",
+                place_text(other),
+                code(name.as_str())
             );
+            context
+                .ui
+                .warn(&Warning::from(store_failure_of(&error, message, [])));
             return;
         }
         (Ok(true), CredentialPlace::File) => format!(
@@ -909,10 +932,7 @@ fn warn_unlisted(context: &Context<'_>, failed: &[(CredentialPlace, StoreError)]
     for (place, error) in failed {
         context
             .ui
-            .warn(&Warning::from(store_failure(error).context(format!(
-                "ncp cannot list the items in {}",
-                place_text(*place)
-            ))));
+            .warn(&Warning::from(unlisted_failure(*place, error)));
     }
 }
 
@@ -1037,25 +1057,34 @@ pub(super) async fn store_for_add(
     let chosen = match (place, &places[0].1) {
         (CredentialPlace::Native, Ok(store)) => store.clone(),
         (CredentialPlace::Native, Err(error)) => {
-            return Err(store_failure(error)
-                .context("ncp cannot open the native store")
-                .hint(file_flag_hint()));
+            return Err(store_failure_of(
+                error,
+                "ncp cannot open the native store".to_string(),
+                [file_flag_hint()],
+            ));
         }
         (CredentialPlace::File, _) => file(context),
     };
     let mut stored = Vec::new();
     for (other, opened) in places {
+        let read_failure = |error: &StoreError| {
+            let message = format!(
+                "ncp cannot read {} for a value of {}",
+                place_text(other),
+                code(name.as_str())
+            );
+            store_failure_of(error, message, [])
+        };
         let store = match opened {
             Ok(store) => store,
             Err(StoreError::Unavailable(_)) => continue,
-            Err(error) => return Err(store_failure(&error)),
+            Err(error) => return Err(read_failure(&error)),
         };
         let wanted = key.clone();
         match call(context, &store, move |store| store.load(&wanted)).await {
             Ok(Some(value)) => stored.push((other, value)),
             Ok(None) => {}
-            Err(StoreError::Interrupted) => return Err(session::interrupted(None)),
-            Err(error) => return Err(store_failure(&error)),
+            Err(error) => return Err(read_failure(&error)),
         }
     }
     let prompt = format!("Value of {name} for {destination}: ");
@@ -1082,13 +1111,14 @@ pub(super) async fn store_for_add(
     call(context, &chosen, move |store| store.save(&key, &value))
         .await
         .map_err(|error| {
-            store_failure(&error)
-                .context(format!(
-                    "ncp cannot store the value of {} in {}",
-                    code(name.as_str()),
-                    place_text(place)
-                ))
-                .hint(file_flag_hint())
+            let message = format!(
+                "ncp cannot store the value of {} in {}",
+                code(name.as_str()),
+                place_text(place)
+            );
+            // The file is the fix only for a failure of the native store.
+            let hints = (place == CredentialPlace::Native).then(file_flag_hint);
+            store_failure_of(&error, message, hints)
         })?;
     crate::list_cache::remove_all(&context.paths.cache_dir);
     Ok(())
@@ -1359,25 +1389,23 @@ fn one_server_hint(name: &SecretName) -> Hint {
 // With no flag, a place that cannot list stops the delete: it can hold an
 // item of a second destination.
 fn one_unlisted(name: &SecretName, place: CredentialPlace, error: &StoreError) -> Failure {
-    store_failure(error)
-        .context(format!(
-            "ncp cannot list the items in {}. ncp deleted nothing.",
-            place_text(place)
-        ))
-        .hint(Hint::text(format!(
-            "{} can have an item of {} for another destination. {}.",
-            capitalized(place_text(place)),
-            code(name.as_str()),
-            one_server_hint(name).message()
-        )))
+    let message = format!(
+        "ncp cannot list the items in {}. ncp deleted nothing.",
+        place_text(place)
+    );
+    let hint = Hint::text(format!(
+        "{} can have an item of {} for another destination. {}.",
+        capitalized(place_text(place)),
+        code(name.as_str()),
+        one_server_hint(name).message()
+    ));
+    store_failure_of(error, message, [hint])
 }
 
 // A place that cannot list can hold the item.
 fn unlisted_failure(place: CredentialPlace, error: &StoreError) -> Failure {
-    store_failure(error).context(format!(
-        "ncp cannot list the items in {}",
-        place_text(place)
-    ))
+    let message = format!("ncp cannot list the items in {}", place_text(place));
+    store_failure_of(error, message, [])
 }
 
 fn capitalized(text: &str) -> String {
@@ -1545,10 +1573,11 @@ async fn delete(context: &Context<'_>, name: &str, removal: Removal) -> Result<(
         }
     }
     match (removed.is_empty(), failed) {
-        (true, Some(error)) => Err(store_failure(&error).context(format!(
-            "ncp cannot delete the items of {}",
-            code(name.as_str())
-        ))),
+        (true, Some(error)) => Err(store_failure_of(
+            &error,
+            format!("ncp cannot delete the items of {}", code(name.as_str())),
+            [],
+        )),
         (true, None) => Err(not_stored(&name)),
         (false, _) => {
             crate::list_cache::remove_all(&context.paths.cache_dir);

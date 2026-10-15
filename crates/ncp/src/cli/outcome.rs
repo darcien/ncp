@@ -189,6 +189,16 @@ impl Diagnostic {
         &self.hints
     }
 
+    fn prefixed(self, server: String) -> Self {
+        match self.server {
+            Some(About::Named(_)) => self,
+            _ => Self {
+                server: Some(About::Prefixed(server)),
+                ..self
+            },
+        }
+    }
+
     fn data_line(self, line: String) -> Self {
         Self {
             data: push(self.data, line),
@@ -269,13 +279,12 @@ impl Warning {
         })
     }
 
-    /// Sets the server of a message of the older form.
+    /// Sets the server of a message of the older form. A message that
+    /// names its server keeps it, so that the text does not name the
+    /// server two times.
     #[must_use]
     pub fn server(self, server: impl Into<String>) -> Self {
-        Self(Diagnostic {
-            server: Some(About::Prefixed(server.into())),
-            ..self.0
-        })
+        Self(self.0.prefixed(server.into()))
     }
 
     #[must_use]
@@ -399,13 +408,12 @@ impl Failure {
         })
     }
 
-    /// Sets the server of a message of the older form.
+    /// Sets the server of a message of the older form. A message that
+    /// names its server keeps it, so that the text does not name the
+    /// server two times.
     #[must_use]
     pub fn server(self, server: impl Into<String>) -> Self {
-        self.with_diagnostic(|diagnostic| Diagnostic {
-            server: Some(About::Prefixed(server.into())),
-            ..diagnostic
-        })
+        self.with_diagnostic(|diagnostic| diagnostic.prefixed(server.into()))
     }
 
     #[must_use]
@@ -637,6 +645,15 @@ mod tests {
         assert_eq!(diagnostic.prefix(), None);
         assert_eq!(diagnostic.causes(), ["denied"]);
         assert_eq!(diagnostic.hints(), [Hint::text("y")]);
+    }
+
+    #[test]
+    fn a_failure_that_names_its_server_gets_no_prefix() {
+        let failure = Failure::usage("The server `fx` failed")
+            .about("fx")
+            .server("fx");
+        assert_eq!(failure.diagnostic().prefix(), None);
+        assert_eq!(failure.server_name(), Some("fx"));
     }
 
     #[test]

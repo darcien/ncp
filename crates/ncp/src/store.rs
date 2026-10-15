@@ -73,8 +73,11 @@ pub enum StoreError {
     #[error("The credential store denied access")]
     Denied(#[source] Detail),
     /// The Secret Service does not show the names of a locked item.
-    #[error("The keyring has {0} locked items")]
+    #[error("The keyring has {}", items(*.0, "locked item"))]
     Locked(usize),
+    /// More than one item of the keyring matches one key.
+    #[error("The keyring has {} for one secret", items(*.0, "item"))]
+    Ambiguous(usize),
     #[error("The credential store failed")]
     Failure(#[source] Detail),
     #[error("ncp cannot use the credential file {}", code(&.path.display().to_string()))]
@@ -91,6 +94,14 @@ pub enum StoreError {
     /// Ctrl-C during the call.
     #[error("ncp stopped the store call because of an interrupt")]
     Interrupted,
+}
+
+// "1 item" or "2 items".
+fn items(count: usize, word: &str) -> String {
+    match count {
+        1 => format!("1 {word}"),
+        _ => format!("{count} {word}s"),
+    }
 }
 
 /// What failed in a store, in the words of `ncp`. The text of the store
@@ -216,6 +227,7 @@ mod keys_tests {
             StoreError::Unavailable("x".into()).to_string(),
             StoreError::Denied("x".into()).to_string(),
             StoreError::Locked(2).to_string(),
+            StoreError::Ambiguous(2).to_string(),
             StoreError::Failure("x".into()).to_string(),
             StoreError::Io {
                 path: "/c".into(),
@@ -228,7 +240,7 @@ mod keys_tests {
             StoreError::Interrupted.to_string(),
         ];
         crate::style::assert_style(&texts);
-        assert_eq!(texts[7], "The credential store gave no answer in 60 s");
+        assert_eq!(texts[8], "The credential store gave no answer in 60 s");
     }
 
     #[test]

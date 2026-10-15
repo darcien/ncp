@@ -54,13 +54,7 @@ fn store_error(error: Error) -> StoreError {
         Error::BadEncoding(_) | Error::BadDataFormat(..) => {
             StoreError::Failure("The stored item is not UTF-8 text".into())
         }
-        Error::Ambiguous(items) => StoreError::Failure(
-            format!(
-                "The keyring has {} items for one secret. Remove the copies in the keyring.",
-                items.len()
-            )
-            .into(),
-        ),
+        Error::Ambiguous(items) => StoreError::Ambiguous(items.len()),
         other => StoreError::Failure(other.to_string().into()),
     }
 }
