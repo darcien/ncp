@@ -489,7 +489,7 @@ fn an_invalid_entry_shows_its_error() {
     let list = home.run(&["server", "list"]).stdout();
     assert_eq!(
         list["invalid"][0]["error"],
-        "type \"ws\" is not \"stdio\", \"http\" or \"sse\""
+        "The type `ws` is not `stdio`, `http` or `sse`"
     );
 }
 
@@ -646,7 +646,11 @@ fn an_entry_that_the_loader_refuses_shows_its_target_and_the_problem() {
     let out = home.run(&["trust", "--show"]).stdout();
     assert_eq!(out["servers"], json!([]));
     assert_eq!(out["invalid"][0]["target"], "sh -c evil");
-    assert_eq!(out["invalid"][0]["error"], "\"args[0]\" must be a string");
+    assert_eq!(
+        out["invalid"][0]["error"],
+        "The field `args[0]` must be a string"
+    );
+    assert_eq!(out["invalid"][0]["causes"], json!([]));
 }
 
 #[test]

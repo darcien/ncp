@@ -61,7 +61,7 @@ pub struct Row {
     pub name: String,
     /// The transport and the target, when the loader can read the entry.
     pub target: Option<(&'static str, String)>,
-    pub error: Option<String>,
+    pub error: Option<Reason>,
     pub file: PathBuf,
     /// `None` for an entry of the global file.
     pub trust: Option<Trust>,
@@ -69,11 +69,28 @@ pub struct Row {
     pub shown: Option<Shown>,
 }
 
+/// Why an entry is not valid: the text of the error and its causes.
+pub struct Reason(Vec<String>);
+
+impl Reason {
+    #[must_use]
+    pub fn of(error: &dyn std::error::Error) -> Self {
+        Self(super::outcome::chain(error))
+    }
+
+    /// The error and its causes on one line, for a table cell.
+    #[must_use]
+    pub fn text(&self) -> String {
+        self.0.join(": ")
+    }
+}
+
 impl Row {
     fn json(&self) -> Value {
         let mut row = serde_json::json!({"name": self.name});
-        if let Some(error) = &self.error {
-            row["error"] = serde_json::json!(error);
+        if let Some(Reason(texts)) = &self.error {
+            row["error"] = serde_json::json!(texts.first());
+            row["causes"] = serde_json::json!(texts.get(1..).unwrap_or_default());
         }
         if let Some((transport, target)) = &self.target {
             row["transport"] = serde_json::json!(transport);
@@ -125,8 +142,8 @@ pub fn project_rows(project: &Project) -> Vec<Row> {
                 name: entry.name.clone(),
                 target: shape.map(|shape| (shape.transport, target_text(&shape.target))),
                 error: match &entry.shape {
-                    Ok(shape) => shape.problem.as_ref().map(ToString::to_string),
-                    Err(error) => Some(chain_text(&error)),
+                    Ok(shape) => shape.problem.as_ref().map(|problem| Reason::of(problem)),
+                    Err(error) => Some(Reason::of(error)),
                 },
                 file: project.file.clone(),
                 trust: Some(project.trust),
@@ -183,7 +200,7 @@ pub fn project_entries(entries: &[UnexpandedEntry]) -> String {
                     shape
                         .problem
                         .iter()
-                        .map(|problem| format!("not valid: {problem}")),
+                        .map(|problem| format!("not valid: {}", chain_text(problem))),
                 )
                 .collect(),
                 Err(error) => vec![format!("not valid: {error}", error = chain_text(&error))],
@@ -243,7 +260,7 @@ pub fn server_list(project: Option<&Project>, rows: &[Row]) -> String {
         .iter()
         .map(|row| {
             let (transport, target) = match (&row.error, &row.target) {
-                (Some(error), _) => ("invalid".to_string(), error.clone()),
+                (Some(reason), _) => ("invalid".to_string(), reason.text()),
                 (None, Some((transport, target))) => ((*transport).to_string(), target.clone()),
                 (None, None) => (String::new(), String::new()),
             };

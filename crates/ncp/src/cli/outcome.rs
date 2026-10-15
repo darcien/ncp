@@ -266,31 +266,21 @@ fn kept_causes(
         .into_boxed_slice()
 }
 
-/// An error and its source chain on one line, joined with `: `, with no
-/// repeated text (design rule 7). For a place that has room for one line
-/// only, for example a table cell.
+/// The text of an error, then the texts of its source chain that do not
+/// repeat (design rule 7).
 #[must_use]
-pub fn chain_text(error: &dyn std::error::Error) -> String {
+pub fn chain(error: &dyn std::error::Error) -> Vec<String> {
     let mut texts = source_texts(error);
     let first = texts.next().unwrap_or_default();
     let rest = kept_causes(&first, Vec::new(), texts);
-    std::iter::once(first)
-        .chain(rest.into_vec())
-        .collect::<Vec<_>>()
-        .join(": ")
+    std::iter::once(first).chain(rest.into_vec()).collect()
 }
 
-/// A value in backticks (design rule 14). A value with a backtick or a
-/// control character shows in double quotes, with the escapes of Rust
-/// `Debug`, so that the backticks of a line stay in pairs and the value
-/// cannot start a new line.
+/// An error and its source chain on one line, joined with `: `. For a
+/// place that has room for one line only, for example a table cell.
 #[must_use]
-pub fn code(value: &str) -> String {
-    if value.contains('`') || value.chars().any(char::is_control) {
-        format!("{value:?}")
-    } else {
-        format!("`{value}`")
-    }
+pub fn chain_text(error: &dyn std::error::Error) -> String {
+    chain(error).join(": ")
 }
 
 /// A warning: the parts of an error with no exit code.
@@ -685,13 +675,6 @@ mod tests {
         assert_eq!(diagnostic.prefix(), None);
         assert_eq!(diagnostic.causes(), ["denied"]);
         assert_eq!(diagnostic.hints(), [Hint::text("y")]);
-    }
-
-    #[test]
-    fn a_value_in_backticks_with_a_backtick_or_a_new_line_shows_in_quotes() {
-        assert_eq!(code("/home/u/mcp.json"), "`/home/u/mcp.json`");
-        assert_eq!(code("a`b"), "\"a`b\"");
-        assert_eq!(code("a\nb"), "\"a\\nb\"");
     }
 
     #[test]

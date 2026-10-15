@@ -69,7 +69,7 @@ mod tests {
 
     #[test]
     fn the_error_text_follows_the_message_rules() {
-        crate::style::assert_style(&NoHome.to_string());
+        crate::style::assert_style(&[NoHome.to_string()]);
     }
 
     #[test]

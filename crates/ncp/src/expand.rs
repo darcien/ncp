@@ -12,11 +12,11 @@ pub type Env = HashMap<String, String>;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ExpandError {
-    #[error("variable {0} is not set")]
+    #[error("The variable `{0}` is not set")]
     Unset(String),
-    #[error("\"${{\" has no closing \"}}\"")]
+    #[error("A `${{` has no closing `}}`")]
     Unterminated,
-    #[error("{0:?} is not a variable name")]
+    #[error("The name {} is not a variable name", crate::text::code(.0))]
     BadName(String),
 }
 
@@ -136,6 +136,16 @@ pub fn is_variable_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_texts_follow_the_message_rules() {
+        let texts = [
+            ExpandError::Unset("A".into()).to_string(),
+            ExpandError::Unterminated.to_string(),
+            ExpandError::BadName("1a".into()).to_string(),
+        ];
+        crate::style::assert_style(&texts);
+    }
 
     fn env() -> Env {
         Env::from([

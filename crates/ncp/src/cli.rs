@@ -6,6 +6,7 @@ pub mod auth;
 mod commands;
 mod completion;
 mod diagnostics;
+mod fixes;
 mod near;
 mod outcome;
 mod project_file;
@@ -31,12 +32,12 @@ use tokio_util::sync::CancellationToken;
 
 use self::{
     args::{Cli, Command, OutputFormat},
-    outcome::{Exit, Failure, Hint, code},
+    outcome::{Exit, Failure, Hint},
     session::Context,
     timings::Timings,
     ui::{Format, Ui, Verbosity},
 };
-use crate::{expand::Env, paths::Paths};
+use crate::{expand::Env, paths::Paths, text::code};
 
 /// The time that the runtime waits for its tasks at the exit. A native store
 /// call that passed its limit can stay on its blocking thread.

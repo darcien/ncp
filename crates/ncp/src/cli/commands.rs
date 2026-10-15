@@ -114,7 +114,7 @@ fn list_rows(loaded: &Loaded) -> Vec<render::Row> {
         render::Row {
             name: name.to_string(),
             target: None,
-            error: Some(chain_text(&error)),
+            error: Some(render::Reason::of(error)),
             file,
             trust,
             shown: None,

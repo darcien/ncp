@@ -34,6 +34,7 @@ use crate::{
     project::Trust,
     server::{Origin, OriginError},
     store::{self, CredentialStore, FileStore, StoreError},
+    text::code,
 };
 
 /// Tests replace the native store with a fake. The limit applies to each
@@ -115,7 +116,7 @@ pub(super) async fn resolve(context: &Context<'_>, server: &Server) -> Result<Re
     let (values, stored) = values_of(context, server, server.value_names(), destination).await?;
     let values = server
         .expand_values(&values)
-        .map_err(|error| Failure::usage(chain_text(&error)).server(server.name.as_str()))?;
+        .map_err(|error| entry_failure(server, &error))?;
     Ok(Resolved { values, stored })
 }
 
@@ -140,8 +141,23 @@ pub(super) async fn client_secret(
                 field: "oauth.clientSecret".into(),
                 error,
             };
-            Failure::usage(chain_text(&error)).server(server.name.as_str())
+            entry_failure(server, &error)
         })
+}
+
+// The entry is valid in the file, but a value from a store does not fit
+// into it.
+fn entry_failure(server: &Server, error: &EntryError) -> Failure {
+    let name = server.name.as_str();
+    let failure = Failure::usage(format!(
+        "The entry of the server {} is not valid",
+        code(name)
+    ))
+    .about(name)
+    .caused_by(error);
+    super::fixes::entry_hints(error)
+        .into_iter()
+        .fold(failure, Failure::hint)
 }
 
 async fn values_of(
@@ -1209,11 +1225,15 @@ async fn strict_config(
             .context("ncp cannot know which items the configuration uses")
             .with_exit(Exit::Usage)
     })?;
+    let invalid_entry = |server: &str, error: &EntryError| {
+        Failure::usage(format!(
+            "The entry of the server {} is not valid. ncp cannot know which items it uses.",
+            code(server)
+        ))
+        .caused_by(error)
+    };
     if let Some((server, error)) = loaded.config.invalid().next() {
-        return Err(unknown(format!(
-            "server {server}: {error}",
-            error = chain_text(&error)
-        )));
+        return Err(invalid_entry(server, error));
     }
     let waiting = match &loaded.project {
         ProjectFile::Unusable { file, reason } => {
@@ -1232,11 +1252,7 @@ async fn strict_config(
         })
     });
     if let Some((server, error)) = invalid {
-        return Err(unknown(format!(
-            "server {server}: {error}",
-            error = chain_text(&error)
-        ))
-        .hint("ncp trust"));
+        return Err(invalid_entry(server, error).hint("ncp trust"));
     }
     if let Some(reason) = untrusted_use(&loaded, name, None) {
         return Err(unknown(reason).hint("ncp trust"));

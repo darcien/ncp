@@ -15,6 +15,7 @@ use serde_json::{Map, Value};
 use crate::{
     expand::{self, Env, ExpandError, Template, expand},
     server::{NameError, ServerName, ServerUrl, UrlError},
+    text::code,
 };
 
 pub const SERVERS_KEY: &str = "mcpServers";
@@ -251,57 +252,68 @@ impl std::fmt::Display for Warning {
 /// An error in the file as a whole. No server can load.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigError {
-    #[error("configuration is not valid JSONC: {0}")]
-    Syntax(String),
-    #[error("configuration is not a JSON object")]
+    #[error("The file is not valid JSONC")]
+    Syntax(#[source] ParserText),
+    #[error("The file is not a JSON object")]
     NotObject,
-    #[error("\"{SERVERS_KEY}\" is not a JSON object")]
+    #[error("The value of `{SERVERS_KEY}` is not a JSON object")]
     ServersNotObject,
 }
+
+/// The text of the JSONC parser, with the line and the column.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct ParserText(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EntryError {
     #[error(transparent)]
     Name(#[from] NameError),
-    #[error("entry is not a JSON object")]
+    #[error("The entry is not a JSON object")]
     NotObject,
-    #[error("entry has a \"url\" but no \"type\"; add \"type\": \"http\" or \"type\": \"sse\"")]
+    #[error("The entry has a `url` but no `type`")]
     UrlWithoutType,
-    #[error("entry has no \"command\" and no \"url\"")]
+    #[error("The entry has no `command` and no `url`")]
     NoTransport,
-    #[error("type {0:?} is not \"stdio\", \"http\" or \"sse\"")]
+    #[error("The type {} is not `stdio`, `http` or `sse`", code(.0))]
     UnknownType(String),
-    #[error("\"{0}\" is missing")]
+    #[error("The field `{0}` is missing")]
     Missing(&'static str),
-    #[error("\"{field}\" must be {expected}")]
+    #[error("The field {} must be {expected}", code(.field))]
     WrongType {
         field: String,
         expected: &'static str,
     },
-    #[error("\"url\": {0}")]
+    #[error("The field `url` is not valid")]
     Url(#[from] UrlError),
-    #[error("\"{field}\": {error}")]
-    Variable { field: String, error: ExpandError },
-    #[error("\"oauth.{0}\" needs \"oauth.clientId\"")]
+    #[error("The field {} is not valid", code(.field))]
+    Variable {
+        field: String,
+        #[source]
+        error: ExpandError,
+    },
+    #[error("The field `oauth.{0}` needs `oauth.clientId`")]
     WithoutClientId(&'static str),
     /// The URL is the expanded `url` of the entry, so that `auth login`
     /// can find the issuer that the server names.
-    #[error(
-        "\"oauth.clientSecret\" needs \"oauth.issuer\": the issuer of the authorization server where you registered the client"
-    )]
+    #[error("The field `oauth.clientSecret` needs `oauth.issuer`")]
     SecretWithoutIssuer { url: ServerUrl },
-    #[error("\"oauth.issuer\" and \"oauth.authorizationServer\" do not agree")]
+    #[error("The fields `oauth.issuer` and `oauth.authorizationServer` do not agree")]
     IssuersDisagree,
-    #[error("\"oauth.clientSecret\" is not a valid ${{NAME}} reference")]
+    #[error("The field `oauth.clientSecret` is not a valid `${{NAME}}` reference")]
     BadClientSecret,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LookupError {
-    #[error("no server {0:?} in the configuration")]
+    #[error("The configuration has no server {}", code(.0))]
     NotFound(String),
-    #[error("server {name}: {error}")]
-    Invalid { name: String, error: EntryError },
+    #[error("The entry of the server {} is not valid", code(.name))]
+    Invalid {
+        name: String,
+        #[source]
+        error: EntryError,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -446,7 +458,7 @@ pub fn parse_root(text: &str) -> Result<Map<String, Value>, ConfigError> {
     match jsonc_parser::parse_to_serde_value(text, &JSONC) {
         Ok(Value::Object(root)) => Ok(root),
         Ok(_) => Err(ConfigError::NotObject),
-        Err(error) => Err(ConfigError::Syntax(error.to_string())),
+        Err(error) => Err(ConfigError::Syntax(ParserText(error.to_string()))),
     }
 }
 
@@ -982,6 +994,50 @@ fn wrong_type(field: &str, expected: &'static str) -> EntryError {
 mod tests {
     use super::*;
 
+    #[test]
+    fn error_texts_follow_the_message_rules() {
+        let url = ServerUrl::parse("https://h/mcp").unwrap();
+        let texts = [
+            ConfigError::Syntax(ParserText("x".into())).to_string(),
+            ConfigError::NotObject.to_string(),
+            ConfigError::ServersNotObject.to_string(),
+            EntryError::Name(NameError::Empty).to_string(),
+            EntryError::NotObject.to_string(),
+            EntryError::UrlWithoutType.to_string(),
+            EntryError::NoTransport.to_string(),
+            EntryError::UnknownType("x".into()).to_string(),
+            EntryError::Missing("command").to_string(),
+            wrong_type("args", "an array of strings").to_string(),
+            EntryError::Url(UrlError::NoHost).to_string(),
+            EntryError::Variable {
+                field: "env.A".into(),
+                error: ExpandError::Unterminated,
+            }
+            .to_string(),
+            EntryError::WithoutClientId("clientSecret").to_string(),
+            EntryError::SecretWithoutIssuer { url }.to_string(),
+            EntryError::IssuersDisagree.to_string(),
+            EntryError::BadClientSecret.to_string(),
+            LookupError::NotFound("x".into()).to_string(),
+            LookupError::Invalid {
+                name: "x".into(),
+                error: EntryError::NotObject,
+            }
+            .to_string(),
+        ];
+        crate::style::assert_style(&texts);
+    }
+
+    #[test]
+    fn an_entry_error_gives_its_inner_error_as_its_source() {
+        let error = EntryError::Url(UrlError::PlainHttp);
+        assert_eq!(error.to_string(), "The field `url` is not valid");
+        assert_eq!(
+            std::error::Error::source(&error).map(ToString::to_string),
+            Some("ncp permits `http` only for a loopback host".to_string())
+        );
+    }
+
     fn env() -> Env {
         Env::from([
             ("HOME".to_string(), "/home/u".to_string()),
@@ -1352,9 +1408,9 @@ mod tests {
         assert_eq!(
             errors,
             [
-                "\"command\" must be a string",
-                "\"args[0]\" must be a string",
-                "\"type\" must be a string"
+                "The field `command` must be a string",
+                "The field `args[0]` must be a string",
+                "The field `type` must be a string"
             ]
         );
     }

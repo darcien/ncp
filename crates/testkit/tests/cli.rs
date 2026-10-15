@@ -63,8 +63,8 @@ fn server_list_shows_servers_invalid_entries_and_unknown_keys() {
                 {"name": "remote", "transport": "http", "target": "https://example.com/mcp",
                  "scope": "global", "file": file}
             ],
-            "invalid": [{"name": "broken", "scope": "global", "file": file, "error":
-                "entry has a \"url\" but no \"type\"; add \"type\": \"http\" or \"type\": \"sse\""}]
+            "invalid": [{"name": "broken", "scope": "global", "file": file,
+                "error": "The entry has a `url` but no `type`", "causes": []}]
         })
     );
     assert_eq!(
@@ -85,7 +85,14 @@ fn configuration_file_that_does_not_parse_is_a_usage_error() {
     let run = home.run(&["server", "list"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert!(run.stdout_is_empty());
-    assert_eq!(run.old_error()["code"], "usage");
+    let error = run.error();
+    assert_eq!(error["code"], "usage");
+    assert_eq!(
+        error["message"],
+        format!("The configuration file `{}` is not valid", path.display())
+    );
+    assert_eq!(error["causes"][0], "The file is not valid JSONC");
+    assert_eq!(error["causes"].as_array().unwrap().len(), 2, "{error}");
 }
 
 #[test]
@@ -246,7 +253,28 @@ fn unset_variable_in_args_gives_a_usage_error_with_the_fix() {
     home.configure(&json!({"fx": {"command": FIXTURE, "args": ["${env:FIXTURE_MODE}"]}}));
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.hints()[0], "export FIXTURE_MODE=<value>");
+    let error = run.error();
+    assert_eq!(
+        error["message"],
+        format!(
+            "The entry of the server `fx` in `{}` is not valid",
+            home.config_path().display()
+        )
+    );
+    assert_eq!(
+        error["causes"],
+        json!([
+            "The field `args[0]` is not valid",
+            "The variable `FIXTURE_MODE` is not set"
+        ])
+    );
+    assert_eq!(
+        run.hints(),
+        [
+            "ncp puts a stored secret only into `env` and `headers` values. To set the variable, \
+          run `export FIXTURE_MODE=<value>`. Then run the command again."
+        ]
+    );
     let home = home.set("FIXTURE_MODE", "modern");
     assert_eq!(home.run(&["tool", "list", "fx"]).code(), 0);
 }
@@ -640,13 +668,14 @@ fn secret_delete_unused_needs_a_valid_file_and_an_unused_item() {
     home.configure(&json!({"s": {"command": "s", "env": {"A": "${A}"}}, "bad": {"type": "x"}}));
     let run = home.run(&["secret", "delete", "A", "--unused"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert!(
-        run.old_error()["message"]
-            .as_str()
-            .unwrap()
-            .contains("cannot know which items it uses"),
-        "{}",
-        run.describe()
+    let error = run.error();
+    assert_eq!(
+        error["message"],
+        "The entry of the server `bad` is not valid. ncp cannot know which items it uses."
+    );
+    assert_eq!(
+        error["causes"],
+        json!(["The type `x` is not `stdio`, `http` or `sse`"])
     );
     home.configure(&json!({"s": {"command": "s", "env": {"A": "${A}"}}}));
     let run = home.run(&["secret", "delete", "A", "--unused"]);
@@ -904,8 +933,12 @@ fn sse_entry_is_a_usage_error_that_names_the_file() {
     home.configure(&json!({"old": {"type": "sse", "url": "https://example.com/sse"}}));
     let run = home.run(&["tool", "list", "old"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let message = run.old_error()["message"].as_str().unwrap().to_string();
-    assert!(message.contains("mcp.json"), "{message}");
+    let message = run.error()["message"].as_str().unwrap().to_string();
+    assert!(
+        message.starts_with("The server `old` has the type `sse` in `")
+            && message.contains("mcp.json"),
+        "{message}"
+    );
 }
 
 #[test]
@@ -1090,8 +1123,8 @@ fn name_used_only_in_args_is_not_used_and_names_the_rule() {
     assert_eq!(list.stdout()["secrets"][0]["used"], false);
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let message = run.old_error()["message"].as_str().unwrap().to_string();
-    assert!(message.contains("only in env and headers"), "{message}");
+    let hint = run.hints()[0].clone();
+    assert!(hint.contains("only into `env` and `headers`"), "{hint}");
 }
 
 #[test]

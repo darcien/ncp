@@ -22,3 +22,4 @@ pub mod server;
 pub mod store;
 #[cfg(test)]
 mod style;
+pub mod text;

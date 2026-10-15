@@ -137,7 +137,7 @@ fn tree(text: &str) -> Result<(Map<String, Value>, CstRootNode, CstObject), Edit
     let text = base(text);
     let old = config::parse_root(text)?;
     let root = CstRootNode::parse(text, &config::JSONC)
-        .map_err(|error| ConfigError::Syntax(error.to_string()))?;
+        .map_err(|error| ConfigError::Syntax(config::ParserText(error.to_string())))?;
     let object = root.object_value().ok_or(ConfigError::NotObject)?;
     Ok((old, root, object))
 }

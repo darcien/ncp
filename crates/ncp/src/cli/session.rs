@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     diagnostics,
-    outcome::{Exit, Failure, Hint, chain_text, code},
+    outcome::{Exit, Failure, Hint, chain_text},
     project_file::{self, Change, ProjectFile},
     timings::Timings,
     ui::{Ui, Verbosity},
@@ -28,6 +28,7 @@ use crate::{
     project::{self, Project, Trust},
     protocol_version::{ProtocolVersion, VersionCache},
     protocol_version_file,
+    text::code,
 };
 
 /// What `ncp` does with its caches (the protocol version cache and the list cache).
@@ -162,10 +163,10 @@ pub fn load_config(paths: &Paths, env: &Env, search: bool) -> Result<Loaded, Fai
     };
     let global = config::parse(&text, env).map_err(|error| {
         Failure::usage(format!(
-            "{}: {error}",
-            path.display(),
-            error = chain_text(&error)
+            "The configuration file {} is not valid",
+            code(&path.display().to_string())
         ))
+        .caused_by(&error)
     })?;
     let loaded = Loaded {
         config: global,
@@ -187,10 +188,10 @@ fn trusted(loaded: Loaded, env: &Env) -> Result<Loaded, Failure> {
     };
     let entries = config::parse(&project.text, env).map_err(|error| {
         Failure::usage(format!(
-            "{}: {error}",
-            project.file.display(),
-            error = chain_text(&error)
+            "The project file {} is not valid",
+            code(&project.file.display().to_string())
         ))
+        .caused_by(&error)
     })?;
     Ok(Loaded {
         config: loaded.config.with_project(entries),
@@ -333,10 +334,11 @@ pub fn select<'a>(loaded: &'a Loaded, name: &str, ui: Ui) -> Result<&'a Server, 
     })?;
     if let Transport::Sse(_) = server.transport {
         return Err(Failure::usage(format!(
-            "the entry in {} has type \"sse\", and ncp connects only to stdio and http servers",
-            loaded.file_of(name).display()
+            "The server {} has the type `sse` in {}. ncp connects only to `stdio` and `http` servers.",
+            code(name),
+            code(&loaded.file_of(name).display().to_string())
         ))
-        .server(name));
+        .about(name));
     }
     loaded
         .config
@@ -380,23 +382,24 @@ pub fn unknown_key(key: &str) -> String {
 
 fn entry_failure(name: &str, error: &EntryError, path: &Path) -> Failure {
     let failure = Failure::usage(format!(
-        "the entry in {} is not valid: {error}",
-        path.display(),
-        error = chain_text(&error)
+        "The entry of the server {} in {} is not valid",
+        code(name),
+        code(&path.display().to_string())
     ))
-    .server(name);
+    .about(name)
+    .caused_by(error);
+    let failure = super::fixes::entry_hints(error)
+        .into_iter()
+        .fold(failure, Failure::hint);
     match error {
         // Only env and headers values can use a stored secret: a value in
         // the command or the arguments shows in the process list.
         EntryError::Variable {
             error: ExpandError::Unset(variable),
             ..
-        } => Failure::usage(format!(
-            "{}; a stored secret can go only in env and headers values",
-            failure.message()
-        ))
-        .server(name)
-        .hint(format!("export {variable}=<value>")),
+        } => failure.hint(format!(
+            "ncp puts a stored secret only into `env` and `headers` values. To set the variable, run `export {variable}=<value>`. Then run the command again."
+        )),
         _ => failure,
     }
 }
@@ -1035,7 +1038,10 @@ mod tests {
         assert!(failure.message().contains("/c/mcp.json"), "{failure:?}");
         assert_eq!(
             failure.hints().first().map(Hint::message),
-            Some("export TOKEN=<value>")
+            Some(
+                "ncp puts a stored secret only into `env` and `headers` values. To set the \
+                 variable, run `export TOKEN=<value>`. Then run the command again."
+            )
         );
     }
 

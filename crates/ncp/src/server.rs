@@ -18,11 +18,14 @@ pub struct ServerName(String);
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum NameError {
-    #[error("server name is empty")]
+    #[error("The server name is empty")]
     Empty,
-    #[error("server name is longer than {MAX_NAME_LEN} characters")]
+    #[error("The server name is longer than {MAX_NAME_LEN} characters")]
     TooLong,
-    #[error("server name {0:?} has a character that is not a letter, digit, '-' or '_'")]
+    #[error(
+        "The server name {} has a character that is not a letter, a digit, `-` or `_`",
+        crate::text::code(.0)
+    )]
     BadCharacter(String),
 }
 
@@ -80,15 +83,15 @@ pub struct ServerUrl(Url);
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum UrlError {
-    #[error("invalid URL: {0}")]
+    #[error("The URL cannot be parsed")]
     Invalid(#[from] url::ParseError),
-    #[error("URL scheme {0:?} is not https or http")]
+    #[error("The URL scheme {} is not `https` or `http`", crate::text::code(.0))]
     Scheme(String),
-    #[error("URL has no host")]
+    #[error("The URL has no host")]
     NoHost,
-    #[error("plain http is permitted only for a loopback host; use https")]
+    #[error("ncp permits `http` only for a loopback host")]
     PlainHttp,
-    #[error("URL has a user name or password; keep secrets in the credential store")]
+    #[error("The URL has a user name or a password")]
     Credentials,
 }
 
@@ -246,6 +249,21 @@ impl fmt::Display for Origin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_texts_follow_the_message_rules() {
+        let texts = [
+            NameError::Empty.to_string(),
+            NameError::TooLong.to_string(),
+            NameError::BadCharacter("a b".into()).to_string(),
+            UrlError::Invalid(url::ParseError::EmptyHost).to_string(),
+            UrlError::Scheme("ftp".into()).to_string(),
+            UrlError::NoHost.to_string(),
+            UrlError::PlainHttp.to_string(),
+            UrlError::Credentials.to_string(),
+        ];
+        crate::style::assert_style(&texts);
+    }
 
     #[test]
     fn secure_url_is_https_or_http_to_a_loopback_host() {

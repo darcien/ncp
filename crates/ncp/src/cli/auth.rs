@@ -18,7 +18,7 @@ use tokio::{
 use super::{
     args::{AuthCommand, CredentialPlace},
     diagnostics,
-    outcome::{Exit, Failure, Warning, chain_text},
+    outcome::{Exit, Failure, Hint, Warning, chain_text},
     secrets,
     session::{self, Context},
 };
@@ -35,6 +35,7 @@ use crate::{
     },
     server::ServerName,
     store::CredentialStore,
+    text::code,
 };
 
 /// Tests replace the browser with a fake.
@@ -1039,10 +1040,17 @@ async fn with_server_issuer(
     };
     let limit = ISSUER_LOOKUP_LIMIT.min(context.request_limit / 2);
     match tokio::time::timeout(limit, discover(&manager, None)).await {
-        Ok(Ok(metadata)) => failure.hint(format!(
-            "when you registered the client at {issuer}, add \"issuer\": \"{issuer}\" to the \"oauth\" object of {name}",
-            issuer = issuer_of(&metadata)
-        )),
+        // The issuer of the server is the same fix as the general hint,
+        // with the value. Thus it replaces that hint.
+        Ok(Ok(metadata)) => {
+            let issuer = issuer_of(&metadata);
+            failure.with_hints([Hint::text(format!(
+                "If you registered the client at {}, add {} to the `oauth` object of the server {}",
+                code(&issuer),
+                code(&format!("\"issuer\": \"{issuer}\"")),
+                code(name)
+            ))])
+        }
         Ok(Err(_)) | Err(_) => failure,
     }
 }
