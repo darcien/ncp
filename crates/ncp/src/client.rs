@@ -37,7 +37,10 @@ use rmcp::{
         ReadResourceResult, Resource, ResourceTemplate, ServerPeerInfo, ServerResult, Tool,
     },
     service::{ClientInitializeError, PeerRequestOptions, RunningService, ServiceError},
-    transport::async_rw::AsyncRwTransport,
+    transport::{
+        DynamicTransportError, async_rw::AsyncRwTransport,
+        streamable_http_client::StreamableHttpError,
+    },
 };
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -47,6 +50,7 @@ use crate::{
     expand::Env,
     protocol_version::{self, ProtocolVersion, Startup},
     server::ServerName,
+    text::code,
 };
 
 /// The time that `server/discover` gets before the fallback to
@@ -101,11 +105,11 @@ pub enum Phase {
 impl fmt::Display for Phase {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Discover => f.write_str("server/discover"),
-            Self::Initialize => f.write_str("initialize"),
+            Self::Discover => f.write_str("`server/discover`"),
+            Self::Initialize => f.write_str("`initialize`"),
             Self::InitializeAfterTimeout(timeout) => write!(
                 f,
-                "initialize (server/discover got no answer in {} ms)",
+                "`initialize`, after `server/discover` gave no answer in {} ms",
                 timeout.as_millis()
             ),
         }
@@ -114,11 +118,12 @@ impl fmt::Display for Phase {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectError {
-    #[error("the sse transport is not supported")]
+    #[error("ncp does not connect to `sse` servers")]
     SseNotSupported(ServerName),
     #[error(
-        "cannot start {command:?}{}: {source}",
-        cwd.as_ref().map(|cwd| format!(" in {cwd:?}")).unwrap_or_default()
+        "ncp cannot start {}{}",
+        code(command),
+        cwd.as_ref().map(|cwd| format!(" in {}", code(cwd))).unwrap_or_default()
     )]
     Spawn {
         command: String,
@@ -127,20 +132,22 @@ pub enum ConnectError {
     },
     #[error(transparent)]
     Http(#[from] http::HttpError),
-    #[error("{phase} failed: {source}")]
+    /// rmcp gives no `source()` for a transport error, so `ncp` reads the
+    /// reason with `transport_errors`.
+    #[error("The handshake failed in {phase}")]
     Handshake {
         phase: Phase,
         source: Box<ClientInitializeError>,
     },
-    #[error("server gave the protocol version {0:?}, which is not a date")]
+    #[error("The server gave the protocol version {}, which is not a date", code(.0))]
     BadVersion(String),
-    #[error("the server did not complete the connection in {} s", .0.as_secs())]
+    #[error("The server did not complete the connection in {} s", .0.as_secs())]
     Timeout(Duration),
-    #[error("the connect was interrupted")]
+    #[error("ncp stopped the connection because of an interrupt")]
     Cancelled,
-    #[error("no HTTP client was given for an http server")]
+    #[error("ncp has no HTTP client for an http server")]
     NoHttpClient,
-    #[error("the server {command:?} stopped before the handshake completed ({status})")]
+    #[error("The process {} stopped with {}", code(command), code(status))]
     Exited { command: String, status: String },
 }
 
@@ -148,17 +155,52 @@ pub enum ConnectError {
 pub enum RequestError {
     #[error(transparent)]
     Service(#[from] ServiceError),
-    #[error("request cancelled")]
+    #[error("ncp stopped the request because of an interrupt")]
     Cancelled,
-    #[error("the server gave no answer in {} s; ncp sent a cancel request", .0.as_secs())]
+    #[error("The server gave no answer in {} s", .0.as_secs())]
     Timeout(Duration),
-    #[error("server sent a result of the wrong type")]
+    #[error("The server sent a result of the wrong type")]
     UnexpectedResult,
-    #[error("server sent a page cursor again, so the list has no end")]
+    #[error("The server sent a page cursor again, so the list has no end")]
     RepeatedCursor,
 }
 
+/// The errors that hold the reason of a transport error, outer first. rmcp
+/// gives no `source()` for a transport error or for an error of the HTTP
+/// client, so the chain of `source()` stops before the reason.
+#[must_use]
+pub fn transport_errors(error: &DynamicTransportError) -> Vec<&(dyn std::error::Error + 'static)> {
+    let inner = error.error.as_ref();
+    let client = inner
+        .downcast_ref::<StreamableHttpError<reqwest::Error>>()
+        .and_then(|error| match error {
+            StreamableHttpError::Client(client) => {
+                Some(client as &(dyn std::error::Error + 'static))
+            }
+            _ => None,
+        });
+    std::iter::once(inner as &(dyn std::error::Error + 'static))
+        .chain(client)
+        .collect()
+}
+
 impl ConnectError {
+    /// The server answered `404` to the handshake. rmcp keeps only the text
+    /// of the status, as `HTTP 404`.
+    #[must_use]
+    pub fn is_not_found(&self) -> bool {
+        let Self::Handshake { source, .. } = self else {
+            return false;
+        };
+        let ClientInitializeError::TransportError { error, .. } = source.as_ref() else {
+            return false;
+        };
+        matches!(
+            error.error.downcast_ref::<StreamableHttpError<reqwest::Error>>(),
+            Some(StreamableHttpError::UnexpectedServerResponse(text)) if text.starts_with("HTTP 404")
+        )
+    }
+
     #[must_use]
     pub fn token_store_error(&self) -> Option<String> {
         match self {
@@ -985,6 +1027,39 @@ impl Connection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_texts_follow_the_message_rules() {
+        let texts = [
+            ConnectError::SseNotSupported(ServerName::parse("s").unwrap()).to_string(),
+            ConnectError::Spawn {
+                command: "a;b".into(),
+                cwd: Some("/w".into()),
+                source: std::io::Error::other("x"),
+            }
+            .to_string(),
+            ConnectError::BadVersion("x".into()).to_string(),
+            ConnectError::Timeout(Duration::from_secs(1)).to_string(),
+            ConnectError::Cancelled.to_string(),
+            ConnectError::NoHttpClient.to_string(),
+            ConnectError::Exited {
+                command: "s".into(),
+                status: "exit status: 7".into(),
+            }
+            .to_string(),
+            RequestError::Cancelled.to_string(),
+            RequestError::Timeout(Duration::from_secs(1)).to_string(),
+            RequestError::UnexpectedResult.to_string(),
+            RequestError::RepeatedCursor.to_string(),
+        ];
+        // A value in backticks can hold a semicolon.
+        let own: Vec<String> = texts
+            .iter()
+            .map(|text| text.split('`').step_by(2).collect())
+            .collect();
+        crate::style::assert_style(&texts[..1]);
+        crate::style::assert_style(&own[1..]);
+    }
 
     #[test]
     fn hints_of_pages_take_the_shorter_time_and_private_from_any_page() {

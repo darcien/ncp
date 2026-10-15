@@ -305,8 +305,11 @@ fn check_style(object: &Value, run: &str) {
             first.is_some_and(|c| c.is_uppercase() || c == '`') || text.starts_with("ncp"),
             "rule 3: {text:?} does not start with a capital letter, a backtick or ncp\n{run}"
         );
+        // A value in backticks, for example a command of the user, can
+        // hold a semicolon.
+        let own_text: String = text.split('`').step_by(2).collect();
         assert!(
-            !text.contains(';'),
+            !own_text.contains(';'),
             "rule 5: {text:?} has a semicolon\n{run}"
         );
         assert!(

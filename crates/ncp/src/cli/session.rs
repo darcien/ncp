@@ -2,7 +2,6 @@
 //! server, connect, and map errors to failures with a fix.
 
 use std::{
-    fmt::Write as _,
     io::ErrorKind,
     path::{Path, PathBuf},
     sync::Arc,
@@ -14,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     diagnostics,
-    outcome::{Exit, Failure, Hint, Warning, chain_text},
+    outcome::{Exit, Failure, Hint, Warning},
     project_file::{self, Change, ProjectFile},
     timings::Timings,
     ui::{Ui, Verbosity},
@@ -479,11 +478,14 @@ async fn stored_login(
         return Ok(None);
     };
     let limit = client::CONNECT_LIMIT;
+    let name = login.server.name.as_str();
     let timeout = Failure::protocol(format!(
-        "the OAuth discovery did not complete in {} s",
+        "The OAuth discovery for the server {} did not complete in {} s",
+        code(name),
         limit.as_secs()
     ))
-    .server(login.server.name.as_str());
+    .about(name)
+    .hint(wait_longer());
     super::auth::limited(
         context,
         limit,
@@ -511,8 +513,8 @@ pub async fn open_with_login(
 ) -> Result<Connection, Failure> {
     let prepared = prepare(context, server).await?;
     let needs_login = || {
-        Failure::new(Exit::Auth, "the server needs a login or more scopes")
-            .server(server.name.as_str())
+        Failure::new(Exit::Auth, needs_login_text(server))
+            .about(server.name.as_str())
             .hint(login_hint(server))
     };
     let needs_login = || with_secret_hints(needs_login(), server, &prepared.stored);
@@ -613,7 +615,7 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
             }
             Some(
                 client::http::client(context.env, &observer, &notes)
-                    .map_err(|error| Failure::protocol(chain_text(&error)).server(name))?,
+                    .map_err(|error| http_failure(name, &error))?,
             )
         }
         _ => None,
@@ -712,56 +714,97 @@ fn connect_failure(
     if let Some(text) = error.token_store_error() {
         return token_store_failure(server, &text);
     }
+    let name = server.name.as_str();
     if let Some(redirected) = notes
         .redirect
         .as_ref()
         .filter(|_| !error.needs_authorization())
     {
-        return Failure::protocol(hide_expanded_url(server, redirected.to_string()))
-            .hint("put the new URL in the entry when you trust it")
-            .server(server.name.as_str());
-    }
-    if notes.unknown_issuer {
-        let failure = Failure::protocol(format!(
-            "{}: {UNKNOWN_ISSUER}",
-            hide_expanded_url(server, chain_text(&error))
+        return Failure::protocol(format!(
+            "The server {} answered {} with a redirect to {}. ncp follows no redirect.",
+            code(name),
+            redirected.status,
+            code(&redirected.location)
         ))
-        .server(server.name.as_str());
-        return with_tls_hint(env, notes, failure);
+        .about(name)
+        .hint("If you trust the new URL, put it in the entry");
     }
-    let exit = match error {
-        ConnectError::Cancelled => return interrupted(Some(server.name.as_str())),
-        _ if error.needs_authorization() => Exit::Auth,
-        _ => Exit::Protocol,
+    let exit = if error.needs_authorization() {
+        Exit::Auth
+    } else {
+        Exit::Protocol
     };
-    let message = match error {
-        _ if error.needs_authorization() => "the server needs a login or more scopes".to_string(),
-        ConnectError::Handshake { phase, source } => match source.as_ref() {
-            ClientInitializeError::TransportError { error, .. } => {
-                format!("{phase} failed: {}", chain_text(error.error.as_ref()))
-            }
-            other => format!("{phase} failed: {other}"),
-        },
-        other => other.to_string(),
-    };
-    let failure =
-        Failure::new(exit, hide_expanded_url(server, message)).server(server.name.as_str());
-    // The log of the server is on stderr already. The command gives the rest of
-    // the reason.
-    let failure = if let ConnectError::Exited { .. } = error {
-        failure.hint(format!(
-            "run the command in a shell to see why: {}",
-            super::render::target(server)
-        ))
+    let failure = match error {
+        ConnectError::Cancelled => return interrupted(Some(name)),
+        _ if error.needs_authorization() => Failure::new(exit, needs_login_text(server)),
+        ConnectError::Handshake { phase, source } => with_handshake_causes(
+            Failure::new(
+                exit,
+                format!(
+                    "The handshake with the server {} failed in {phase}",
+                    code(name)
+                ),
+            ),
+            source,
+        ),
+        ConnectError::Http(error) => return http_failure(name, error),
+        ConnectError::Spawn { .. } => {
+            Failure::new(exit, format!("ncp cannot start the server {}", code(name)))
+                .caused_by(error)
+        }
+        ConnectError::Exited { .. } => Failure::new(
+            exit,
+            format!(
+                "The server {} stopped before the handshake completed",
+                code(name)
+            ),
+        )
+        .caused_by(error),
+        ConnectError::BadVersion(version) => Failure::new(
+            exit,
+            format!(
+                "The server {} gave the protocol version {}, which is not a date",
+                code(name),
+                code(version)
+            ),
+        ),
+        ConnectError::Timeout(limit) => Failure::new(
+            exit,
+            format!(
+                "The server {} did not complete the connection in {} s",
+                code(name),
+                limit.as_secs()
+            ),
+        ),
+        ConnectError::SseNotSupported(_) => Failure::new(
+            exit,
+            format!("ncp does not connect to the `sse` server {}", code(name)),
+        ),
+        ConnectError::NoHttpClient => Failure::new(
+            exit,
+            format!("ncp has no HTTP client for the server {}", code(name)),
+        ),
+    }
+    .about(name);
+    let failure = if notes.unknown_issuer {
+        with_tls_hint(env, notes, failure.cause(UNKNOWN_ISSUER))
     } else {
         failure
     };
-    let failure = if exit == Exit::Auth {
-        failure.hint(login_hint(server))
-    } else if is_not_found(error) {
-        failure.hint("check the path of the URL in the entry: the server has no MCP endpoint there, and many servers use /mcp")
-    } else {
-        failure
+    // The log of the server is on stderr already. The command gives the
+    // rest of the reason.
+    let failure = match error {
+        ConnectError::Exited { .. } => failure.hint(format!(
+            "To see why the server stopped, run {} in a shell",
+            code(&super::render::target(server))
+        )),
+        _ if exit == Exit::Auth => failure.hint(login_hint(server)),
+        // B78.
+        _ if error.is_not_found() => failure.hint(
+            "The server has no MCP endpoint at the path of the URL. Many servers use `/mcp`. \
+             Examine the path in the entry.",
+        ),
+        _ => failure,
     };
     // A proxy on another host can also answer 401 or 403.
     match &server.transport {
@@ -770,24 +813,57 @@ fn connect_failure(
     }
 }
 
-// A `404` to the handshake means a URL with a wrong path, for example
-// with no `/mcp`. rmcp keeps only the text of the status, as `HTTP 404`.
-// Thus the check reads the text of the pinned version.
-fn is_not_found(error: &ConnectError) -> bool {
-    matches!(error, ConnectError::Handshake { .. }) && chain_text(&error).contains("HTTP 404")
+// The causes of a failed handshake. rmcp gives no `source()` for a
+// transport error, so the client unwraps it (design section 6.1).
+fn with_handshake_causes(
+    failure: Failure,
+    error: &rmcp::service::ClientInitializeError,
+) -> Failure {
+    match error {
+        ClientInitializeError::TransportError { error, .. } => {
+            with_transport_causes(failure, error)
+        }
+        other => failure.caused_by(other),
+    }
+}
+
+fn with_transport_causes(
+    failure: Failure,
+    error: &rmcp::transport::DynamicTransportError,
+) -> Failure {
+    client::transport_errors(error)
+        .into_iter()
+        .fold(failure, Failure::caused_by)
+}
+
+// A failure of the HTTP client names the variable and the path of a bad
+// `SSL_CERT_FILE` in the message (requirement N4).
+fn http_failure(name: &str, error: &client::http::HttpError) -> Failure {
+    let failure = Failure::protocol(format!("{error} for the server {}", code(name)))
+        .about(name)
+        .caused_by(error);
+    match error {
+        client::http::HttpError::CertFile { path, .. } if path.is_empty() => {
+            failure.hint("Remove `SSL_CERT_FILE`, or set it to a file of PEM certificates")
+        }
+        _ => failure,
+    }
 }
 
 /// The text for a certificate of an unknown issuer. rmcp keeps no cause of
 /// a transport error, so `ncp` adds it.
 pub const UNKNOWN_ISSUER: &str =
-    "the certificate of the server has an issuer that no trusted root names";
+    "The certificate of the server has an issuer that no trusted root names";
 
 /// The hint for a certificate of an unknown issuer when `SSL_CERT_FILE` has a
 /// value: the file replaces the system roots (design B50).
 #[must_use]
 pub fn with_tls_hint(env: &Env, notes: &client::http::Notes, failure: Failure) -> Failure {
     if notes.unknown_issuer && env.contains_key("SSL_CERT_FILE") {
-        failure.hint("SSL_CERT_FILE replaces the system roots: the file must hold each root that you need, also the public roots")
+        failure.hint(
+            "`SSL_CERT_FILE` replaces the system roots. Put each root that you need in the \
+             file. Include the public roots.",
+        )
     } else {
         failure
     }
@@ -880,17 +956,38 @@ fn with_secret_hints(failure: Failure, server: &Server, stored: &[SecretName]) -
     let word = super::render::shell_word(server.name.as_str());
     let hints: Vec<Hint> = stored
         .iter()
-        .map(|name| Hint::text(format!("ncp secret set {name} --server {word}")))
+        .map(|name| {
+            Hint::text(format!(
+                "If the value of {} changed, run `ncp secret set {name} --server {word}` to store the new value",
+                code(name.as_str())
+            ))
+        })
         .chain(failure.hints().iter().cloned())
         .collect();
     failure.with_hints(hints)
 }
 
-fn login_hint(server: &Server) -> String {
+fn needs_login_text(server: &Server) -> String {
     format!(
-        "ncp auth login {}",
-        super::render::shell_word(server.name.as_str())
+        "The server {} needs a login or more scopes",
+        code(server.name.as_str())
     )
+}
+
+fn login_hint(server: &Server) -> Hint {
+    Hint::run(
+        "log in",
+        format!(
+            "ncp auth login {}",
+            super::render::shell_word(server.name.as_str())
+        ),
+    )
+}
+
+/// The hint for a time limit that `--timeout` sets.
+#[must_use]
+pub fn wait_longer() -> Hint {
+    Hint::text("To wait longer, run the command again with `--timeout <SECONDS>`")
 }
 
 /// Ctrl-C. `ncp` sent the cancel request or stopped the server first.
@@ -924,46 +1021,53 @@ fn token_store_failure(server: &Server, text: &str) -> Failure {
     }
     Failure::new(Exit::Auth, format!("cannot keep the OAuth tokens: {text}"))
         .server(server.name.as_str())
-        .hint(format!("{} --credential-store file", login_hint(server)))
+        .hint(format!(
+            "ncp auth login {} --credential-store file",
+            super::render::shell_word(server.name.as_str())
+        ))
 }
 
-#[must_use]
-fn server_error(method: &str, data: &rmcp::ErrorData) -> Failure {
+// The text of the server error is free text, so it is a cause.
+fn server_error(server: &str, method: &str, data: &rmcp::ErrorData) -> Failure {
     Failure::protocol(format!(
-        "{method}: the server returned error {}: {}",
-        data.code.0, data.message
+        "The server {} returned the error {} for {}",
+        code(server),
+        data.code.0,
+        code(method)
     ))
+    .cause(data.message.as_ref())
 }
 
 // The failure of a request that needs the user to open pages first, or `None`
 // when the error names no page. Only a page that is safe to open goes into the
 // failure. The others show the reason that `ncp` refuses them, and not their
 // URL.
-fn page_failure(method: &str, data: &rmcp::ErrorData) -> Option<Failure> {
+fn page_failure(server: &str, method: &str, data: &rmcp::ErrorData) -> Option<Failure> {
     let found = crate::elicit::pages(data.data.as_ref());
     if found.is_empty() {
         return None;
     }
-    let list = found.iter().fold(String::new(), |mut list, page| {
-        let _ = match page {
-            Ok(page) => write!(list, "\n{} ({})", page.url, page.message),
-            Err(reason) => write!(list, "\nrefused a page: {reason}"),
-        };
-        list
-    });
-    let pages: Box<[crate::elicit::Page]> = found.into_iter().filter_map(Result::ok).collect();
-    let failure = Failure::new(
-        Exit::InputRequired,
-        format!(
-            "{method}: the server asks you to open a page first ({}):{list}",
-            data.message
-        ),
+    let failure = found.iter().fold(
+        Failure::new(
+            Exit::InputRequired,
+            format!(
+                "The server {} asks you to open a page before it answers {}:",
+                code(server),
+                code(method)
+            ),
+        )
+        .cause(data.message.as_ref()),
+        |failure, page| match page {
+            Ok(page) => failure.data(format!("{} ({})", page.url, page.message)),
+            Err(reason) => failure.data(format!("ncp refused a page: {reason}")),
+        },
     );
+    let pages: Box<[crate::elicit::Page]> = found.into_iter().filter_map(Result::ok).collect();
     Some(if pages.is_empty() {
         failure
     } else {
         failure
-            .hint("open the page, then run the command again")
+            .hint("After you complete the steps on the page, run the command again")
             .with_pages(pages)
     })
 }
@@ -972,39 +1076,58 @@ pub fn request_failure(server: &Server, method: &str, error: &RequestError) -> F
     if let Some(text) = error.token_store_error() {
         return token_store_failure(server, &text);
     }
+    let name = server.name.as_str();
     let failure = match error {
-        RequestError::Cancelled => interrupted(Some(server.name.as_str())),
-        RequestError::Timeout(_) => {
-            Failure::protocol(format!("{method}: {error}", error = chain_text(&error)))
-                .hint("give a longer limit with --timeout <SECONDS>")
-        }
+        RequestError::Cancelled => interrupted(Some(name)),
+        RequestError::Timeout(limit) => Failure::protocol(format!(
+            "The server {} gave no answer to {} in {} s. ncp sent a cancel request.",
+            code(name),
+            code(method),
+            limit.as_secs()
+        ))
+        .hint(wait_longer()),
         _ if error.needs_authorization() => {
             let need = match error.required_scopes() {
                 Some(scopes) if !scopes.is_empty() => {
-                    format!("the server needs the scopes {}", scopes.join(" "))
+                    format!("the scopes {}", code(&scopes.join(" ")))
                 }
-                _ => "the server needs a login or more scopes".to_string(),
+                _ => "a login or more scopes".to_string(),
             };
-            Failure::new(Exit::Auth, format!("{method}: {need}"))
-                .hint(login_hint(server))
-                .with_login_challenge(error.login_challenge())
+            Failure::new(
+                Exit::Auth,
+                format!(
+                    "The server {} needs {need} for {}",
+                    code(name),
+                    code(method)
+                ),
+            )
+            .hint(login_hint(server))
+            .with_login_challenge(error.login_challenge())
         }
         RequestError::Service(rmcp::ServiceError::McpError(data))
             if data.code.0 == crate::elicit::URL_REQUIRED =>
         {
-            page_failure(method, data).unwrap_or_else(|| server_error(method, data))
+            page_failure(name, method, data).unwrap_or_else(|| server_error(name, method, data))
         }
-        RequestError::Service(rmcp::ServiceError::McpError(data)) => server_error(method, data),
+        RequestError::Service(rmcp::ServiceError::McpError(data)) => {
+            server_error(name, method, data)
+        }
         RequestError::Service(rmcp::ServiceError::TransportSend(error)) => {
-            Failure::protocol(format!("{method}: {}", chain_text(error.error.as_ref())))
+            with_transport_causes(request_failed(name, method), error)
         }
-        _ => Failure::protocol(format!("{method}: {error}", error = chain_text(&error))),
+        _ => request_failed(name, method).caused_by(error),
     };
-    let failure = match failure.server_name() {
-        Some(_) => failure,
-        None => failure.server(server.name.as_str()),
-    };
-    failure.map_text(|text| hide_expanded_url(server, text))
+    failure
+        .about(name)
+        .map_text(|text| hide_expanded_url(server, text))
+}
+
+fn request_failed(server: &str, method: &str) -> Failure {
+    Failure::protocol(format!(
+        "The request {} to the server {} failed",
+        code(method),
+        code(server)
+    ))
 }
 
 #[cfg(test)]

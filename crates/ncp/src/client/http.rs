@@ -25,6 +25,7 @@ use super::observe::{
 use crate::{
     config::{Expanded, RemoteServer},
     expand::Env,
+    text::code,
 };
 
 /// The variable that names a file of extra root certificates, as curl,
@@ -33,15 +34,24 @@ const CERT_FILE: &str = "SSL_CERT_FILE";
 
 #[derive(Debug, thiserror::Error)]
 pub enum HttpError {
-    #[error("cannot make the HTTP client: {0}")]
+    #[error("ncp cannot make the HTTP client")]
     Client(#[from] reqwest::Error),
-    #[error("header {0:?} is not a valid header name")]
+    #[error("The header name {} is not valid", code(.0))]
     HeaderName(String),
-    #[error("header {0:?} has a value that is not valid in a header")]
+    #[error("The header {} has a value that is not valid in a header", code(.0))]
     HeaderValue(String),
-    #[error("cannot use the root certificates in {path} ({CERT_FILE}): {reason}")]
-    CertFile { path: String, reason: String },
+    #[error("ncp cannot use the root certificates in {} from `{CERT_FILE}`", code(.path))]
+    CertFile {
+        path: String,
+        #[source]
+        reason: CertReason,
+    },
 }
+
+/// Why `ncp` cannot use the file of root certificates.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct CertReason(pub String);
 
 /// The builder of the HTTP client, with the proxy variables of the process.
 /// Make one client for each process.
@@ -99,7 +109,10 @@ pub fn noted(builder: reqwest::ClientBuilder, notes: &ConnectNotes) -> reqwest::
 /// A redirect of the MCP connection. The location shows with its secrets
 /// hidden.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("the server answered {status} with a redirect to {location}, and ncp follows no redirect")]
+#[error(
+    "The server answered {status} with a redirect to {}. ncp follows no redirect.",
+    code(.location)
+)]
 pub struct Redirected {
     pub status: u16,
     pub location: String,
@@ -245,18 +258,18 @@ fn with_cert_file(
     if path.is_empty() {
         return Err(HttpError::CertFile {
             path: String::new(),
-            reason: "the variable is empty; remove it or name a PEM file".to_string(),
+            reason: CertReason("The variable is empty".to_string()),
         });
     }
     let failed = |reason: String| HttpError::CertFile {
         path: path.clone(),
-        reason,
+        reason: CertReason(reason),
     };
     let pem = std::fs::read(path).map_err(|error| failed(error.to_string()))?;
     let roots =
         reqwest::Certificate::from_pem_bundle(&pem).map_err(|error| failed(error.to_string()))?;
     if roots.is_empty() {
-        return Err(failed("the file has no PEM certificate".to_string()));
+        return Err(failed("The file has no PEM certificate".to_string()));
     }
     Ok(builder.tls_certs_only(roots))
 }
@@ -402,6 +415,25 @@ pub fn required_scopes(error: &DynamicTransportError) -> Option<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_texts_follow_the_message_rules() {
+        let texts = [
+            HttpError::HeaderName("x y".into()).to_string(),
+            HttpError::HeaderValue("x".into()).to_string(),
+            HttpError::CertFile {
+                path: "/roots.pem".into(),
+                reason: CertReason("The file has no PEM certificate".into()),
+            }
+            .to_string(),
+            Redirected {
+                status: 308,
+                location: "https://h/".into(),
+            }
+            .to_string(),
+        ];
+        crate::style::assert_style(&texts);
+    }
 
     fn expanded(value: &str, from_variable: bool) -> Expanded {
         Expanded {

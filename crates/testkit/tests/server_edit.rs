@@ -822,10 +822,17 @@ fn a_url_with_a_wrong_path_gives_a_hint_at_the_first_connect() {
     );
     let run = home.run(&["server", "show", "web"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
+    let error = run.error();
     assert!(
-        run.hints()[0].starts_with("check the path of the URL"),
-        "{}",
-        run.describe()
+        error["causes"][0].as_str().unwrap().contains("HTTP 404"),
+        "{error}"
+    );
+    assert_eq!(
+        run.hints(),
+        [
+            "The server has no MCP endpoint at the path of the URL. Many servers use `/mcp`. \
+          Examine the path in the entry."
+        ]
     );
 }
 

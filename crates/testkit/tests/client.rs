@@ -321,7 +321,11 @@ async fn names_probe_timeout_when_initialize_fails_after_it() {
         ),
         "{error}"
     );
-    assert!(error.to_string().contains("server/discover got no answer"));
+    assert!(
+        error
+            .to_string()
+            .contains("`server/discover` gave no answer")
+    );
 }
 
 #[tokio::test]

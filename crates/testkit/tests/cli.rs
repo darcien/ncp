@@ -660,15 +660,22 @@ async fn rejected_stored_header_value_gives_the_secret_hint_before_the_login_hin
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
     assert_eq!(
+        run.error()["message"],
+        "The server `web` needs a login or more scopes"
+    );
+    assert_eq!(
         run.hints(),
-        ["ncp secret set K --server web", "ncp auth login web"]
+        [
+            "If the value of `K` changed, run `ncp secret set K --server web` to store the new value",
+            "To log in, run `ncp auth login web`"
+        ]
     );
     // `ncp` does not store a value from the environment, so only the login hint
     // shows.
     let home = home.set("K", "old");
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    assert_eq!(run.hints()[0], "ncp auth login web");
+    assert_eq!(run.error()["hints"][0]["command"], "ncp auth login web");
 }
 
 #[test]
@@ -1975,7 +1982,7 @@ async fn rejected_refresh_asks_for_a_new_login() {
     assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    assert_eq!(run.hints()[0], "ncp auth login web");
+    assert_eq!(run.error()["hints"][0]["command"], "ncp auth login web");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2015,12 +2022,12 @@ async fn step_up_keeps_the_scopes(name: &str, native: bool) {
     let call = ["tool", "call", "web", "echo", "text=hi"];
     let run = home.run(&call);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    let error = run.old_error();
-    assert!(
-        error["message"].as_str().unwrap().contains("scopes b"),
-        "{error}"
+    let error = run.error();
+    assert_eq!(
+        error["message"],
+        "The server `web` needs the scopes `b` for `tools/call`"
     );
-    assert_eq!(common::hints(&error)[0], "ncp auth login web");
+    assert_eq!(error["hints"][0]["command"], "ncp auth login web");
     let run = home.run(login);
     assert_eq!(run.code(), 0, "{}", run.describe());
     let scope = auth.record().authorize_scope.unwrap();
@@ -2158,7 +2165,10 @@ async fn request_that_needs_a_login_after_an_open_handshake_uses_the_stored_logi
     let call = ["tool", "call", "web", "echo", "text=hi"];
     let run = home.run(&call);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    assert_eq!(run.hints()[0], "ncp auth login web");
+    assert_eq!(
+        run.error()["hints"],
+        json!([{"message": "To log in, run `ncp auth login web`", "command": "ncp auth login web"}])
+    );
     assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
     let run = home.run(&call);
     assert_eq!(run.code(), 0, "{}", run.describe());
@@ -2566,14 +2576,17 @@ fn server_that_stops_at_its_start_gives_its_exit_status_and_its_log() {
     home.configure(&json!({"fx": {"command": "/bin/sh", "args": ["-c", "echo boom >&2; exit 7"]}}));
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
-    let error = run.old_error();
-    let message = error["message"].as_str().unwrap();
-    assert!(
-        message.contains("stopped before the handshake") && message.contains('7'),
-        "{message}"
+    let error = run.error();
+    assert_eq!(
+        error["message"],
+        "The server `fx` stopped before the handshake completed"
     );
     assert!(
-        common::hints(&error)[0].as_str().contains("/bin/sh"),
+        error["causes"][0].as_str().unwrap().contains('7'),
+        "{error}"
+    );
+    assert!(
+        common::hints(&error)[0].starts_with("To see why the server stopped, run `/bin/sh"),
         "{error}"
     );
     let logs = notes(&run, "serverLog");
@@ -2695,12 +2708,7 @@ fn list_with_a_repeated_cursor_stops_with_exit_3() {
     home.configure(&json!({"fx": stdio("repeat-cursor")}));
     let run = home.run(&["prompt", "list", "fx"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
-    assert!(
-        run.old_error()["message"]
-            .as_str()
-            .unwrap()
-            .contains("cursor")
-    );
+    assert!(run.error_text().contains("cursor"));
 }
 
 #[test]
@@ -3186,8 +3194,8 @@ fn a_request_that_needs_a_page_gives_exit_5_with_the_pages() {
     // A real TTY echoes the new line of the answer. A pipe does not.
     let last: Value = serde_json::from_str(&stderr[stderr.rfind("{\"error\"").unwrap()..]).unwrap();
     assert_eq!(
-        common::hints(&last["error"])[0],
-        "open the page, then run the command again"
+        common::hints(&last["error"]),
+        ["After you complete the steps on the page, run the command again"]
     );
 }
 
@@ -3197,13 +3205,14 @@ fn a_page_that_is_not_safe_is_refused_and_no_page_is_a_protocol_error() {
     home.configure(&json!({"fx": stdio("modern")}));
     let run = home.run(&["tool", "call", "fx", "needs-page", "text=unsafe"]);
     assert_eq!(run.code(), 5, "{}", run.describe());
-    let error = run.old_error();
+    let error = run.error();
     assert!(error.get("pages").is_none(), "{error}");
-    let message = error["message"].as_str().unwrap();
+    let data = error["data"].to_string();
     assert!(
-        message.contains("refused a page") && !message.contains("alert"),
-        "{message}"
+        data.contains("ncp refused a page") && !data.contains("alert"),
+        "{data}"
     );
+    assert_eq!(run.hints(), Vec::<String>::new());
     let run = home.run(&["tool", "call", "fx", "needs-page", "text=none"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
 }
