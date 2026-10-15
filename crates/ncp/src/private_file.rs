@@ -132,8 +132,8 @@ pub fn lock(path: &Path, limit: std::time::Duration) -> std::io::Result<Lock> {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
                     format!(
-                        "another ncp process holds {} for more than {} s",
-                        path.display(),
+                        "Another ncp process holds {} for more than {} s",
+                        crate::text::code(&path.display().to_string()),
                         limit.as_secs()
                     ),
                 ));

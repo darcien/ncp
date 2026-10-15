@@ -18,7 +18,7 @@ impl MemoryStore {
         self.secrets
             .lock()
             .map(|mut secrets| change(&mut secrets))
-            .map_err(|_| StoreError::Failure("memory store lock is poisoned".into()))
+            .map_err(|_| StoreError::Failure("The lock of the memory store is poisoned".into()))
     }
 }
 

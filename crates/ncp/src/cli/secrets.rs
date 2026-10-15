@@ -21,7 +21,7 @@ use serde_json::json;
 use super::{
     args::{CredentialPlace, SecretCommand},
     ask,
-    outcome::{Exit, Failure, Warning, chain_text},
+    outcome::{Exit, Failure, Hint, Warning, chain_text},
     project_file::ProjectFile,
     render,
     session::{self, Context},
@@ -102,7 +102,21 @@ pub(super) async fn call<T: Send + 'static>(
 }
 
 pub(super) fn secret_name(name: &str) -> Result<SecretName, Failure> {
-    SecretName::parse(name).map_err(|error| Failure::usage(chain_text(&error)))
+    SecretName::parse(name)
+        .map_err(|error| Failure::usage(error.to_string()).hint(super::fixes::secret_name_hint()))
+}
+
+// A destination in a message: an origin in backticks, or "stdio servers".
+fn destination_text(destination: &Destination) -> String {
+    match destination {
+        Destination::Origin(origin) => code(origin.as_str()),
+        Destination::Stdio => "stdio servers".to_string(),
+    }
+}
+
+// `${NAME}` in backticks.
+fn reference(name: &str) -> String {
+    code(&format!("${{{name}}}"))
 }
 
 /// The values of an entry, and the names whose values came from a store.
@@ -180,8 +194,7 @@ async fn values_of(
     if missing.is_empty() {
         return Ok((values, Vec::new()));
     }
-    let destination =
-        destination.map_err(|error| not_literal(&missing, &error).server(name_of_server))?;
+    let destination = destination.map_err(|error| not_literal(server, &missing, &error))?;
     let names = missing
         .iter()
         .map(|name| secret_name(name))
@@ -194,7 +207,7 @@ async fn values_of(
         timings.update(|record| super::timings::add(&mut record.credentials, started.elapsed()));
     }
     let mut stored = Vec::new();
-    for (name, secret, place) in found.map_err(|failure| failure.server(name_of_server))? {
+    for (name, secret, place) in found? {
         context.ui.debug(
             Some(name_of_server),
             &format!("{name} from {place}, for {destination}"),
@@ -207,12 +220,22 @@ async fn values_of(
 
 // The stop for a stored value of an entry with no literal origin. An
 // environment value has no binding, so the fix is the URL, not an export.
-fn not_literal(names: &[&str], error: &OriginError) -> Failure {
+fn not_literal(server: &Server, names: &[&str], error: &OriginError) -> Failure {
+    let name = server.name.as_str();
+    let variables: Vec<String> = names.iter().map(|name| code(name)).collect();
+    let subject = match variables.as_slice() {
+        [one] => format!("The variable {one} of the server {} is not set", code(name)),
+        _ => format!(
+            "The variables {} of the server {} are not set",
+            variables.join(", "),
+            code(name)
+        ),
+    };
     Failure::usage(format!(
-        "{} is not set, and ncp sends a stored value only to a literal origin: {error}",
-        names.join(", "),
-        error = chain_text(&error)
+        "{subject}, and ncp sends a stored value only to a literal origin"
     ))
+    .about(name)
+    .caused_by(error)
 }
 
 async fn read_stored(
@@ -238,6 +261,7 @@ pub(super) fn store_is_down(error: &StoreError) -> bool {
         error,
         StoreError::Unavailable(_)
             | StoreError::Denied(_)
+            | StoreError::Locked(_)
             | StoreError::NoAnswer(_)
             | StoreError::Interrupted
     )
@@ -266,20 +290,42 @@ async fn find(
             Ok(Some(secret)) => return Ok((secret, place_text(CredentialPlace::Native))),
             Ok(None) => {}
             Err(error) if store_is_down(&error) => *native = Err(error),
-            Err(error) => return Err(store_failure(&error)),
+            Err(error) => return Err(read_failure(server, name, CredentialPlace::Native, &error)),
         }
     }
     if let Err(StoreError::Interrupted) = native {
-        return Err(session::interrupted(None));
+        return Err(session::interrupted(Some(server.name.as_str())));
     }
     let wanted = key.clone();
     if let Some(secret) = call(context, file, move |store| store.load(&wanted))
         .await
-        .map_err(|error| store_failure(&error))?
+        .map_err(|error| read_failure(server, name, CredentialPlace::File, &error))?
     {
         return Ok((secret, place_text(CredentialPlace::File)));
     }
     Err(miss(server, name, destination, native.as_ref().err()))
+}
+
+// A store that fails for one item. The server and the name are in the
+// message, because the store text names neither.
+fn read_failure(
+    server: &Server,
+    name: &SecretName,
+    place: CredentialPlace,
+    error: &StoreError,
+) -> Failure {
+    let server = server.name.as_str();
+    match error {
+        StoreError::Interrupted => session::interrupted(Some(server)),
+        _ => store_failure(error)
+            .context(format!(
+                "ncp cannot read the value of {} for the server {} from {}",
+                code(name.as_str()),
+                code(server),
+                place_text(place)
+            ))
+            .about(server),
+    }
 }
 
 // The message names only the current destination, because `ncp` reads no
@@ -292,43 +338,58 @@ fn miss(
 ) -> Failure {
     let word = render::shell_word(server.name.as_str());
     let set = format!("ncp secret set {name} --server {word}");
+    let shown = destination_text(destination);
+    let (stop, store) = match destination {
+        Destination::Origin(_) => (
+            "ncp sent nothing to",
+            Hint::text(format!(
+                "If the URL is correct, run `{set}` to store the value"
+            )),
+        ),
+        Destination::Stdio => ("ncp did not start", Hint::run_text("store the value", &set)),
+    };
+    let stop = format!("{stop} the server {}.", code(server.name.as_str()));
     let failure = match native_error {
-        None => {
-            let stop = match destination {
-                Destination::Origin(_) => format!(
-                    "ncp sent nothing to server {}. If this URL is correct, store the value for it.",
-                    server.name.as_str()
-                ),
-                Destination::Stdio => {
-                    format!("ncp did not start server {}.", server.name.as_str())
-                }
-            };
-            Failure::usage(format!(
-                "{name} is not set, and not stored for {destination}. {stop}"
-            ))
-            .hint(set)
-            .hint("ncp secret list")
-        }
+        None => Failure::usage(format!(
+            "The variable {} is not set, and no store has a value for {shown}. {stop}",
+            code(name.as_str())
+        ))
+        .hint(store)
+        .hint(list_hint()),
         Some(error) => Failure::new(
             Exit::Auth,
             format!(
-                "{name} is not set, and the native store gave no value for {destination}: {error}",
-                error = chain_text(&error)
+                "The variable {} is not set, and the native store gave no value for {shown}. {stop}",
+                code(name.as_str())
             ),
         )
-        .hint(format!("{set} --credential-store file")),
+        .caused_by(error)
+        .hint(Hint::run_text(
+            "store the value in the credential file",
+            &format!("{set} --credential-store file"),
+        )),
     };
-    failure.with_destination(destination.clone())
+    failure
+        .about(server.name.as_str())
+        .with_destination(destination.clone())
+}
+
+fn list_hint() -> Hint {
+    Hint::run(
+        "see the stored items and their destinations",
+        "ncp secret list",
+    )
 }
 
 // The error again, for a second use. A store error holds no secret.
 fn clone_error(error: &StoreError) -> StoreError {
     match error {
-        StoreError::Unavailable(text) => StoreError::Unavailable(text.clone()),
-        StoreError::Denied(text) => StoreError::Denied(text.clone()),
+        StoreError::Unavailable(detail) => StoreError::Unavailable(detail.clone()),
+        StoreError::Denied(detail) => StoreError::Denied(detail.clone()),
+        StoreError::Locked(count) => StoreError::Locked(*count),
         StoreError::NoAnswer(limit) => StoreError::NoAnswer(*limit),
         StoreError::Interrupted => StoreError::Interrupted,
-        other => StoreError::Failure(other.to_string()),
+        other => StoreError::Failure(chain_text(other).into()),
     }
 }
 
@@ -343,10 +404,15 @@ pub(super) fn store_failure(error: &StoreError) -> Failure {
         }
         StoreError::Unavailable(_)
         | StoreError::Denied(_)
+        | StoreError::Locked(_)
         | StoreError::Failure(_)
         | StoreError::NoAnswer(_) => Exit::Auth,
     };
-    Failure::new(exit, chain_text(&error))
+    // Rule 7 drops the error itself from the causes: the message holds it.
+    let failure = Failure::new(exit, error.to_string()).caused_by(error);
+    super::fixes::store_hints(error)
+        .into_iter()
+        .fold(failure, Failure::hint)
 }
 
 pub(super) async fn command(context: &Context<'_>, command: SecretCommand) -> Result<(), Failure> {
@@ -421,7 +487,7 @@ fn set_target<'a>(
     loaded: &'a session::Loaded,
     name: &SecretName,
     only: Option<&str>,
-    several_hint: Option<String>,
+    several_hint: Option<Hint>,
 ) -> Result<Target<'a>, Failure> {
     let servers: Vec<&Server> = match only {
         Some(word) => vec![session::select(loaded, word, context.ui)?],
@@ -431,31 +497,40 @@ fn set_target<'a>(
     binding::target(uses).map_err(|error| match error {
         TargetError::NoUse => no_use(name, only, loaded),
         TargetError::NotLiteral { server, error } => Failure::usage(format!(
-            "server {} names ${{{name}}}, and ncp sends a stored value only to a literal origin: {error}",
-            server.name.as_str()
-        , error = chain_text(&error))),
+            "The server {} names {}, and ncp sends a stored value only to a literal origin",
+            code(server.name.as_str()),
+            reference(name.as_str())
+        ))
+        .about(server.name.as_str())
+        .caused_by(&error),
         TargetError::Several(targets) => {
-            let list: Vec<String> = targets
+            let list = targets
                 .iter()
-                .map(|target| format!("{} ({})", target.destination, users_text(&target.uses)))
-                .collect();
+                .map(|target| format!("{} ({})", target.destination, users_text(&target.uses)));
             // One entry with two destinations: `--server` cannot choose, so
             // only a second name helps.
             if let Some(word) = only {
                 let failure = Failure::usage(format!(
-                    "server {word} names ${{{name}}} for more than one destination: {}; use one name for each field",
-                    list.join("; ")
-                ));
+                    "The server {} names {} for more than one destination:",
+                    code(word),
+                    reference(name.as_str())
+                ))
+                .about(word);
+                let failure = list
+                    .fold(failure, Failure::data)
+                    .hint("Use one name for each field");
                 return match several_hint {
                     Some(fix) => failure.hint(fix),
                     None => failure,
                 };
             }
-            Failure::usage(format!(
-                "{name} has more than one destination: {}; choose one entry",
-                list.join("; ")
-            ))
-            .hint(format!("ncp secret set {name} --server <SERVER>"))
+            let failure = Failure::usage(format!(
+                "The entries give {} more than one destination:",
+                reference(name.as_str())
+            ));
+            list.fold(failure, Failure::data).hint(Hint::text(format!(
+                "To store the value for one server, run `ncp secret set {name} --server <SERVER>`"
+            )))
         }
     })
 }
@@ -464,13 +539,21 @@ fn set_target<'a>(
 // `command`, `args`, `cwd` or `url` comes only from the environment (B32),
 // and an unset one makes the entry invalid.
 fn no_use(name: &SecretName, only: Option<&str>, loaded: &session::Loaded) -> Failure {
-    if let Some(reason) = untrusted_use(loaded, name, only) {
-        return Failure::usage(reason).hint("ncp trust");
+    if let Some(failure) = untrusted_use(loaded, name, only) {
+        return failure;
     }
-    let fields = "env, headers or oauth.clientSecret";
-    let message = match only {
-        Some(word) => format!("server {word} does not name ${{{name}}} in {fields}"),
-        None => format!("no entry names ${{{name}}} in {fields}; add the entry first"),
+    let fields = "`env`, `headers` or `oauth.clientSecret`";
+    let failure = match only {
+        Some(word) => Failure::usage(format!(
+            "The server {} does not name {} in {fields}",
+            code(word),
+            reference(name.as_str())
+        ))
+        .about(word),
+        None => Failure::usage(format!(
+            "No entry names {} in {fields}",
+            reference(name.as_str())
+        )),
     };
     let unset = loaded.config.invalid().any(|(server, error)| {
         only.is_none_or(|word| word == server)
@@ -480,11 +563,17 @@ fn no_use(name: &SecretName, only: Option<&str>, loaded: &session::Loaded) -> Fa
                     if unset == name.as_str()
             )
     });
-    let failure = Failure::usage(message);
-    if unset {
-        failure.hint(format!("export {name}=<value>"))
-    } else {
-        failure
+    // An entry that names the variable in another field has it unset, so
+    // the fix is the environment, not a new entry.
+    match (unset, only) {
+        (true, _) => failure.hint(format!(
+            "To set the variable, run `export {name}=<value>`. Then run the command again."
+        )),
+        (false, None) => failure.hint(format!(
+            "Add an entry that names {} first. Then run the command again.",
+            reference(name.as_str())
+        )),
+        (false, Some(_)) => failure,
     }
 }
 
@@ -506,9 +595,12 @@ async fn set(
     let store = match place {
         CredentialPlace::Native => native(context).await.map_err(|error| {
             let word = render::shell_word(target.uses[0].server.name.as_str());
-            store_failure(&error).hint(format!(
-                "ncp secret set {name} --server {word} --credential-store file"
-            ))
+            store_failure(&error)
+                .context("ncp cannot open the native store")
+                .hint(Hint::run_text(
+                    "store the value in the credential file",
+                    &format!("ncp secret set {name} --server {word} --credential-store file"),
+                ))
         })?,
         CredentialPlace::File => file(context),
     };
@@ -518,12 +610,10 @@ async fn set(
             .and_then(|url| url.host_str().map(str::to_string))
             .filter(|host| ask::has_punycode_label(host))
     {
-        context.ui.warning(
-            None,
-            &format!(
-                "the host {host} has a Punycode label (xn--): its name can look like another name"
-            ),
-        );
+        context.ui.warn(&Warning::new(format!(
+            "The host {} has a Punycode label (`xn--`), so its name can look like another name.",
+            code(&host)
+        )));
     }
     let users = users_text(&target.uses);
     let prompt = format!("Value of {name} for {destination} ({users}): ");
@@ -532,7 +622,13 @@ async fn set(
     let saved = key.clone();
     call(context, &store, move |store| store.save(&saved, &value))
         .await
-        .map_err(|error| store_failure(&error))?;
+        .map_err(|error| {
+            store_failure(&error).context(format!(
+                "ncp cannot store the value of {} in {}",
+                code(name.as_str()),
+                place_text(place)
+            ))
+        })?;
     // A list of a server can depend on the value.
     crate::list_cache::remove_all(&context.paths.cache_dir);
     warn_about_copies(context, &key, place, target.uses[0].server).await;
@@ -570,10 +666,10 @@ async fn warn_about_copies(
         return;
     };
     if context.env.contains_key(name.as_str()) {
-        context.ui.warning(
-            None,
-            &format!("{name} is also set in the environment, and ncp uses that value first"),
-        );
+        context.ui.warn(&Warning::new(format!(
+            "The variable {} is also set in the environment. ncp uses the value of the environment first.",
+            code(name.as_str())
+        )));
     }
     let other = match place {
         CredentialPlace::Native => CredentialPlace::File,
@@ -598,27 +694,31 @@ async fn warn_about_copies(
         | (Err(StoreError::Unavailable(_)), CredentialPlace::Native) => return,
         (Err(error), _) => {
             // `ncp` knows no copy, so no command can fix it.
-            context.ui.warning(
-                None,
-                &format!(
-                    "ncp cannot check {} for a copy: {error}",
+            context.ui.warn(
+                &Warning::new(format!(
+                    "ncp cannot check {} for a copy of {}",
                     place_text(other),
-                    error = chain_text(&error)
-                ),
+                    code(name.as_str())
+                ))
+                .caused_by(&error),
             );
             return;
         }
         (Ok(true), CredentialPlace::File) => format!(
-            "the credential file also has {name} for {destination}; ncp reads the native store first"
+            "The credential file also has an item of {} for {}. ncp reads the native store first.",
+            code(name.as_str()),
+            destination_text(destination)
         ),
         (Ok(true), CredentialPlace::Native) => format!(
-            "the native store also has {name} for {destination}, and ncp reads it first: the new value is not used"
+            "The native store also has an item of {} for {}. ncp reads the native store first and does not use the new value.",
+            code(name.as_str()),
+            destination_text(destination)
         ),
     };
     // The command removes the copies of this destination. Then the user
     // stores the value again in one place.
     context.ui.warn(&Warning::new(message).hint(format!(
-        "ncp secret delete {name} --server {}",
+        "To delete the items of this destination, run `ncp secret delete {name} --server {}`. Then store the value again.",
         render::shell_word(server.name.as_str())
     )));
 }
@@ -644,28 +744,34 @@ async fn read_value(
         read_hidden_line(context, prompt).await
     } else if std::io::stdin().is_terminal() {
         return Err(Failure::usage(format!(
-            "cannot ask for the value of {name}: stderr is not a terminal"
+            "ncp cannot ask for the value of {}, because stderr is not a terminal",
+            code(name)
         ))
-        .hint(format!("give the value on stdin: {pipe}")));
+        .hint(Hint::run_text("give the value from a file", pipe)));
     } else {
         read_piped(context).await
     };
     let text = text.map_err(|unread| match unread {
         Unread::Interrupted => session::interrupted(None),
         Unread::TimedOut => Failure::protocol(format!(
-            "no value of {name} came in {} s",
+            "No value of {} came in {} s",
+            code(name),
             context.request_limit.as_secs()
         ))
-        .hint("give a longer limit with --timeout <SECONDS>"),
+        .hint("To wait longer, run the command again with `--timeout <SECONDS>`"),
         Unread::Failed(error) => Failure::usage(format!(
-            "cannot read the value of {name} from stdin: {error}",
-            error = chain_text(&error)
-        )),
+            "ncp cannot read the value of {} from stdin",
+            code(name)
+        ))
+        .caused_by(&error),
     })?;
     let line = text.strip_suffix('\n').unwrap_or(&text);
     let line = line.strip_suffix('\r').unwrap_or(line);
     if line.is_empty() {
-        return Err(Failure::usage(format!("the value of {name} is empty")));
+        return Err(Failure::usage(format!(
+            "The value of {} is empty",
+            code(name)
+        )));
     }
     Ok(Secret::new(line.to_string()))
 }
@@ -681,7 +787,7 @@ async fn read_piped(context: &Context<'_>) -> Result<String, Unread> {
     });
     tokio::select! {
         read = receiver => read
-            .map_err(|_| Unread::Failed(std::io::Error::other("the reader stopped")))
+            .map_err(|_| Unread::Failed(std::io::Error::other("The reader stopped")))
             .and_then(|text| text.map_err(Unread::Failed)),
         () = tokio::time::sleep(context.request_limit) => Err(Unread::TimedOut),
         () = context.cancel.cancelled() => Err(Unread::Interrupted),
@@ -702,8 +808,8 @@ fn stty(args: &[&str]) -> std::io::Result<String> {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
         Err(std::io::Error::other(format!(
-            "{STTY} {} failed",
-            args.join(" ")
+            "{} failed",
+            code(&format!("{STTY} {}", args.join(" ")))
         )))
     }
 }
@@ -728,7 +834,7 @@ async fn read_hidden_line(context: &Context<'_>, prompt: &str) -> Result<String,
     });
     let read = tokio::select! {
         read = receiver => read
-            .map_err(|_| Unread::Failed(std::io::Error::other("the reader stopped")))
+            .map_err(|_| Unread::Failed(std::io::Error::other("The reader stopped")))
             .and_then(|line| line.map_err(Unread::Failed)),
         () = tokio::time::sleep(context.request_limit) => Err(Unread::TimedOut),
         () = context.cancel.cancelled() => Err(Unread::Interrupted),
@@ -764,7 +870,7 @@ fn read_terminal_line(input: &mut impl std::io::Read) -> std::io::Result<String>
             other => line.push(other),
         }
     }
-    String::from_utf8(line).map_err(|_| std::io::Error::other("the value is not UTF-8 text"))
+    String::from_utf8(line).map_err(|_| std::io::Error::other("The value is not UTF-8 text"))
 }
 
 // The secret keys of a store, as (name, destination), and the error of a
@@ -803,14 +909,12 @@ struct Stored {
 // A warning for each place that did not answer (B30).
 fn warn_unlisted(context: &Context<'_>, failed: &[(CredentialPlace, StoreError)]) {
     for (place, error) in failed {
-        context.ui.warning(
-            None,
-            &format!(
-                "ncp cannot list {}: {error}",
-                place_text(*place),
-                error = chain_text(&error)
-            ),
-        );
+        context
+            .ui
+            .warn(&Warning::from(store_failure(error).context(format!(
+                "ncp cannot list the items in {}",
+                place_text(*place)
+            ))));
     }
 }
 
@@ -917,8 +1021,15 @@ pub(super) async fn store_for_add(
     server: &Server,
     place: CredentialPlace,
 ) -> Result<(), Failure> {
-    let destination =
-        binding::value_destination(server).map_err(|error| Failure::usage(chain_text(&error)))?;
+    let destination = binding::value_destination(server).map_err(|error| {
+        Failure::usage(format!(
+            "ncp cannot store a value of {} for the server {}",
+            code(name.as_str()),
+            code(server.name.as_str())
+        ))
+        .about(server.name.as_str())
+        .caused_by(&error)
+    })?;
     let key = CredentialKey::Secret {
         destination: destination.clone(),
         name: name.clone(),
@@ -928,7 +1039,9 @@ pub(super) async fn store_for_add(
     let chosen = match (place, &places[0].1) {
         (CredentialPlace::Native, Ok(store)) => store.clone(),
         (CredentialPlace::Native, Err(error)) => {
-            return Err(store_failure(error).hint("give --credential-store file"));
+            return Err(store_failure(error)
+                .context("ncp cannot open the native store")
+                .hint(file_flag_hint()));
         }
         (CredentialPlace::File, _) => file(context),
     };
@@ -952,19 +1065,41 @@ pub(super) async fn store_for_add(
     let value = read_value(context, name.as_str(), &prompt, &pipe).await?;
     if let Some((other, _)) = stored.iter().find(|(_, old)| *old != value) {
         return Err(Failure::usage(format!(
-            "{name} is already stored for {destination} in {}; other entries with this origin use it",
-            place_text(*other)
+            "{} already has another value of {} for {}. Other entries with this origin use it.",
+            capitalized(place_text(*other)),
+            code(name.as_str()),
+            destination_text(&destination)
         ))
-        .hint(format!("ncp secret set {name} --server {word}")));
+        .hint(Hint::run_text(
+            &format!(
+                "store a value for the server {} only",
+                code(server.name.as_str())
+            ),
+            &format!("ncp secret set {name} --server {word}"),
+        )));
     }
     if stored.iter().any(|(other, _)| *other == place) {
         return Ok(());
     }
     call(context, &chosen, move |store| store.save(&key, &value))
         .await
-        .map_err(|error| store_failure(&error).hint("give --credential-store file"))?;
+        .map_err(|error| {
+            store_failure(&error)
+                .context(format!(
+                    "ncp cannot store the value of {} in {}",
+                    code(name.as_str()),
+                    place_text(place)
+                ))
+                .hint(file_flag_hint())
+        })?;
     crate::list_cache::remove_all(&context.paths.cache_dir);
     Ok(())
+}
+
+fn file_flag_hint() -> Hint {
+    Hint::text(
+        "To store the value in the credential file, run the command again with `--credential-store file`",
+    )
 }
 
 /// The two places of stored items, the native store first.
@@ -1019,7 +1154,7 @@ pub(super) async fn rows_of_entry(
 /// `ncp` knows only the global file and the project file of the current
 /// folder. A list of the project files, as `mise prune` keeps, comes after
 /// the first release.
-const UNUSED_SCOPE: &str = "an unused item is unused in the global file and in the project file of the current folder; a project in another folder can still use it";
+const UNUSED_SCOPE: &str = "ncp examined only the global file and the project file of this folder. A project in another folder can still use the item.";
 
 async fn list(context: &Context<'_>) -> Result<(), Failure> {
     // The items come from the stores. A configuration file that does not
@@ -1114,13 +1249,16 @@ async fn chosen(
     name: &SecretName,
     removal: Removal,
 ) -> Result<Choice, Failure> {
-    let not_stored = || Failure::usage(format!("{name} is not stored")).hint("ncp secret list");
+    let not_stored = || not_stored(name);
     let listed = match removal {
         Removal::Server(word) => {
             // The configuration first: a usage error must not wait for the
             // native store.
             let loaded = session::load(context, Some(&word)).await?;
-            let several_hint = format!("ncp secret delete {name} --all");
+            let several_hint = Hint::run_text(
+                &format!("delete all items of {}", code(name.as_str())),
+                &format!("ncp secret delete {name} --all"),
+            );
             let target = set_target(context, &loaded, name, Some(&word), Some(several_hint))?;
             return Ok(Choice {
                 destinations: vec![target.destination],
@@ -1163,25 +1301,23 @@ async fn chosen(
         unlisted,
     };
     match (pick, failed.first()) {
-        (Pick::One, Some((place, error))) => Err(store_failure(error)
-            .context(format!(
-                "ncp cannot list {}; ncp deleted nothing",
-                place_text(*place)
-            ))
-            .hint(format!("ncp secret delete {name} --server <SERVER>"))),
-        (Pick::All | Pick::Unused { .. }, Some((_, error))) if stored.is_empty() => {
-            Err(store_failure(error))
+        (Pick::One, Some((place, error))) => Err(one_unlisted(name, *place, error)),
+        (Pick::All | Pick::Unused { .. }, Some((place, error))) if stored.is_empty() => {
+            Err(unlisted_failure(*place, error))
         }
         (Pick::One, None) => match stored.as_slice() {
             [] => Err(not_stored()),
             [_] => Ok(choice(stored, None)),
             _ => {
-                let list: Vec<String> = stored.iter().map(ToString::to_string).collect();
-                Err(Failure::usage(format!(
-                    "{name} is stored for more than one destination: {}; ncp deleted nothing",
-                    list.join(", ")
-                ))
-                .hint(format!("ncp secret delete {name} --server <SERVER>")))
+                let failure = Failure::usage(format!(
+                    "ncp deleted nothing, because the stores have items of {} for more than one destination:",
+                    code(name.as_str())
+                ));
+                Err(stored
+                    .iter()
+                    .map(ToString::to_string)
+                    .fold(failure, Failure::data)
+                    .hint(one_server_hint(name)))
             }
         },
         (Pick::All, _) if stored.is_empty() => Err(not_stored()),
@@ -1196,11 +1332,12 @@ async fn chosen(
                 .collect();
             match (unused.is_empty(), first) {
                 // A place that cannot list can hold an unused item.
-                (true, Some((_, error))) => Err(store_failure(error)),
-                (true, None) => Err(
-                    Failure::usage(format!("no stored item of {name} is unused"))
-                        .hint("ncp secret list"),
-                ),
+                (true, Some((place, error))) => Err(unlisted_failure(*place, error)),
+                (true, None) => Err(Failure::usage(format!(
+                    "No stored item of {} is unused",
+                    code(name.as_str())
+                ))
+                .hint(list_hint())),
                 (false, _) => {
                     warn_unlisted(context, &failed);
                     context.ui.hint(None, UNUSED_SCOPE);
@@ -1211,6 +1348,48 @@ async fn chosen(
     }
 }
 
+fn not_stored(name: &SecretName) -> Failure {
+    Failure::usage(format!("No store has an item of {}", code(name.as_str()))).hint(list_hint())
+}
+
+fn one_server_hint(name: &SecretName) -> Hint {
+    Hint::text(format!(
+        "To delete only the item of one server, run `ncp secret delete {name} --server <SERVER>`"
+    ))
+}
+
+// With no flag, a place that cannot list stops the delete: it can hold an
+// item of a second destination.
+fn one_unlisted(name: &SecretName, place: CredentialPlace, error: &StoreError) -> Failure {
+    store_failure(error)
+        .context(format!(
+            "ncp cannot list the items in {}. ncp deleted nothing.",
+            place_text(place)
+        ))
+        .hint(Hint::text(format!(
+            "{} can have an item of {} for another destination. {}.",
+            capitalized(place_text(place)),
+            code(name.as_str()),
+            one_server_hint(name).message()
+        )))
+}
+
+// A place that cannot list can hold the item.
+fn unlisted_failure(place: CredentialPlace, error: &StoreError) -> Failure {
+    store_failure(error).context(format!(
+        "ncp cannot list the items in {}",
+        place_text(place)
+    ))
+}
+
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
 // An invalid entry, or an entry of an untrusted project file, can name the
 // secret. Then `ncp` cannot know that no entry uses an item, so `--unused`
 // stops.
@@ -1218,8 +1397,7 @@ async fn strict_config(
     context: &Context<'_>,
     name: &SecretName,
 ) -> Result<session::Loaded, Failure> {
-    let unknown =
-        |reason: String| Failure::usage(format!("{reason}; ncp cannot know which items it uses"));
+    let unknown = " ncp cannot know which items it uses.";
     let loaded = session::load(context, None).await.map_err(|failure| {
         failure
             .context("ncp cannot know which items the configuration uses")
@@ -1227,7 +1405,7 @@ async fn strict_config(
     })?;
     let invalid_entry = |server: &str, error: &EntryError| {
         Failure::usage(format!(
-            "The entry of the server {} is not valid. ncp cannot know which items it uses.",
+            "The entry of the server {} is not valid.{unknown}",
             code(server)
         ))
         .caused_by(error)
@@ -1237,10 +1415,11 @@ async fn strict_config(
     }
     let waiting = match &loaded.project {
         ProjectFile::Unusable { file, reason } => {
-            return Err(unknown(format!(
-                "ncp does not use {}: {reason}",
-                file.display()
-            )));
+            return Err(Failure::usage(format!(
+                "ncp does not use {}.{unknown}",
+                code(&file.display().to_string())
+            ))
+            .cause(reason.as_str()));
         }
         ProjectFile::Read(project) if project.trust != Trust::Trusted => Some(project),
         _ => None,
@@ -1252,26 +1431,31 @@ async fn strict_config(
         })
     });
     if let Some((server, error)) = invalid {
-        return Err(invalid_entry(server, error).hint("ncp trust"));
+        return Err(invalid_entry(server, error).hint(trust_hint()));
     }
-    if let Some(reason) = untrusted_use(&loaded, name, None) {
-        return Err(unknown(reason).hint("ncp trust"));
+    if let Some(failure) = untrusted_use(&loaded, name, None) {
+        let message = format!("{}.{unknown}", failure.message());
+        return Err(failure.context(message).with_hints([trust_hint()]));
     }
     Ok(loaded)
 }
 
-// The reason when only an entry of an untrusted project file names `${NAME}`:
-// the entry, the file and its state.
+fn trust_hint() -> Hint {
+    Hint::run_text("trust the file", "ncp trust")
+}
+
+// The failure when only an entry of an untrusted project file names
+// `${NAME}`: the entry, the file and its state.
 fn untrusted_use(
     loaded: &session::Loaded,
     name: &SecretName,
     only: Option<&str>,
-) -> Option<String> {
+) -> Option<Failure> {
     let project = loaded.project.project()?;
     let state = match project.trust {
         Trust::Trusted => return None,
         Trust::Ignored => "which you ignored",
-        Trust::Untrusted { .. } => "which is not trusted",
+        Trust::Untrusted { .. } => "which you did not trust",
     };
     let entry = project.entries.iter().find(|entry| {
         only.is_none_or(|word| word == entry.name)
@@ -1280,11 +1464,16 @@ fn untrusted_use(
                 .as_ref()
                 .is_ok_and(|shape| shape.variables.contains(name.as_str()))
     })?;
-    Some(format!(
-        "server {} names ${{{name}}} in {}, {state}",
-        entry.name,
-        project.file.display()
-    ))
+    Some(
+        Failure::usage(format!(
+            "The server {} names {} in {}, {state}",
+            code(&entry.name),
+            reference(name.as_str()),
+            code(&project.file.display().to_string())
+        ))
+        .about(entry.name.as_str())
+        .hint(trust_hint()),
+    )
 }
 
 async fn delete(context: &Context<'_>, name: &str, removal: Removal) -> Result<(), Failure> {
@@ -1330,14 +1519,13 @@ async fn delete(context: &Context<'_>, name: &str, removal: Removal) -> Result<(
                 Ok(false) => {}
                 Err(StoreError::Interrupted) => return Err(session::interrupted(None)),
                 Err(error) => {
-                    context.ui.warning(
-                        None,
-                        &format!(
-                            "ncp cannot change {}: {error}",
-                            place_text(*place),
-                            error = chain_text(&error)
-                        ),
-                    );
+                    context
+                        .ui
+                        .warn(&Warning::from(store_failure(&error).context(format!(
+                            "ncp cannot delete the item of {} in {}",
+                            code(name.as_str()),
+                            place_text(*place)
+                        ))));
                     if store_is_down(&error) {
                         *slot = None;
                     }
@@ -1350,10 +1538,11 @@ async fn delete(context: &Context<'_>, name: &str, removal: Removal) -> Result<(
         }
     }
     match (removed.is_empty(), failed) {
-        (true, Some(error)) => Err(store_failure(&error)),
-        (true, None) => {
-            Err(Failure::usage(format!("{name} is not stored")).hint("ncp secret list"))
-        }
+        (true, Some(error)) => Err(store_failure(&error).context(format!(
+            "ncp cannot delete the items of {}",
+            code(name.as_str())
+        ))),
+        (true, None) => Err(not_stored(&name)),
         (false, _) => {
             crate::list_cache::remove_all(&context.paths.cache_dir);
             context.ui.result(

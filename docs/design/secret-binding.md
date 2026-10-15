@@ -207,16 +207,18 @@ This decision replaces one part of the credential review of 2026-10-09:
    2), with the origin:
 
    ```
-   error: LINEAR_KEY is not set, and not stored for https://mcp.linear.ap.
-   ncp sent nothing to server linear. If this URL is correct, store the
-   value for it.
-   hint: ncp secret set LINEAR_KEY --server linear
-   hint: ncp secret list
+   error: The variable `LINEAR_KEY` is not set, and no store has a value for `https://mcp.linear.ap`. ncp sent nothing to the server `linear`.
+
+   hint: If the URL is correct, run `ncp secret set LINEAR_KEY --server linear` to store the value
+
+   hint: To see the stored items and their destinations, run `ncp secret list`
    ```
 
    In this example, `mcp.linear.ap` is a typo in the host: the last `p` is
-   missing (the P2 case). The condition is in the message, and each hint
-   is only a command, because agents run a hint as a command (B3, B10). The JSON error has the field
+   missing (the P2 case). The message says what is missing. The condition
+   "If the URL is correct" is in the hint. Each hint is a sentence. A hint
+   that only reads state or starts a login has the JSON field `command`,
+   because agents run a hint command (B3, B10). The JSON error has the field
    `destination`. The message names only the current origin. `ncp` reads
    no other item to write the message. When the native store cannot
    answer, the hint is `ncp secret set NAME --server SERVER
@@ -226,7 +228,7 @@ This decision replaces one part of the credential review of 2026-10-09:
       `oauth.clientSecret`. With `--server`, `ncp` uses only that entry.
       If the configuration does not load, the exit code is that of B22. If
       no entry names `${NAME}` (also with `--server`), `ncp` gives a usage
-      error, and the message tells the user to add the entry first. If
+      error, and gives a hint that tells the user to add the entry first. If
       `${NAME}` is only in `command`, `args`, `cwd` or `url`, the hint is
       that of B32. (After milestone 19, the hint also gives `server add
       --secret`.)

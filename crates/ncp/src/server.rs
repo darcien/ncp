@@ -173,9 +173,12 @@ pub struct Origin(String);
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum OriginError {
-    #[error("the scheme, host and port of {0:?} must be literal text, with no ${{NAME}}")]
+    #[error(
+        "The scheme, the host and the port of {} must be literal text, with no `${{NAME}}`",
+        crate::text::code(.0)
+    )]
     NotLiteral(String),
-    #[error("{0:?} is not an https or http URL")]
+    #[error("The URL {} is not an `https` or `http` URL", crate::text::code(.0))]
     NotHttp(String),
 }
 
@@ -261,6 +264,8 @@ mod tests {
             UrlError::NoHost.to_string(),
             UrlError::PlainHttp.to_string(),
             UrlError::Credentials.to_string(),
+            OriginError::NotLiteral("https://${H}".into()).to_string(),
+            OriginError::NotHttp("ftp://h".into()).to_string(),
         ];
         crate::style::assert_style(&texts);
     }

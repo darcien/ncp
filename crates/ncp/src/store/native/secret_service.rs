@@ -49,16 +49,19 @@ fn platform_store() -> keyring_core::Result<Arc<keyring_core::CredentialStore>> 
 // bytes, so their messages do not include them.
 fn store_error(error: Error) -> StoreError {
     match error {
-        Error::PlatformFailure(cause) => StoreError::Unavailable(cause.to_string()),
-        Error::NoStorageAccess(cause) => StoreError::Denied(cause.to_string()),
+        Error::PlatformFailure(cause) => StoreError::Unavailable(cause.to_string().into()),
+        Error::NoStorageAccess(cause) => StoreError::Denied(cause.to_string().into()),
         Error::BadEncoding(_) | Error::BadDataFormat(..) => {
-            StoreError::Failure("stored item is not UTF-8 text".into())
+            StoreError::Failure("The stored item is not UTF-8 text".into())
         }
-        Error::Ambiguous(items) => StoreError::Failure(format!(
-            "{} stored items match one secret; remove the copies",
-            items.len()
-        )),
-        other => StoreError::Failure(other.to_string()),
+        Error::Ambiguous(items) => StoreError::Failure(
+            format!(
+                "The keyring has {} items for one secret. Remove the copies in the keyring.",
+                items.len()
+            )
+            .into(),
+        ),
+        other => StoreError::Failure(other.to_string().into()),
     }
 }
 
@@ -90,16 +93,14 @@ impl CredentialStore for NativeStore {
     /// of a locked item are not readable, so a locked item gives an error
     /// and no partial list.
     fn keys(&self) -> Result<Vec<CredentialKey>, StoreError> {
-        let unavailable = |error: secret_service::Error| StoreError::Unavailable(error.to_string());
+        let unavailable =
+            |error: secret_service::Error| StoreError::Unavailable(error.to_string().into());
         let service = SecretService::connect(EncryptionType::Plain).map_err(unavailable)?;
         let found = service
             .search_items(HashMap::from([("service", SERVICE)]))
             .map_err(unavailable)?;
         if !found.locked.is_empty() {
-            return Err(StoreError::Denied(format!(
-                "{} items are locked; unlock the keyring to list them",
-                found.locked.len()
-            )));
+            return Err(StoreError::Locked(found.locked.len()));
         }
         let accounts: Vec<String> = found
             .unlocked

@@ -205,16 +205,17 @@ No item of another destination is a fallback. When no place has the item,
 `ncp` stops before the send (exit 2):
 
 ```
-error: LINEAR_KEY is not set, and not stored for https://mcp.linear.app.
-ncp sent nothing to server linear. If this URL is correct, store the
-value for it.
-hint: ncp secret set LINEAR_KEY --server linear
-hint: ncp secret list
+error: The variable `LINEAR_KEY` is not set, and no store has a value for `https://mcp.linear.app`. ncp sent nothing to the server `linear`.
+
+hint: If the URL is correct, run `ncp secret set LINEAR_KEY --server linear` to store the value
+
+hint: To see the stored items and their destinations, run `ncp secret list`
 ```
 
-When the native store is not available, the error says why (for example
-"the login keyring is locked") and gives the full command `ncp secret set
-LINEAR_KEY --server linear --credential-store file`.
+When the native store is not available, the store error is a cause (for
+example "the login keyring is locked"), and the hint gives the full
+command `ncp secret set LINEAR_KEY --server linear --credential-store
+file`.
 
 - A value from the native store or the file expands only in `env` values,
   `headers` values and `oauth.clientSecret`. In `args` it would show in the
@@ -461,10 +462,10 @@ user reviews them.
 | B32 | A `${NAME}` in `command`, `args`, `cwd` or `url` comes only from the environment. `ncp` does not read a store for it. The error is "variable NAME is not set" with the hint `export NAME=<value>`. | Section 2.4: a stored value must not go into the process list or a URL. Not reading the store also shows no prompt. |
 | B33 | A credential file that `ncp` cannot read or write gives exit 3. A native store that is not available, is locked, or gives no answer gives exit 4. | Section 3. |
 | B34 | Items of the earlier layout (`<server>/env/<NAME>`) are ignored. | No release has used them (requirements: stored credentials can reset before the first release). |
-| B35 | After `secret set`, `ncp` checks the other place for a copy, with a limit of 5 s, and warns when the environment sets the name. Each warning names the place that wins. The check uses the same key, so it looks only at the same destination. When a copy is found, the warning names the destination, and the hint is `ncp secret delete NAME --server SERVER` (section 2.4): it removes the copies of this destination, and the user then stores the value in one place. When the check fails, the warning says so and gives no hint. | The check only gives a warning, so it must not wait for a locked store. |
+| B35 | After `secret set`, `ncp` checks the other place for a copy, with a limit of 5 s, and warns when the environment sets the name. Each warning names the place that wins. The check uses the same key, so it looks only at the same destination. When a copy is found, the warning names the destination, and the hint is `ncp secret delete NAME --server SERVER` (section 2.4): it removes the copies of this destination, and the user then stores the value in one place. When the check fails, the warning says so and gives no hint. In JSON, the warning then has `hints: []`. | The check only gives a warning, so it must not wait for a locked store. |
 | B36 | A host with no native store (for example Linux with no Secret Service) gives no warning in `secret list` and `secret delete`: the native store counts as empty. | A user who keeps all values in the file must not see the same warning at each run. |
 | B37 | `secret list` with a configuration file that does not load gives a warning, and no secret shows as used. | The names come from the stores, not from the file. |
-| B38 | On Linux, the list of names reads no value and unlocks nothing. A locked item gives the warning "unlock the keyring to list them". `secret delete` removes the item in one call, which can show the unlock prompt, as `secret set` does. | keyring-core unlocks each item that a search finds, which shows a prompt. The design says that the list reads no value. |
+| B38 | On Linux, the list of names reads no value and unlocks nothing. A locked item gives a warning with the hint "To list the locked items, unlock the keyring". `secret delete` removes the item in one call, which can show the unlock prompt, as `secret set` does. | keyring-core unlocks each item that a search finds, which shows a prompt. The design says that the list reads no value. |
 | B39 | `secret set` checks the store before it reads the value. On a TTY, it turns off the echo and the line mode with `/bin/stty`, and does the backspace itself, so that a value longer than 1024 bytes works on macOS. It restores the earlier settings after the line and after Ctrl-C (exit 130). When `stty` fails, `secret set` fails and reads no value. | The user does not type a secret twice, and the shell of the user works after Ctrl-C. The value never shows. |
 | B40 | Each run of `/usr/bin/security` stops 1 s before the limit of its store call. `secret delete` removes and reports in one run. Ctrl-C stops the program too, because it stays in the process group of `ncp`, and gives exit 130. | A program that stays can show a dialog after the exit of `ncp`, or write or remove an item late. |
 | B41 | `-v` writes `debug: server NAME: message` in text and `{"debug": {"message", "server"}}` in JSON. It shows the configuration file, the source of each `${NAME}` of `env` and `headers` ("from the environment", "from the native store", "from the credential file"), the proxy route of an HTTP server with its source, the cached protocol version, and the protocol version that `ncp` saves. | The same shape as warnings and hints (B3). uv also writes `DEBUG` lines for `-v`. |

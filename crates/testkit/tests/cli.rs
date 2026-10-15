@@ -294,17 +294,19 @@ fn name_that_no_place_has_names_the_secret_set_command() {
     home.configure(&env_server());
     let run = env_value(&home);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let error = run.old_error();
+    let error = run.error();
     assert_eq!(
         error["message"],
-        "FIXTURE_TOKEN is not set, and not stored for stdio servers. ncp did not start server fx."
+        "The variable `FIXTURE_TOKEN` is not set, and no store has a value for stdio servers. \
+         ncp did not start the server `fx`."
     );
     assert_eq!(
-        common::hints(&error),
-        [
-            "ncp secret set FIXTURE_TOKEN --server fx",
-            "ncp secret list"
-        ]
+        error["hints"],
+        json!([
+            {"message": "To store the value, run `ncp secret set FIXTURE_TOKEN --server fx`"},
+            {"message": "To see the stored items and their destinations, run `ncp secret list`",
+                "command": "ncp secret list"}
+        ])
     );
     assert_eq!(error["destination"], Value::Null);
 }
@@ -315,16 +317,12 @@ fn name_with_no_native_store_names_the_file_option() {
     home.configure(&env_server());
     let run = env_value(&home);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    assert_eq!(
-        run.hints()[0],
-        "ncp secret set FIXTURE_TOKEN --server fx --credential-store file"
-    );
+    let file_hint = "To store the value in the credential file, run \
+                     `ncp secret set FIXTURE_TOKEN --server fx --credential-store file`";
+    assert_eq!(run.error()["hints"], json!([{"message": file_hint}]));
     let run = home.run_with_stdin(&["secret", "set", "FIXTURE_TOKEN"], "v\n");
     assert_eq!(run.code(), 4, "{}", run.describe());
-    assert_eq!(
-        run.hints()[0],
-        "ncp secret set FIXTURE_TOKEN --server fx --credential-store file"
-    );
+    assert_eq!(run.error()["hints"], json!([{"message": file_hint}]));
 }
 
 #[test]
@@ -448,7 +446,12 @@ fn native_store_comes_before_the_file_and_list_shows_both_places() {
     );
     let run = home.run(&["secret", "delete", "FIXTURE_TOKEN"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.hints()[0], "ncp secret list");
+    assert_eq!(
+        run.error()["hints"][0]["command"],
+        "ncp secret list",
+        "{}",
+        run.describe()
+    );
 }
 
 #[test]
@@ -457,9 +460,13 @@ fn secret_set_rejects_a_bad_name_and_an_empty_value() {
     home.configure(&json!({"s": {"command": "s", "env": {"A": "${A}"}}}));
     let run = home.run_with_stdin(&["secret", "set", "A-B", "--credential-store", "file"], "x");
     assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(
+        run.error()["message"],
+        "The name `A-B` is not a secret name"
+    );
     let run = home.run_with_stdin(&["secret", "set", "A", "--credential-store", "file"], "\n");
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.old_error()["message"], "the value of A is empty");
+    assert_eq!(run.error()["message"], "The value of `A` is empty");
 }
 
 #[test]
@@ -490,7 +497,7 @@ fn secret_set_stops_when_a_pipe_gives_no_value_in_the_time_limit() {
     assert_eq!(run.code(), 3, "{}", run.describe());
     // The exit does not wait for the read that is still open.
     assert!(started.elapsed() < std::time::Duration::from_millis(2500));
-    assert_eq!(run.old_error()["message"], "no value of A came in 1 s");
+    assert_eq!(run.error()["message"], "No value of `A` came in 1 s");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -536,12 +543,17 @@ async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
 
     let run = set(&[]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let message = run.old_error()["message"].as_str().unwrap().to_string();
-    assert!(
-        message.contains(&web) && message.contains(&other),
-        "{message}"
+    let error = run.error();
+    assert_eq!(
+        error["message"],
+        "The entries give `${K}` more than one destination:"
     );
-    assert_eq!(run.hints()[0], "ncp secret set K --server <SERVER>");
+    let data = error["data"].to_string();
+    assert!(data.contains(&web) && data.contains(&other), "{data}");
+    assert_eq!(
+        run.hints(),
+        ["To store the value for one server, run `ncp secret set K --server <SERVER>`"]
+    );
 
     let run = set(&["--server", "web"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
@@ -552,15 +564,22 @@ async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
     assert_eq!(home.run(&["tool", "list", "web"]).code(), 0);
     let run = home.run(&["tool", "list", "other"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
+    let error = run.error();
     assert_eq!(
-        run.old_error()["message"],
+        error["message"],
         format!(
-            "K is not set, and not stored for {other}. ncp sent nothing to server other. \
-             If this URL is correct, store the value for it."
+            "The variable `K` is not set, and no store has a value for `{other}`. \
+             ncp sent nothing to the server `other`."
         )
     );
-    assert_eq!(run.old_error()["destination"], other.as_str());
-    assert_eq!(run.hints()[0], "ncp secret set K --server other");
+    assert_eq!(error["destination"], other.as_str());
+    assert_eq!(
+        run.hints(),
+        [
+            "If the URL is correct, run `ncp secret set K --server other` to store the value",
+            "To see the stored items and their destinations, run `ncp secret list`"
+        ]
+    );
 
     assert_eq!(set(&["--server", "other"]).code(), 0);
     let list = home.run(&["secret", "list"]);
@@ -580,14 +599,12 @@ async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
 
     let run = home.run(&["secret", "delete", "K"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert!(
-        run.old_error()["message"]
-            .as_str()
-            .unwrap()
-            .ends_with("ncp deleted nothing"),
-        "{}",
-        run.describe()
+    let error = run.error();
+    assert_eq!(
+        error["message"],
+        "ncp deleted nothing, because the stores have items of `K` for more than one destination:"
     );
+    assert_eq!(error["data"], json!([web, other]));
     let run = home.run(&["secret", "delete", "K", "--server", "other"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert_eq!(
@@ -603,7 +620,7 @@ async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
     assert_eq!(run.stdout()["deleted"][0]["destination"], web.as_str());
     let run = home.run(&["secret", "delete", "K", "--all"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.old_error()["message"], "K is not stored");
+    assert_eq!(run.error()["message"], "No store has an item of `K`");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -634,8 +651,12 @@ fn secret_set_with_no_entry_tells_the_user_to_add_it_first() {
     let run = home.run_with_stdin(&["secret", "set", "A", "--credential-store", "file"], "v");
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert_eq!(
-        run.old_error()["message"],
-        "no entry names ${A} in env, headers or oauth.clientSecret; add the entry first"
+        run.error()["message"],
+        "No entry names `${A}` in `env`, `headers` or `oauth.clientSecret`"
+    );
+    assert_eq!(
+        run.hints(),
+        ["Add an entry that names `${A}` first. Then run the command again."]
     );
 }
 
@@ -658,7 +679,13 @@ fn one_entry_with_two_destinations_for_a_name_needs_two_names() {
         "v",
     );
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.hints(), Vec::<String>::new(), "{}", run.describe());
+    let error = run.error();
+    assert_eq!(
+        error["message"],
+        "The server `acme` names `${S}` for more than one destination:"
+    );
+    assert_eq!(error["data"].as_array().unwrap().len(), 2, "{error}");
+    assert_eq!(run.hints(), ["Use one name for each field"]);
 }
 
 #[test]
@@ -680,7 +707,7 @@ fn secret_delete_unused_needs_a_valid_file_and_an_unused_item() {
     home.configure(&json!({"s": {"command": "s", "env": {"A": "${A}"}}}));
     let run = home.run(&["secret", "delete", "A", "--unused"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.old_error()["message"], "no stored item of A is unused");
+    assert_eq!(run.error()["message"], "No stored item of `A` is unused");
 }
 
 #[test]
@@ -691,15 +718,26 @@ fn secret_delete_with_a_locked_native_store_needs_a_flag() {
     std::fs::write(home.root.join("keychain/fail"), "36").unwrap();
     let run = home.run(&["secret", "delete", "A"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
+    let error = run.error();
+    assert_eq!(
+        error["message"],
+        "ncp cannot list the items in the native store. ncp deleted nothing."
+    );
+    assert_eq!(error["causes"][0], "The credential store denied access");
     assert!(
-        run.old_error()["message"]
+        error["causes"][1]
             .as_str()
             .unwrap()
-            .ends_with("ncp deleted nothing"),
-        "{}",
-        run.describe()
+            .contains("exited with code 36"),
+        "{error}"
     );
-    assert_eq!(run.hints()[0], "ncp secret delete A --server <SERVER>");
+    assert_eq!(
+        run.hints(),
+        [
+            "The native store can have an item of `A` for another destination. To delete only \
+          the item of one server, run `ncp secret delete A --server <SERVER>`."
+        ]
+    );
     // Each item in the file is in use, and the native store cannot list.
     let run = home.run(&["secret", "delete", "A", "--unused"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
@@ -722,21 +760,21 @@ fn stored_value_needs_a_literal_origin_and_an_environment_value_does_not() {
     );
     let run = home.run_with_stdin(&["secret", "set", "K", "--credential-store", "file"], "v");
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert!(
-        run.old_error()["message"]
-            .as_str()
-            .unwrap()
-            .contains("only to a literal origin"),
-        "{}",
-        run.describe()
+    assert_eq!(
+        run.error()["message"],
+        "The server `web` names `${K}`, and ncp sends a stored value only to a literal origin"
     );
     home.store_in_file("secret/http://127.0.0.1:1/K", "v");
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let message = run.old_error()["message"].as_str().unwrap().to_string();
-    assert!(message.contains("only to a literal origin"), "{message}");
-    // The message shows the URL as the file writes it.
-    assert!(message.contains("${PORT}"), "{message}");
+    assert_eq!(
+        run.error()["message"],
+        "The variable `K` of the server `web` is not set, and ncp sends a stored value only to \
+         a literal origin"
+    );
+    // The cause shows the URL as the file writes it.
+    let text = run.error_text();
+    assert!(text.contains("${PORT}"), "{text}");
 }
 
 #[test]
@@ -1071,21 +1109,27 @@ fn secret_set_warns_when_another_place_wins() {
         "file",
     );
     assert_eq!(run.code(), 0, "{}", run.describe());
-    let messages = warnings(&run);
-    assert!(
-        messages[0].contains("the new value is not used"),
-        "{messages:?}"
+    let warning = &run.warnings()[0];
+    assert_eq!(
+        warning["message"],
+        "The native store also has an item of `A` for stdio servers. ncp reads the native \
+         store first and does not use the new value."
     );
     assert_eq!(
-        common::hints(&run.old_warnings()[0]),
-        ["ncp secret delete A --server s"]
+        common::hints(warning),
+        [
+            "To delete the items of this destination, run `ncp secret delete A --server s`. \
+          Then store the value again."
+        ]
     );
     let run = home.run_with_stdin(
         &["secret", "set", "SHADOWED", "--credential-store", "file"],
         "x",
     );
-    assert!(
-        warnings(&run)[0].contains("environment"),
+    assert_eq!(
+        run.warnings()[0]["message"],
+        "The variable `SHADOWED` is also set in the environment. ncp uses the value of the \
+         environment first.",
         "{}",
         run.describe()
     );
@@ -1106,7 +1150,7 @@ fn secret_commands_work_with_no_native_store_and_no_noise() {
     );
     let run = home.run(&["secret", "delete", "TYPO"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.old_error()["message"], "TYPO is not stored");
+    assert_eq!(run.error()["message"], "No store has an item of `TYPO`");
 }
 
 #[test]
@@ -1131,7 +1175,10 @@ fn name_used_only_in_args_is_not_used_and_names_the_rule() {
         "modern",
     );
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.hints()[0], "export ARG_ONLY=<value>");
+    assert_eq!(
+        run.hints(),
+        ["To set the variable, run `export ARG_ONLY=<value>`. Then run the command again."]
+    );
     home.store_in_file("secret/ARG_ONLY", "modern");
     let list = home.run(&["secret", "list"]);
     assert_eq!(list.stdout()["secrets"][0]["used"], false);

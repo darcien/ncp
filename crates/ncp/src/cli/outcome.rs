@@ -4,7 +4,12 @@
 
 use std::process::ExitCode;
 
-use crate::{credential::Destination, elicit::Page};
+pub use crate::text::{chain, chain_text};
+use crate::{
+    credential::Destination,
+    elicit::Page,
+    text::{kept_causes, source_texts},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Exit {
@@ -238,49 +243,6 @@ fn push<T>(items: Box<[T]>, item: T) -> Box<[T]> {
     let mut items = items.into_vec();
     items.push(item);
     items.into_boxed_slice()
-}
-
-// The texts of an error and its sources, outer first.
-fn source_texts(error: &dyn std::error::Error) -> impl Iterator<Item = String> {
-    std::iter::once(error.to_string()).chain(
-        std::iter::successors(error.source(), |error| error.source()).map(ToString::to_string),
-    )
-}
-
-// Transport and library errors put the inner text into the outer text. A
-// cause shows only when the last text that shows does not hold it (design
-// rule 7).
-fn kept_causes(
-    message: &str,
-    causes: Vec<String>,
-    new: impl IntoIterator<Item = String>,
-) -> Box<[String]> {
-    new.into_iter()
-        .fold(causes, |mut causes, text| {
-            let last = causes.last().map_or(message, String::as_str);
-            if !last.contains(&text) {
-                causes.push(text);
-            }
-            causes
-        })
-        .into_boxed_slice()
-}
-
-/// The text of an error, then the texts of its source chain that do not
-/// repeat (design rule 7).
-#[must_use]
-pub fn chain(error: &dyn std::error::Error) -> Vec<String> {
-    let mut texts = source_texts(error);
-    let first = texts.next().unwrap_or_default();
-    let rest = kept_causes(&first, Vec::new(), texts);
-    std::iter::once(first).chain(rest.into_vec()).collect()
-}
-
-/// An error and its source chain on one line, joined with `: `. For a
-/// place that has room for one line only, for example a table cell.
-#[must_use]
-pub fn chain_text(error: &dyn std::error::Error) -> String {
-    chain(error).join(": ")
 }
 
 /// A warning: the parts of an error with no exit code.

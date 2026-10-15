@@ -261,9 +261,9 @@ fn reads_the_head_again_then_names_the_account_when_a_part_is_missing() {
         r#"{"ncp": {"oauth/a/tokens": "ncp-parts:g1:2", "oauth/a/tokens/g1/0": "ncp-base64:"}}"#,
     )
     .unwrap();
-    let Err(StoreError::Failure(message)) = store(&dir).load(&tokens()) else {
-        panic!("a missing part must fail");
-    };
+    let error = store(&dir).load(&tokens()).unwrap_err();
+    assert!(matches!(error, StoreError::Failure(_)), "{error:?}");
+    let message = ncp::text::chain_text(&error);
     assert!(message.contains("oauth/a/tokens"), "{message}");
     let head_reads = calls(&dir)
         .lines()
@@ -299,9 +299,12 @@ fn reports_a_failing_program_without_the_value() {
     let dir = keychain("failing");
     // The fake writes the command that it received to stderr, then fails.
     fs::write(dir.join("fail"), "1").unwrap();
-    let Err(StoreError::Failure(message)) = store(&dir).save(&tokens(), &secret(HARD_VALUE)) else {
-        panic!("a failing program must give a failure");
-    };
+    let error = store(&dir)
+        .save(&tokens(), &secret(HARD_VALUE))
+        .unwrap_err();
+    assert!(matches!(error, StoreError::Failure(_)), "{error:?}");
+    // The whole chain, with the stderr of the program as its last cause.
+    let message = ncp::text::chain_text(&error);
     assert!(message.contains("exited with code 1"), "{message}");
     assert!(!message.contains("he said"));
     assert!(!message.contains("ncp-base64:"));

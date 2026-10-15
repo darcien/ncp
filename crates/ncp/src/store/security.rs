@@ -31,8 +31,9 @@ use std::{
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 
-use super::{CredentialStore, StoreError};
+use super::{CredentialStore, Detail, StoreError};
 use crate::credential::{CredentialKey, SERVICE, Secret};
+use crate::text::code;
 
 const PROGRAM: &str = "/usr/bin/security";
 
@@ -126,9 +127,12 @@ impl SecurityStore {
         let stderr = read_all(child.stderr.take());
         let status = self.wait(&mut child, deadline)?;
         sent.map_err(|error| {
-            StoreError::Failure(format!(
-                "cannot send the command to {}: {error}",
-                self.program.display()
+            StoreError::Failure(Detail::with_foreign(
+                format!(
+                    "ncp cannot send the command to {}",
+                    code(&self.program.display().to_string())
+                ),
+                error.to_string(),
             ))
         })?;
         Ok(Output {
@@ -140,8 +144,15 @@ impl SecurityStore {
 
     // Waits for the program until the deadline, then stops it.
     fn wait(&self, child: &mut Child, deadline: Instant) -> Result<ExitStatus, StoreError> {
-        let failure =
-            |error: io::Error| StoreError::Failure(format!("{}: {error}", self.program.display()));
+        let failure = |error: io::Error| {
+            StoreError::Failure(Detail::with_foreign(
+                format!(
+                    "ncp cannot wait for {}",
+                    code(&self.program.display().to_string())
+                ),
+                error.to_string(),
+            ))
+        };
         loop {
             if let Some(status) = child.try_wait().map_err(failure)? {
                 return Ok(status);
@@ -189,9 +200,13 @@ impl CredentialStore for SecurityStore {
             Loaded::PartMissing => match self.load_value(&account, deadline)? {
                 Loaded::Found(secret) => Ok(Some(secret)),
                 Loaded::Absent => Ok(None),
-                Loaded::PartMissing => Err(StoreError::Failure(format!(
-                    "the item {account} is kept in parts, and a part is missing"
-                ))),
+                Loaded::PartMissing => Err(StoreError::Failure(
+                    format!(
+                        "The item {} is kept in parts, and a part is missing",
+                        code(&account)
+                    )
+                    .into(),
+                )),
             },
         }
     }
@@ -273,7 +288,7 @@ impl SecurityStore {
         match output.status.code() {
             Some(0) => {
                 let text = String::from_utf8(output.stdout)
-                    .map_err(|_| StoreError::Failure("stored item is not UTF-8 text".into()))?;
+                    .map_err(|_| StoreError::Failure("The stored item is not UTF-8 text".into()))?;
                 Ok(Some(text.strip_suffix('\n').unwrap_or(&text).to_string()))
             }
             Some(ITEM_NOT_FOUND) => Ok(None),
@@ -369,7 +384,9 @@ fn parse_item(account: &str, text: &str) -> Result<Item, StoreError> {
                 count,
             })
         })
-        .ok_or_else(|| StoreError::Failure(format!("the item {account} is not valid")))
+        .ok_or_else(|| {
+            StoreError::Failure(format!("The item {} is not valid", code(account)).into())
+        })
 }
 
 /// The items that one save writes: the parts in order, then the head.
@@ -395,7 +412,9 @@ fn save_plan(account: &str, value: &str, generation: &str) -> Result<SavePlan, S
     let room = MAX_LINE
         .checked_sub(add_line(&part_account(account, generation, usize::MAX), "").len())
         .filter(|&room| room > 0)
-        .ok_or_else(|| StoreError::Failure(format!("the account {account} is too long")))?;
+        .ok_or_else(|| {
+            StoreError::Failure(format!("The account {} is too long", code(account)).into())
+        })?;
     let parts: Vec<(String, String)> = encoded
         .as_bytes()
         .chunks(room)
@@ -462,7 +481,10 @@ fn ncp_accounts(dump: &str) -> Vec<String> {
 }
 
 fn not_started(program: &Path, error: &io::Error) -> StoreError {
-    StoreError::Unavailable(format!("cannot run {}: {error}", program.display()))
+    StoreError::Unavailable(Detail::with_foreign(
+        format!("ncp cannot run {}", code(&program.display().to_string())),
+        error.to_string(),
+    ))
 }
 
 // The command for `security -i` that adds or replaces an item.
@@ -497,7 +519,7 @@ fn encode(value: &str) -> String {
 // Reads a stored value. A value with no mark is plain text, for example an
 // item that a person added by hand.
 fn decode(stored: &str) -> Result<Secret, StoreError> {
-    let not_text = || StoreError::Failure("stored item is not UTF-8 text".into());
+    let not_text = || StoreError::Failure("The stored item is not UTF-8 text".into());
     match stored.strip_prefix(ENCODED) {
         Some(encoded) => STANDARD
             .decode(encoded)
@@ -521,14 +543,11 @@ fn diagnostics(output: &Output) -> String {
 }
 
 fn exit_error(command: &str, code: Option<i32>, diagnostics: &str) -> StoreError {
+    let program = crate::text::code(&format!("security {command}"));
     let Some(code) = code else {
-        return StoreError::Failure(format!("security {command} stopped on a signal"));
+        return StoreError::Failure(format!("{program} stopped on a signal").into());
     };
-    let detail = if diagnostics.is_empty() {
-        format!("security {command} exited with code {code}")
-    } else {
-        format!("security {command} exited with code {code}: {diagnostics}")
-    };
+    let detail = Detail::with_foreign(format!("{program} exited with code {code}"), diagnostics);
     match code {
         INTERACTION_NOT_ALLOWED | AUTH_FAILED | USER_CANCELED => StoreError::Denied(detail),
         NO_DEFAULT_KEYCHAIN | NO_SUCH_KEYCHAIN => StoreError::Unavailable(detail),
@@ -649,7 +668,7 @@ mod tests {
         let Err(StoreError::Failure(message)) = decode("ncp-base64:@@secret@@") else {
             panic!("a bad value must fail");
         };
-        assert!(!message.contains("secret@@"));
+        assert!(!message.to_string().contains("secret@@"));
     }
 
     #[test]

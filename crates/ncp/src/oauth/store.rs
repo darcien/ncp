@@ -170,12 +170,15 @@ pub fn parse_item(secret: &Secret) -> Result<TokensItem, items::ItemError> {
 /// authorization error, and the file is the fix.
 const FILE_FAILED: &str = "local: ";
 
+// rmcp keeps one text, so the store error and its causes go in as one
+// line. Its Display text alone would lose the reason.
 fn store_error(error: &StoreError) -> AuthError {
+    let text = crate::text::chain_text(error);
     let text = match error {
         StoreError::Io { .. } | StoreError::OpenPermissions(_) | StoreError::Corrupt(_) => {
-            format!("{FILE_FAILED}{error}")
+            format!("{FILE_FAILED}{text}")
         }
-        _ => error.to_string(),
+        _ => text,
     };
     AuthError::CredentialStoreError(text)
 }

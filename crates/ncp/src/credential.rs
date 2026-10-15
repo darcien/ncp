@@ -49,7 +49,7 @@ impl fmt::Debug for Secret {
 pub struct SecretName(String);
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("{0:?} is not a secret name; use letters, digits and '_', and do not start with a digit")]
+#[error("The name {} is not a secret name", crate::text::code(.0))]
 pub struct SecretNameError(String);
 
 impl SecretName {
@@ -184,6 +184,11 @@ fn secret_key(rest: &str) -> Option<CredentialKey> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_texts_follow_the_message_rules() {
+        crate::style::assert_style(&[SecretName::parse("1a").unwrap_err().to_string()]);
+    }
 
     fn server() -> ServerName {
         ServerName::parse("gh").unwrap()

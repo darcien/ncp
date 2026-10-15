@@ -17,7 +17,10 @@ pub use memory::MemoryStore;
 pub use native::NativeStore;
 pub use security::{PROGRAM_LIMIT, SecurityStore};
 
-use crate::credential::{CredentialKey, Secret};
+use crate::{
+    credential::{CredentialKey, Secret},
+    text::code,
+};
 
 pub trait CredentialStore: Send + Sync {
     /// # Errors
@@ -65,29 +68,71 @@ pub fn keys_of<'a>(accounts: impl IntoIterator<Item = &'a str>) -> Vec<Credentia
 /// Store errors. No variant holds a secret value.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
-    #[error("no credential store is available: {0}")]
-    Unavailable(String),
-    #[error("access to the credential store is denied: {0}")]
-    Denied(String),
-    #[error("credential store failure: {0}")]
-    Failure(String),
-    #[error("credential file {path}: {source}")]
+    #[error("No credential store is available")]
+    Unavailable(#[source] Detail),
+    #[error("The credential store denied access")]
+    Denied(#[source] Detail),
+    /// The Secret Service does not show the names of a locked item.
+    #[error("The keyring has {0} locked items")]
+    Locked(usize),
+    #[error("The credential store failed")]
+    Failure(#[source] Detail),
+    #[error("ncp cannot use the credential file {}", code(&.path.display().to_string()))]
     Io {
         path: PathBuf,
         source: std::io::Error,
     },
-    #[error("credential file {0} is open to other users; set its mode to 0600")]
+    #[error("Other users can open the credential file {}", code(&.0.display().to_string()))]
     OpenPermissions(PathBuf),
-    #[error("credential file {0} is not valid")]
+    #[error("The credential file {} is not valid", code(&.0.display().to_string()))]
     Corrupt(PathBuf),
-    #[error(
-        "the credential store gave no answer in {} s; it can wait for an unlock prompt",
-        .0.as_secs()
-    )]
+    #[error("The credential store gave no answer in {} s", .0.as_secs())]
     NoAnswer(Duration),
     /// Ctrl-C during the call.
-    #[error("the store call was interrupted")]
+    #[error("ncp stopped the store call because of an interrupt")]
     Interrupted,
+}
+
+/// What failed in a store, in the words of `ncp`. The text of the store
+/// program or library is its source, so that it shows as a separate cause.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{text}")]
+pub struct Detail {
+    text: String,
+    #[source]
+    foreign: Option<Foreign>,
+}
+
+/// Text from a store program or library.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct Foreign(String);
+
+impl Detail {
+    /// A text of `ncp` with the text of the store program as its source.
+    #[must_use]
+    pub fn with_foreign(text: impl Into<String>, foreign: impl Into<String>) -> Self {
+        let foreign = foreign.into();
+        Self {
+            text: text.into(),
+            foreign: (!foreign.is_empty()).then_some(Foreign(foreign)),
+        }
+    }
+}
+
+impl From<String> for Detail {
+    fn from(text: String) -> Self {
+        Self {
+            text,
+            foreign: None,
+        }
+    }
+}
+
+impl From<&str> for Detail {
+    fn from(text: &str) -> Self {
+        Self::from(text.to_string())
+    }
 }
 
 /// The time limit for one store call. A locked store waits for its unlock
@@ -114,8 +159,9 @@ pub async fn run_blocking<T: Send + 'static>(
 ) -> Result<T, StoreError> {
     match tokio::time::timeout(limit, tokio::task::spawn_blocking(call)).await {
         Ok(Ok(result)) => result,
-        Ok(Err(stopped)) => Err(StoreError::Failure(format!(
-            "the store call stopped: {stopped}"
+        Ok(Err(stopped)) => Err(StoreError::Failure(Detail::with_foreign(
+            "The store call stopped",
+            stopped.to_string(),
         ))),
         Err(_) => Err(StoreError::NoAnswer(limit)),
     }
@@ -163,6 +209,39 @@ mod tests {
 #[cfg(test)]
 mod keys_tests {
     use super::*;
+
+    #[test]
+    fn error_texts_follow_the_message_rules() {
+        let texts = [
+            StoreError::Unavailable("x".into()).to_string(),
+            StoreError::Denied("x".into()).to_string(),
+            StoreError::Locked(2).to_string(),
+            StoreError::Failure("x".into()).to_string(),
+            StoreError::Io {
+                path: "/c".into(),
+                source: std::io::Error::other("x"),
+            }
+            .to_string(),
+            StoreError::OpenPermissions("/c".into()).to_string(),
+            StoreError::Corrupt("/c".into()).to_string(),
+            StoreError::NoAnswer(Duration::from_secs(60)).to_string(),
+            StoreError::Interrupted.to_string(),
+        ];
+        crate::style::assert_style(&texts);
+        assert_eq!(texts[7], "The credential store gave no answer in 60 s");
+    }
+
+    #[test]
+    fn the_text_of_a_store_program_is_a_separate_cause() {
+        let exited = "`security x` exited with code 51";
+        let error = StoreError::Denied(Detail::with_foreign(exited, "denied"));
+        assert_eq!(
+            crate::text::chain(&error),
+            ["The credential store denied access", exited, "denied"]
+        );
+        let error = StoreError::Denied(Detail::with_foreign(exited, ""));
+        assert_eq!(crate::text::chain(&error).len(), 2);
+    }
 
     #[test]
     fn keeps_only_the_accounts_that_ncp_makes_in_order() {

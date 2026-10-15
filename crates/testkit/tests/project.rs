@@ -390,13 +390,13 @@ fn secret_set_names_the_untrusted_file_that_uses_the_name() {
     assert_eq!(run.code(), 2, "{}", run.describe());
     let file = home.project_file();
     assert_eq!(
-        run.old_error()["message"],
+        run.error()["message"],
         format!(
-            "server web names ${{WEB_TOKEN}} in {}, which is not trusted",
+            "The server `web` names `${{WEB_TOKEN}}` in `{}`, which you did not trust",
             file.display()
         )
     );
-    assert_eq!(run.hints()[0], "ncp trust");
+    assert_eq!(run.hints(), ["To trust the file, run `ncp trust`"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -603,19 +603,16 @@ fn delete_unused_stops_when_an_untrusted_entry_names_the_secret() {
     home.store_in_file("secret/https://mcp.example.com/WEB_TOKEN", "v");
     let run = home.run(&["secret", "delete", "WEB_TOKEN", "--unused"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
+    let message = run.error()["message"].as_str().unwrap().to_string();
     assert!(
-        run.old_error()["message"]
-            .as_str()
-            .unwrap()
-            .ends_with("which is not trusted; ncp cannot know which items it uses"),
-        "{}",
-        run.describe()
+        message.ends_with("which you did not trust. ncp cannot know which items it uses."),
+        "{message}"
     );
     let run = home.run(&["secret", "list"]);
     assert!(
         messages(&run, "hint")
             .iter()
-            .any(|hint| hint.contains("a project in another folder can still use it")),
+            .any(|hint| hint.contains("A project in another folder can still use the item")),
         "{}",
         run.describe()
     );
