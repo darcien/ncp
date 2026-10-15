@@ -169,9 +169,7 @@ fn entry_failure(server: &Server, error: &EntryError) -> Failure {
     ))
     .about(name)
     .caused_by(error);
-    super::fixes::entry_hints(error)
-        .into_iter()
-        .fold(failure, Failure::hint)
+    super::fixes::with_entry_hints(failure, error)
 }
 
 async fn values_of(
@@ -1403,15 +1401,20 @@ async fn strict_config(
             .context("ncp cannot know which items the configuration uses")
             .with_exit(Exit::Usage)
     })?;
-    let invalid_entry = |server: &str, error: &EntryError| {
-        Failure::usage(format!(
-            "The entry of the server {} is not valid.{unknown}",
-            code(server)
+    // The file names the place, because a global entry and a project
+    // entry can have the same name.
+    let invalid_entry = |server: &str, error: &EntryError, file: &std::path::Path| {
+        let failure = Failure::usage(format!(
+            "The entry of the server {} in {} is not valid.{unknown}",
+            code(server),
+            code(&file.display().to_string())
         ))
-        .caused_by(error)
+        .about(server)
+        .caused_by(error);
+        super::fixes::with_entry_hints(failure, error)
     };
     if let Some((server, error)) = loaded.config.invalid().next() {
-        return Err(invalid_entry(server, error));
+        return Err(invalid_entry(server, error, loaded.file_of(server)));
     }
     let waiting = match &loaded.project {
         ProjectFile::Unusable { file, reason } => {
@@ -1425,13 +1428,17 @@ async fn strict_config(
         _ => None,
     };
     let invalid = waiting.and_then(|project| {
-        project.entries.iter().find_map(|entry| match &entry.shape {
-            Err(error) => Some((&entry.name, error)),
-            Ok(shape) => shape.problem.as_ref().map(|problem| (&entry.name, problem)),
-        })
+        project
+            .entries
+            .iter()
+            .find_map(|entry| match &entry.shape {
+                Err(error) => Some((&entry.name, error)),
+                Ok(shape) => shape.problem.as_ref().map(|problem| (&entry.name, problem)),
+            })
+            .map(|(server, error)| (server, error, &project.file))
     });
-    if let Some((server, error)) = invalid {
-        return Err(invalid_entry(server, error).hint(trust_hint()));
+    if let Some((server, error, file)) = invalid {
+        return Err(invalid_entry(server, error, file).hint(trust_hint()));
     }
     if let Some(failure) = untrusted_use(&loaded, name, None) {
         let message = format!("{}.{unknown}", failure.message());

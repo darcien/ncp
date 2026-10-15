@@ -6,7 +6,8 @@
 /// pairs, and the value cannot start a new line.
 #[must_use]
 pub fn code(value: &str) -> String {
-    if value.contains('`') || value.chars().any(char::is_control) {
+    // An empty pair of backticks shows nothing, so an empty value is "".
+    if value.is_empty() || value.contains('`') || value.chars().any(char::is_control) {
         format!("{value:?}")
     } else {
         format!("`{value}`")
@@ -65,5 +66,6 @@ mod tests {
         assert_eq!(code("/home/u/mcp.json"), "`/home/u/mcp.json`");
         assert_eq!(code("a`b"), "\"a`b\"");
         assert_eq!(code("a\nb"), "\"a\\nb\"");
+        assert_eq!(code(""), "\"\"");
     }
 }

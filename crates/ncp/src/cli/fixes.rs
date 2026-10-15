@@ -2,7 +2,10 @@
 //! what is wrong. The command line gives the fix as a hint, as
 //! `hints_for_error` of uv does.
 
-use super::{outcome::Hint, render::shell_word};
+use super::{
+    outcome::{Failure, Hint},
+    render::shell_word,
+};
 use crate::{config::EntryError, server::UrlError, store::StoreError};
 
 /// The hints for an entry that is not valid, in the order to try them.
@@ -19,9 +22,27 @@ pub fn entry_hints(error: &EntryError) -> Vec<Hint> {
         EntryError::SecretWithoutIssuer { .. } => {
             "Set `oauth.issuer` to the issuer of the authorization server where you registered the client"
         }
-        _ => return Vec::new(),
+        // The text of these errors names the field and the problem, and
+        // the fix is clear from it.
+        EntryError::Name(_)
+        | EntryError::NotObject
+        | EntryError::NoTransport
+        | EntryError::UnknownType(_)
+        | EntryError::Missing(_)
+        | EntryError::WrongType { .. }
+        | EntryError::Url(UrlError::Invalid(_) | UrlError::Scheme(_) | UrlError::NoHost)
+        | EntryError::Variable { .. }
+        | EntryError::WithoutClientId(_)
+        | EntryError::IssuersDisagree
+        | EntryError::BadClientSecret => return Vec::new(),
     };
     vec![Hint::text(hint)]
+}
+
+/// The failure with the hints for its entry error added.
+#[must_use]
+pub fn with_entry_hints(failure: Failure, error: &EntryError) -> Failure {
+    entry_hints(error).into_iter().fold(failure, Failure::hint)
 }
 
 /// The hints for a store error.

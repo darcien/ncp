@@ -70,27 +70,38 @@ pub struct Row {
 }
 
 /// Why an entry is not valid: the text of the error and its causes.
-pub struct Reason(Vec<String>);
+pub struct Reason {
+    error: String,
+    causes: Vec<String>,
+}
 
 impl Reason {
     #[must_use]
     pub fn of(error: &dyn std::error::Error) -> Self {
-        Self(super::outcome::chain(error))
+        let mut texts = super::outcome::chain(error).into_iter();
+        Self {
+            error: texts.next().unwrap_or_default(),
+            causes: texts.collect(),
+        }
     }
 
     /// The error and its causes on one line, for a table cell.
     #[must_use]
     pub fn text(&self) -> String {
-        self.0.join(": ")
+        std::iter::once(&self.error)
+            .chain(&self.causes)
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(": ")
     }
 }
 
 impl Row {
     fn json(&self) -> Value {
         let mut row = serde_json::json!({"name": self.name});
-        if let Some(Reason(texts)) = &self.error {
-            row["error"] = serde_json::json!(texts.first());
-            row["causes"] = serde_json::json!(texts.get(1..).unwrap_or_default());
+        if let Some(reason) = &self.error {
+            row["error"] = serde_json::json!(reason.error);
+            row["causes"] = serde_json::json!(reason.causes);
         }
         if let Some((transport, target)) = &self.target {
             row["transport"] = serde_json::json!(transport);

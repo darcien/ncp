@@ -193,6 +193,7 @@ fn add_failure(name: &str, error: &AddError) -> Failure {
         AddError::CredentialHeader(header) => failure.hint(format!(
             "--header '{header}: Bearer ${{NAME}}' --secret NAME"
         )),
+        AddError::Entry(error) => super::fixes::with_entry_hints(failure, error),
         _ => failure,
     }
 }

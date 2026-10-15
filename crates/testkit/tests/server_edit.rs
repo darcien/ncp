@@ -961,5 +961,13 @@ fn add_with_a_url_that_is_not_valid_names_the_reason() {
     assert_eq!(run.code(), 2, "{}", run.describe());
     let text = run.error_text();
     assert!(text.contains("loopback"), "{text}");
+    assert_eq!(run.hints(), ["Use an `https` URL"]);
     assert!(!home.config_path().exists());
+    let run = add_global(&home, "web", "https://u:p@example.com/mcp", &[]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(
+        run.hints()[0].contains("credential store"),
+        "{}",
+        run.describe()
+    );
 }

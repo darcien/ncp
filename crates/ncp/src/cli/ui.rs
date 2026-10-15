@@ -474,7 +474,7 @@ fn diagnostic_json(diagnostic: &Diagnostic) -> Value {
         })
         .collect();
     let mut body = json!({
-        "message": diagnostic.message(),
+        "message": line_ends(diagnostic.message()),
         "data": shown_data(diagnostic.data()),
         "causes": causes,
         "hints": hints,
@@ -520,9 +520,13 @@ fn shown(text: &str) -> String {
         .zip(1..)
         .last()
         .unwrap_or((0, 0));
-    // A line that does not fit shows its first bytes, because a body of
-    // one long line usually holds the reason.
-    let end = if count < SHOWN_LINES {
+    // A line that is longer than the limit shows its first bytes, because
+    // a body of one long line usually holds the reason.
+    let next_is_long = text[end..]
+        .split('\n')
+        .next()
+        .is_some_and(|line| line.len() > SHOWN_BYTES);
+    let end = if count < SHOWN_LINES && next_is_long {
         (0..=SHOWN_BYTES)
             .rev()
             .find(|index| text.is_char_boundary(*index))
@@ -671,6 +675,17 @@ mod tests {
             cause,
             format!("{kept}\n(ncp did not show {} bytes)", 5014 - kept.len())
         );
+    }
+
+    #[test]
+    fn a_short_line_after_the_lines_that_fit_is_not_cut() {
+        let line = "a".repeat(135);
+        let text = format!("{}{}", format!("{line}\n").repeat(15), "b".repeat(100));
+        let failure = Failure::protocol("m").cause(format!("{text}\nmore"));
+        let value: Value = serde_json::from_str(&error_text(Format::Json, &failure)).unwrap();
+        let cause = value["error"]["causes"][0].as_str().unwrap();
+        assert!(!cause.contains("bbb"), "{cause}");
+        assert_eq!(cause.lines().count(), 16);
     }
 
     #[test]

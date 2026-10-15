@@ -388,9 +388,7 @@ fn entry_failure(name: &str, error: &EntryError, path: &Path) -> Failure {
     ))
     .about(name)
     .caused_by(error);
-    let failure = super::fixes::entry_hints(error)
-        .into_iter()
-        .fold(failure, Failure::hint);
+    let failure = super::fixes::with_entry_hints(failure, error);
     match error {
         // Only env and headers values can use a stored secret: a value in
         // the command or the arguments shows in the process list.

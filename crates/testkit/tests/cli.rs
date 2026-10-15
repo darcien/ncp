@@ -698,8 +698,12 @@ fn secret_delete_unused_needs_a_valid_file_and_an_unused_item() {
     let error = run.error();
     assert_eq!(
         error["message"],
-        "The entry of the server `bad` is not valid. ncp cannot know which items it uses."
+        format!(
+            "The entry of the server `bad` in `{}` is not valid. ncp cannot know which items it uses.",
+            home.config_path().display()
+        )
     );
+    assert_eq!(error["server"], "bad");
     assert_eq!(
         error["causes"],
         json!(["The type `x` is not `stdio`, `http` or `sse`"])
