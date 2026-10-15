@@ -1,6 +1,7 @@
 # Design: errors, warnings and hints
 
-Status: proposal, not accepted. Revision 5. Date: 2026-10-15.
+Status: revision 5, accepted by the user on 2026-10-15. Build: milestone
+20 of [plan.md](../plan.md).
 
 `ncp` writes errors, warnings and hints on stderr. This design makes the
 text and the JSON match uv as closely as the rules of `ncp` permit.
@@ -854,7 +855,7 @@ call sites, the tests and the design documents of one area together.
 After each step, `mise run precommit` must pass. Do the steps in this
 order.
 
-1. **Acceptance.** Get the acceptance of this proposal from the user.
+1. **Acceptance.** Done. The user accepted this design on 2026-10-15.
 2. **Model, renderer and the first area.** Do these tasks:
    - Make the model of section 6.
    - Make one renderer for text and one for JSON.

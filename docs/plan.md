@@ -494,11 +494,11 @@ step.
 
 ## Milestone 20: errors, warnings and hints
 
-Design: `docs/design/output-messages.md` (revision 5). The design is the
-source of truth; this list only orders the work. Research:
-`docs/research/uv-output-messages.md`.
+Design: `docs/design/output-messages.md` (revision 5), accepted by the
+user on 2026-10-15. The design is the source of truth; this list only
+orders the work. Research: `docs/research/uv-output-messages.md`.
 
-1. **Stop and ask** the user to accept the design.
+1. The user accepted the design on 2026-10-15.
 2. Do steps 2 to 10 of the migration plan (design section 8), in order.
    Each step changes the types, the call sites, the tests and the design
    documents of one area.
