@@ -287,11 +287,15 @@ fn a_project_file_that_is_not_a_regular_file_is_not_used() {
     home.cwd = dir;
     let run = home.run(&["server", "list"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
-    let warnings = messages(&run, "warning");
+    let warning = &run.warnings()[0];
     assert!(
-        warnings[0].ends_with("it is not a regular file"),
-        "{warnings:?}"
+        warning["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("ncp does not use `"),
+        "{warning}"
     );
+    assert_eq!(warning["causes"], json!(["The file is not a regular file"]));
 }
 
 #[test]
@@ -526,10 +530,9 @@ fn a_file_of_another_user_is_not_used_and_the_search_stops() {
     home.cwd = app;
     let run = home.run(&["server", "list"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
-    let warnings = messages(&run, "warning");
-    assert!(
-        warnings[0].ends_with("another user owns it"),
-        "{warnings:?}"
+    assert_eq!(
+        run.warnings()[0]["causes"],
+        json!(["Another user owns the file"])
     );
     assert_eq!(run.stdout()["servers"], json!([]));
 }
@@ -640,7 +643,10 @@ fn a_fifo_as_project_file_does_not_stop_the_command() {
     home.cwd = dir;
     let run = home.run(&["server", "list"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
-    assert!(messages(&run, "warning")[0].ends_with("it is not a regular file"));
+    assert_eq!(
+        run.warnings()[0]["causes"],
+        json!(["The file is not a regular file"])
+    );
 }
 
 #[test]

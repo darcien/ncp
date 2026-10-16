@@ -25,21 +25,22 @@ pub fn command(context: &Context<'_>, args: &TrustArgs) -> Result<(), Failure> {
         ProjectFile::Read(project) => project,
         ProjectFile::NotSearched => {
             return Err(Failure::usage(
-                "--config-file names the file, so there is no project file to trust",
+                "`--config-file` names the file, so ncp has no project file to trust",
             ));
         }
         ProjectFile::Absent(folder) => {
             return Err(Failure::usage(format!(
-                "no {} from the current folder up to {}",
+                "ncp found no `{}` from the current folder up to {}",
                 project::FILE_NAME,
-                folder.display()
+                crate::text::code(&folder.display().to_string())
             )));
         }
         ProjectFile::Unusable { file, reason } => {
             return Err(Failure::usage(format!(
-                "ncp does not use {}: {reason}",
-                file.display()
-            )));
+                "ncp does not use {}",
+                crate::text::code(&file.display().to_string())
+            ))
+            .cause(reason));
         }
     };
     let change = match (args.show, args.untrust, args.ignore) {

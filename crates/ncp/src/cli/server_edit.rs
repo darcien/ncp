@@ -17,7 +17,7 @@ use super::{
     args::{AddArgs, CredentialPlace},
     ask,
     auth::{self, TokenRemoval},
-    outcome::{Failure, Warning, chain_text},
+    outcome::{Failure, Hint, Warning},
     project_file::{self, Change, ProjectFile},
     render,
     secrets::{self, SecretRow},
@@ -31,6 +31,7 @@ use crate::{
     project::{self, Project, Trust},
     server::ServerName,
     store::StoreError,
+    text::code,
 };
 
 /// The wait for the lock of the configuration files, as for the refresh
@@ -163,10 +164,16 @@ fn request(args: &AddArgs) -> Result<Request, Failure> {
         },
         _ => {
             return Err(Failure::usage(
-                "give a URL or a command after --, not both and not neither",
+                "`ncp server add` needs a URL or a command after `--`, but not both",
             )
-            .hint("ncp server add <SERVER> <URL>")
-            .hint("ncp server add <SERVER> -- <COMMAND> [ARG...]"));
+            .hint(Hint::run_text(
+                "add an http server",
+                "ncp server add <SERVER> <URL>",
+            ))
+            .hint(Hint::run_text(
+                "add a stdio server",
+                "ncp server add <SERVER> -- <COMMAND> [ARG...]",
+            )));
         }
     };
     Ok(Request {
@@ -180,7 +187,8 @@ fn request(args: &AddArgs) -> Result<Request, Failure> {
             .as_deref()
             .map(|word| {
                 crate::credential::SecretName::parse(word).map_err(|_| {
-                    Failure::usage("the word after --secret is not a valid name of a secret")
+                    Failure::usage("The word after `--secret` is not a valid secret name")
+                        .hint(super::fixes::secret_name_hint())
                 })
             })
             .transpose()?,
@@ -188,10 +196,15 @@ fn request(args: &AddArgs) -> Result<Request, Failure> {
 }
 
 fn add_failure(name: &str, error: &AddError) -> Failure {
-    let failure = Failure::usage(chain_text(&error)).server(name);
+    let failure = Failure::usage(format!("ncp cannot add the server {}", code(name)))
+        .about(name)
+        .caused_by(error);
     match error {
         AddError::CredentialHeader(header) => failure.hint(format!(
-            "--header '{header}: Bearer ${{NAME}}' --secret NAME"
+            "Give the header as {}",
+            code(&format!(
+                "--header '{header}: Bearer ${{NAME}}' --secret NAME"
+            ))
         )),
         AddError::Entry(error) => super::fixes::with_entry_hints(failure, error),
         _ => failure,
@@ -199,15 +212,24 @@ fn add_failure(name: &str, error: &AddError) -> Failure {
 }
 
 fn two_files() -> Failure {
-    Failure::usage("--global and --config-file name two files; give one of them")
+    Failure::usage("`--global` and `--config-file` name two files").hint("Give one of them")
 }
 
-fn remove_command(name: &str, scope: Scope) -> String {
+fn remove_hint(name: &str, scope: Scope) -> Hint {
     let word = render::shell_word(name);
-    match scope {
+    let command = match scope {
         Scope::Global => format!("ncp server remove {word} --global"),
         Scope::Project => format!("ncp server remove {word}"),
-    }
+    };
+    Hint::run_text("remove the entry", &command)
+}
+
+fn global_hint() -> Hint {
+    Hint::text("To change the global file, run the command again with `--global`")
+}
+
+fn path_text(path: &Path) -> String {
+    code(&path.display().to_string())
 }
 
 // `server add` writes to the project file. It writes to the global file
@@ -229,18 +251,16 @@ async fn add_target(
             Ok(project_target(project))
         }
         ProjectFile::Unusable { file, reason } => Err(Failure::usage(format!(
-            "ncp does not use {}: {reason}; ncp does not change it",
-            file.display()
+            "ncp does not use {}. ncp does not change it.",
+            path_text(file)
         ))
-        .hint("--global")),
+        .cause(reason.as_str())
+        .hint(global_hint())),
         ProjectFile::Absent(_) => {
             let folder = std::env::current_dir()
                 .and_then(fs::canonicalize)
                 .map_err(|error| {
-                    Failure::protocol(format!(
-                        "cannot find the current folder: {error}",
-                        error = chain_text(&error)
-                    ))
+                    Failure::protocol("ncp cannot find the current folder").caused_by(&error)
                 })?;
             let home = context
                 .env
@@ -282,11 +302,9 @@ fn read(file: &Path) -> Result<Option<String>, Failure> {
     match fs::read_to_string(file) {
         Ok(text) => Ok(Some(text)),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(Failure::protocol(format!(
-            "cannot read {}: {error}",
-            file.display(),
-            error = chain_text(&error)
-        ))),
+        Err(error) => {
+            Err(Failure::protocol(format!("ncp cannot read {}", path_text(file))).caused_by(&error))
+        }
     }
 }
 
@@ -295,13 +313,13 @@ fn read(file: &Path) -> Result<Option<String>, Failure> {
 // untrusted file gets the question: a Yes trusts it, and a No writes the
 // ignored record and stops.
 async fn trusted_for_write(context: &Context<'_>, project: &Project) -> Result<(), Failure> {
-    let file = project.file.display();
+    let file = path_text(&project.file);
     match project.trust {
         Trust::Trusted => Ok(()),
         Trust::Ignored => Err(Failure::usage(format!(
-            "you ignored {file}, so ncp does not change it"
+            "You ignored {file}, so ncp does not change it"
         ))
-        .hint("--global")),
+        .hint(global_hint())),
         Trust::Untrusted { .. } if context.interactive => {
             context
                 .ui
@@ -313,9 +331,9 @@ async fn trusted_for_write(context: &Context<'_>, project: &Project) -> Result<(
                 Some(false) => {
                     project_file::change(&context.paths, project, Change::Ignore)?;
                     Err(Failure::usage(format!(
-                        "you did not trust {file}, so ncp did not change it"
+                        "You did not trust {file}, so ncp did not change it"
                     ))
-                    .hint("--global"))
+                    .hint(global_hint()))
                 }
                 None => Err(untrusted(project)),
             }
@@ -325,16 +343,23 @@ async fn trusted_for_write(context: &Context<'_>, project: &Project) -> Result<(
 }
 
 fn untrusted(project: &Project) -> Failure {
+    let file = path_text(&project.file);
     let state = match project.trust {
-        Trust::Untrusted { changed: true } => "changed since you trusted it",
-        _ => "is not trusted",
+        Trust::Untrusted { changed: true } => format!("{file} changed after you trusted it"),
+        // `trusted_for_write` gives no trusted or ignored file.
+        Trust::Untrusted { changed: false } | Trust::Trusted | Trust::Ignored => {
+            format!("you did not trust {file}")
+        }
     };
-    Failure::usage(format!(
-        "{} {state}, and ncp changes only a trusted project file:\n{}",
-        project.file.display(),
-        render::indented_entries(&project.entries, "  ").trim_end()
-    ))
-    .hint("ncp trust --show")
+    render::project_entries(&project.entries)
+        .into_iter()
+        .fold(
+            Failure::usage(format!(
+                "ncp changes only a trusted project file, and {state}:"
+            )),
+            Failure::data,
+        )
+        .hint(Hint::run("see the entries of the file", "ncp trust --show"))
 }
 
 // The steps under the lock (design 4.7 steps 6 to 9):
@@ -411,14 +436,12 @@ async fn lock(context: &Context<'_>) -> Result<private_file::Lock, Failure> {
     match secrets::interruptible(context, wait).await {
         Ok(Ok(lock)) => Ok(lock),
         Err(StoreError::Interrupted) => Err(session::interrupted(None)),
-        Ok(Err(error)) => Err(Failure::protocol(format!(
-            "cannot lock {shown}: {error}",
-            error = chain_text(&error)
-        ))),
-        Err(error) => Err(Failure::protocol(format!(
-            "cannot lock {shown}: {error}",
-            error = chain_text(&error)
-        ))),
+        Ok(Err(error)) => {
+            Err(Failure::protocol(format!("ncp cannot lock {}", code(&shown))).caused_by(&error))
+        }
+        Err(error) => {
+            Err(Failure::protocol(format!("ncp cannot lock {}", code(&shown))).caused_by(&error))
+        }
     }
 }
 
@@ -429,8 +452,8 @@ fn real_path(file: &Path) -> Result<PathBuf, Failure> {
     match fs::canonicalize(file) {
         Ok(real) => Ok(real),
         Err(_) if file.symlink_metadata().is_ok() => Err(Failure::protocol(format!(
-            "{} is a symlink to a file that does not exist",
-            file.display()
+            "The file {} is a symlink to a file that does not exist",
+            path_text(file)
         ))),
         Err(_) => Ok(file.to_path_buf()),
     }
@@ -449,8 +472,8 @@ fn mode_for_write(target: &Target, real: &Path) -> Result<u32, Failure> {
     }
 }
 
-fn cannot_write(target: &Target, error: &dyn std::fmt::Display) -> Failure {
-    Failure::protocol(format!("cannot write {}: {error}", target.file.display()))
+fn cannot_write(target: &Target, error: &dyn std::error::Error) -> Failure {
+    Failure::protocol(format!("ncp cannot write {}", path_text(&target.file))).caused_by(error)
 }
 
 // The file has the bytes that the user checked. The lock cannot stop an
@@ -460,23 +483,29 @@ fn unchanged(target: &Target, real: &Path, base: Option<&String>) -> Result<(), 
         Ok(())
     } else {
         Err(Failure::protocol(format!(
-            "{} changed after ncp read it, so ncp did not change it",
-            target.file.display()
+            "The file {} changed after ncp read it, so ncp did not change it",
+            path_text(&target.file)
         ))
-        .hint("run the command again"))
+        .hint("To apply your change to the new file, run the command again"))
     }
 }
 
 fn edit_failure(target: &Target, error: &EditError) -> Failure {
-    let message = format!(
-        "{}: {error}",
-        target.file.display(),
-        error = chain_text(&error)
-    );
+    let file = path_text(&target.file);
     match error {
-        EditError::SelfCheck => Failure::protocol(format!("{message}; ncp did not change it")),
-        EditError::Exists(name) => Failure::usage(message).hint(remove_command(name, target.scope)),
-        _ => Failure::usage(message),
+        EditError::SelfCheck => Failure::protocol(format!(
+            "The edit of {file} failed its check. ncp did not change the file."
+        ))
+        .caused_by(error),
+        EditError::Exists(name) => Failure::usage(format!("ncp cannot change {file}"))
+            .caused_by(error)
+            .hint(remove_hint(name, target.scope)),
+        EditError::Duplicate(_) => Failure::usage(format!("ncp cannot change {file}"))
+            .caused_by(error)
+            .hint("Remove the copies of the key first"),
+        EditError::Config(_) | EditError::NotFound(_) => {
+            Failure::usage(format!("ncp cannot change {file}")).caused_by(error)
+        }
     }
 }
 
@@ -487,7 +516,9 @@ fn trust_written(context: &Context<'_>, target: &Target, text: &str) {
     if target.scope == Scope::Project
         && let Err(failure) = project_file::trust_written(&context.paths, &target.file, text)
     {
-        context.ui.warn(&Warning::from(failure).hint("ncp trust"));
+        context
+            .ui
+            .warn(&Warning::from(failure).hint(Hint::run_text("trust the file", "ncp trust")));
     }
 }
 
@@ -612,20 +643,22 @@ fn warn_about_other_file(
             .and_then(|text| config_edit::entry(&text, name).ok().flatten())
             .map(|_| {
                 format!(
-                    "{} also has {name}; the entry in {} takes effect in this folder",
-                    global.display(),
-                    target.file.display()
+                    "The global file {} also has the server {}. The entry in {} takes effect in this folder.",
+                    path_text(global),
+                    code(name),
+                    path_text(&target.file)
                 )
             }),
         Scope::Global => view.and_then(|view| view.project_of(name)).map(|project| {
             format!(
-                "{} also has {name}; its entry takes effect in this folder",
-                project.file.display()
+                "The project file {} also has the server {}. Its entry takes effect in this folder.",
+                path_text(&project.file),
+                code(name)
             )
         }),
     };
     if let Some(message) = message {
-        context.ui.warning(Some(name), &message);
+        context.ui.warn(&Warning::new(message).about(name));
     }
 }
 
@@ -688,20 +721,27 @@ pub async fn remove(context: &Context<'_>, name: &str, global: bool) -> Result<(
         }
         (Place::Ignored, Some(project)) => {
             return Err(Failure::usage(format!(
-                "{name} is in {}, which you ignored",
-                project.file.display()
+                "The server {} is in {}, which you ignored",
+                code(name),
+                path_text(&project.file)
             ))
-            .hint("ncp trust"));
+            .about(name)
+            .hint(Hint::run_text("trust the file", "ncp trust")));
         }
         (Place::OnlyInProject, Some(project)) => {
             let hint = match project.trust {
-                Trust::Ignored => "ncp trust".to_string(),
-                _ => remove_command(name, Scope::Project),
+                Trust::Ignored => Hint::run_text("trust the file", "ncp trust"),
+                Trust::Trusted | Trust::Untrusted { .. } => Hint::run_text(
+                    "remove the entry of the project file",
+                    &format!("ncp server remove {}", render::shell_word(name)),
+                ),
             };
             return Err(Failure::usage(format!(
-                "the global file has no server {name}; it is in {}",
-                project.file.display()
+                "The global file has no server {}, but {} has it",
+                code(name),
+                path_text(&project.file)
             ))
+            .about(name)
             .hint(hint));
         }
         _ => return Err(not_found(context, &loaded, name)),

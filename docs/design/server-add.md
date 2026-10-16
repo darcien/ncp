@@ -165,16 +165,17 @@ redirects (N6).
     value of the new entry, else usage error. It catches a typo in the
     name, and a value that cannot expand (section 2.4) does not go to the
     store. The error does not echo the word after `--secret`, because a
-    user can type the value there by mistake: "the name after --secret is
-    not a ${NAME} of this entry". A URL with `${` in its scheme, host or
+    user can type the value there by mistake: "The name after `--secret` is
+    not a `${NAME}` of this entry". A URL with `${` in its scheme, host or
     port is a usage error with `--secret`: requirement I8 sends no stored
     value to such an entry, so the item would never be used.
 13. **No silent change of a shared value.** Two steps. Before the read,
     `ncp` checks which stores have the item of NAME for the destination of
     the new entry. After the read, it compares the value. With another
-    value, `--secret NAME` is a usage error: "NAME is already stored for
-    DESTINATION in STORE; other entries with this origin use it". Hint:
-    `ncp secret set NAME --server SERVER` replaces it. The same value
+    value, `--secret NAME` is a usage error: "STORE already has another
+    value of `NAME` for `DESTINATION`. Other entries with this origin use
+    it." A hint sentence gives `ncp secret set NAME --server SERVER`,
+    which replaces it. The same value
     passes (a retry after a failure). A store that cannot answer (locked
     store) gives exit 4: `ncp` does not treat it as "no value".
 14. **`--credential-store` needs `--secret`**, else usage error (one job for
@@ -206,8 +207,8 @@ of project-config rule 9:
 |---|---|---|
 | Trusted | Write | Write |
 | Untrusted (also "changed since you trusted it") | The shown entries and "Trust? [y/N]". Yes: trust, then write. No: the ignored record, exit 2. No answer: exit 2, no record. | Exit 2 with the entries and the hint `ncp trust --show` |
-| Ignored | Exit 2, hint `--global` | Exit 2, hint `--global` |
-| Not used (`Unusable`: owner, not a regular file, larger than 1 MiB, not UTF-8, not the `mcpServers` shape) | Exit 2 with the reason of B76 (5), hint `--global` | The same |
+| Ignored | Exit 2, a hint sentence with `--global` | Exit 2, a hint sentence with `--global` |
+| Not used (`Unusable`: owner, not a regular file, larger than 1 MiB, not UTF-8, not the `mcpServers` shape) | Exit 2 with the reason of B76 (5) as a cause, a hint sentence with `--global` | The same |
 | None | Create the file (section 5) | The same |
 
 An `Unusable` file is never the same as no file: `ncp` never creates a
@@ -342,7 +343,7 @@ second file next to it and never renames over it.
 
   | Name is in | Trusted project file | Untrusted project file | Ignored project file |
   |---|---|---|---|
-  | Project only | Remove from the project file | The gate of rule 5: the question with a TTY (Yes trusts, then removes; No writes the ignored record, exit 2), else exit 2 with the entries and the hint `ncp trust --show` | Exit 2: "NAME is in FILE, which you ignored", hint `ncp trust` |
+  | Project only | Remove from the project file | The gate of rule 5: the question with a TTY (Yes trusts, then removes; No writes the ignored record, exit 2), else exit 2 with the entries and the hint `ncp trust --show` | Exit 2: "The server `NAME` is in `FILE`, which you ignored", with a hint sentence that gives `ncp trust` |
   | Both files | Remove from the project file; the result says that the global entry now takes effect | The gate of rule 5, as above; after a Yes, remove from the project file | Remove from the global file: it is the entry that runs |
   | Global only | Remove from the global file | Remove from the global file | Remove from the global file |
 

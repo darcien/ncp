@@ -10,6 +10,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value, json};
 
+use crate::text::code;
 use crate::{
     binding,
     config::{self, EntryError, Server, Target, Unexpanded},
@@ -66,41 +67,45 @@ impl Entry {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AddError {
-    #[error("--header is only for an http entry")]
+    #[error("`--header` is only for an http entry")]
     HeaderOnStdio,
-    #[error("--env is only for a stdio entry")]
+    #[error("`--env` is only for a stdio entry")]
     EnvOnRemote,
-    #[error("--header {0} has no valid field name before \":\"")]
+    #[error("The `--header` number {0} has no valid field name before `:`")]
     HeaderName(usize),
-    #[error("the header {0} is given more than one time")]
+    #[error("The header {} is given more than one time", code(.0))]
     HeaderTwice(String),
-    #[error("the value of the header {0} is empty")]
+    #[error("The value of the header {} is empty", code(.0))]
     HeaderEmpty(String),
-    #[error("the value of the header {0} has a control character, which RFC 9110 does not permit")]
+    #[error(
+        "The value of the header {} has a control character, which RFC 9110 does not permit",
+        code(.0)
+    )]
     HeaderControl(String),
-    #[error("--env {0} has no valid variable name")]
+    #[error("The `--env` number {0} has no valid variable name")]
     EnvName(usize),
-    #[error("--env {0} is given more than one time")]
+    #[error("The variable {} of `--env` is given more than one time", code(.0))]
     EnvTwice(String),
-    #[error("the value of --env {0} is empty")]
+    #[error("The value of the `--env` variable {} is empty", code(.0))]
     EnvEmpty(String),
-    #[error("the command after -- is empty")]
+    #[error("The command after `--` is empty")]
     EmptyCommand,
     #[error(
-        "the value of the {0} header must be ${{NAME}} or <scheme> ${{NAME}}, so that it comes from a store"
+        "The value of the header {} must be `${{NAME}}` or `<scheme> ${{NAME}}`, so that it comes from a store",
+        code(.0)
     )]
     CredentialHeader(String),
-    #[error("the name after --secret is not a ${{NAME}} of this entry")]
+    #[error("The name after `--secret` is not a `${{NAME}}` of this entry")]
     SecretNotUsed,
     #[error(
-        "--secret needs a URL with no ${{NAME}} in its scheme, host or port: ncp sends a stored value only to a literal origin"
+        "`--secret` needs a URL with no `${{NAME}}` in its scheme, host or port. ncp sends a stored value only to a literal origin."
     )]
     SecretOrigin,
     /// The field only: the text of a reference that is not valid can be a
     /// value that the user typed by mistake.
-    #[error("the value of {0} has a ${{...}} that is not a valid reference")]
+    #[error("The value of {} has a `${{...}}` that is not a valid reference", code(.0))]
     Reference(String),
-    #[error("the entry is not valid: {0}")]
+    #[error("The entry is not valid")]
     Entry(#[from] EntryError),
 }
 
@@ -271,6 +276,29 @@ pub fn environment_names(shape: &Unexpanded) -> BTreeSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_texts_follow_the_message_rules() {
+        let texts = [
+            AddError::HeaderOnStdio,
+            AddError::EnvOnRemote,
+            AddError::HeaderName(1),
+            AddError::HeaderTwice("X".into()),
+            AddError::HeaderEmpty("X".into()),
+            AddError::HeaderControl("X".into()),
+            AddError::EnvName(1),
+            AddError::EnvTwice("A".into()),
+            AddError::EnvEmpty("A".into()),
+            AddError::EmptyCommand,
+            AddError::CredentialHeader("Authorization".into()),
+            AddError::SecretNotUsed,
+            AddError::SecretOrigin,
+            AddError::Reference("headers.X".into()),
+            AddError::Entry(EntryError::NotObject),
+        ]
+        .map(|error| error.to_string());
+        crate::style::assert_style(&texts);
+    }
 
     fn remote(headers: &[&str]) -> Request {
         Request {

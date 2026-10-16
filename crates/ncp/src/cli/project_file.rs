@@ -101,10 +101,10 @@ fn read_owned(file: &Path) -> Result<String, String> {
         .map_err(|error| chain_text(&error))?;
     let metadata = handle.metadata().map_err(|error| chain_text(&error))?;
     if !metadata.is_file() {
-        return Err("it is not a regular file".into());
+        return Err("The file is not a regular file".into());
     }
     if metadata.uid() != nix::unistd::geteuid().as_raw() {
-        return Err("another user owns it".into());
+        return Err("Another user owns the file".into());
     }
     let mut bytes = Vec::new();
     handle
@@ -112,9 +112,9 @@ fn read_owned(file: &Path) -> Result<String, String> {
         .read_to_end(&mut bytes)
         .map_err(|error| chain_text(&error))?;
     if bytes.len() as u64 > project::MAX_BYTES {
-        return Err("it is larger than 1 MiB".into());
+        return Err("The file is larger than 1 MiB".into());
     }
-    String::from_utf8(bytes).map_err(|_| "it is not UTF-8".into())
+    String::from_utf8(bytes).map_err(|_| "The file is not UTF-8 text".into())
 }
 
 #[must_use]
@@ -173,10 +173,7 @@ pub fn trust_written(paths: &Paths, file: &Path, text: &str) -> Result<(), Failu
 }
 
 fn record_failure(error: &std::io::Error) -> Failure {
-    Failure::protocol(format!(
-        "cannot write the trust record: {error}",
-        error = chain_text(&error)
-    ))
+    Failure::protocol("ncp cannot write the trust record").caused_by(error)
 }
 
 fn remove(path: &Path) -> std::io::Result<()> {

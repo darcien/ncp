@@ -266,9 +266,12 @@ fn report_files(context: &Context<'_>, loaded: &Loaded) {
                 folder.display()
             ),
         ),
-        ProjectFile::Unusable { file, reason } => context.ui.warning(
-            None,
-            &format!("ncp does not use {}: {reason}", file.display()),
+        ProjectFile::Unusable { file, reason } => context.ui.warn(
+            &Warning::new(format!(
+                "ncp does not use {}",
+                code(&file.display().to_string())
+            ))
+            .cause(reason.as_str()),
         ),
         ProjectFile::Read(project) => context.ui.debug(
             None,

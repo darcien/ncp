@@ -180,7 +180,10 @@ fn another_entry_of_the_name_is_an_error() {
     assert_eq!(add_global(&home, "web", WEB, &[]).code(), 0);
     let run = add_global(&home, "web", "https://other.example.com/mcp", &[]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.hints()[0], "ncp server remove web --global");
+    assert_eq!(
+        run.error()["hints"],
+        json!([{"message": "To remove the entry, run `ncp server remove web --global`"}])
+    );
 }
 
 #[test]
@@ -196,12 +199,15 @@ fn a_duplicate_key_of_the_name_is_an_error() {
     .unwrap();
     let run = add_global(&home, "web", WEB, &[]);
     assert_eq!(run.code(), 2, "{}", run.describe());
+    let error = run.error();
     assert!(
-        run.old_error()["message"]
+        error["causes"][0]
             .as_str()
             .unwrap()
-            .contains("more than one time")
+            .contains("more than one time"),
+        "{error}"
     );
+    assert_eq!(run.hints(), ["Remove the copies of the key first"]);
 }
 
 #[test]
@@ -223,8 +229,8 @@ fn a_literal_credential_header_is_an_error_that_shows_no_value() {
         run.describe()
     );
     assert_eq!(
-        run.hints()[0],
-        "--header 'Authorization: Bearer ${NAME}' --secret NAME"
+        run.error()["hints"],
+        json!([{"message": "Give the header as `--header 'Authorization: Bearer ${NAME}' --secret NAME`"}])
     );
     assert!(!home.config_path().exists());
 }
@@ -292,7 +298,19 @@ fn an_untrusted_project_file_is_not_changed_with_no_tty() {
     let before = std::fs::read_to_string(&file).unwrap();
     let run = home.run(&["server", "add", "web", WEB]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.hints()[0], "ncp trust --show");
+    let error = run.error();
+    assert_eq!(
+        error["message"],
+        format!(
+            "ncp changes only a trusted project file, and you did not trust `{}`:",
+            file.display()
+        )
+    );
+    assert!(
+        error["data"][0].as_str().unwrap().starts_with("fs  x"),
+        "{error}"
+    );
+    assert_eq!(error["hints"][0]["command"], "ncp trust --show");
     assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
 }
 
@@ -309,7 +327,18 @@ fn a_no_at_the_question_ignores_the_file_and_changes_nothing() {
     let home = home.unset("NCP_TEST_TTY");
     let run = home.run(&["server", "add", "web", WEB]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.hints()[0], "--global");
+    assert!(
+        run.error()["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("You ignored `"),
+        "{}",
+        run.describe()
+    );
+    assert_eq!(
+        run.hints(),
+        ["To change the global file, run the command again with `--global`"]
+    );
 }
 
 #[test]
@@ -365,7 +394,18 @@ fn a_project_file_that_ncp_does_not_use_is_not_changed() {
     home.cwd = dir.clone();
     let run = home.run(&["server", "add", "web", "https://w.example.com/mcp"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.hints()[0], "--global");
+    assert!(
+        run.error()["causes"][0]
+            .as_str()
+            .unwrap()
+            .starts_with("The file is not valid JSONC"),
+        "{}",
+        run.describe()
+    );
+    assert_eq!(
+        run.hints(),
+        ["To change the global file, run the command again with `--global`"]
+    );
     assert_eq!(
         std::fs::read_to_string(dir.join(".mcp.json")).unwrap(),
         "{ not json"
@@ -624,13 +664,9 @@ fn add_global_warns_when_a_trusted_project_entry_has_the_name() {
         "--global",
     ]);
     assert_eq!(run.code(), 0, "{}", run.describe());
-    let warning = run
-        .stderr()
-        .iter()
-        .find_map(|line| line["warning"]["message"].as_str().map(str::to_string))
-        .unwrap();
+    let warning = run.warnings()[0]["message"].as_str().unwrap().to_string();
     assert!(
-        warning.ends_with("also has web; its entry takes effect in this folder"),
+        warning.ends_with("also has the server `web`. Its entry takes effect in this folder."),
         "{warning}"
     );
 }
@@ -684,7 +720,10 @@ fn remove_global_of_a_project_name_names_the_project_file() {
     assert_eq!(home.run(&["trust"]).code(), 0);
     let run = home.run(&["server", "remove", "p", "--global"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.hints()[0], "ncp server remove p");
+    assert_eq!(
+        run.error()["hints"],
+        json!([{"message": "To remove the entry of the project file, run `ncp server remove p`"}])
+    );
 }
 
 #[test]
@@ -692,7 +731,7 @@ fn remove_from_an_untrusted_project_file_needs_the_trust() {
     let home = both_files("r-untrusted");
     let run = home.run(&["server", "remove", "p"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.hints()[0], "ncp trust --show");
+    assert_eq!(run.error()["hints"][0]["command"], "ncp trust --show");
     let home = home.set("NCP_TEST_TTY", "1");
     let run = home.run_with_stdin(&["server", "remove", "p"], "y\n");
     assert_eq!(run.code(), 0, "{}", run.describe());
@@ -722,7 +761,10 @@ fn remove_from_an_ignored_project_file_is_an_error_unless_the_global_file_has_it
     assert_eq!(home.run(&["trust", "--ignore"]).code(), 0);
     let run = home.run(&["server", "remove", "only"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.hints()[0], "ncp trust");
+    assert_eq!(
+        run.error()["hints"],
+        json!([{"message": "To trust the file, run `ncp trust`"}])
+    );
     let run = home.run(&["server", "remove", "both"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert_eq!(run.stdout()["scope"], "global");
@@ -928,12 +970,7 @@ fn a_global_duplicate_key_with_the_name_keeps_the_tokens_of_the_name() {
     assert_eq!(home.run(&["trust", "--ignore"]).code(), 0);
     let run = home.run(&["server", "remove", "p"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert!(
-        run.old_error()["message"]
-            .as_str()
-            .unwrap()
-            .contains("more than one time")
-    );
+    assert!(run.error_text().contains("more than one time"));
 }
 
 #[test]

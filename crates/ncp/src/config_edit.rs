@@ -17,14 +17,14 @@ pub enum EditError {
     Config(#[from] ConfigError),
     /// The edit of the tree finds the first copy of a key, and the loader
     /// uses the last, so `ncp` does not choose.
-    #[error("the file has the key {0:?} more than one time; remove the copies first")]
+    #[error("The file has the key {} more than one time", crate::text::code(.0))]
     Duplicate(String),
-    #[error("the file has no server {0:?}")]
+    #[error("The file has no server {}", crate::text::code(.0))]
     NotFound(String),
-    #[error("the file already has a server {0:?}")]
+    #[error("The file already has a server {}", crate::text::code(.0))]
     Exists(String),
     /// The new text does not parse to the old content with the one change.
-    #[error("the edit does not give the expected content")]
+    #[error("The edit does not give the expected content")]
     SelfCheck,
 }
 
@@ -196,6 +196,18 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn error_texts_follow_the_message_rules() {
+        let texts = [
+            EditError::Duplicate("web".into()),
+            EditError::NotFound("web".into()),
+            EditError::Exists("web".into()),
+            EditError::SelfCheck,
+        ]
+        .map(|error| error.to_string());
+        crate::style::assert_style(&texts);
+    }
 
     fn fields() -> Vec<(String, Value)> {
         vec![
