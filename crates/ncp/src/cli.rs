@@ -37,7 +37,11 @@ use self::{
     timings::Timings,
     ui::{Format, Ui, Verbosity},
 };
-use crate::{expand::Env, paths::Paths, text::code};
+use crate::{
+    expand::Env,
+    paths::Paths,
+    text::{code, path_code},
+};
 
 /// The time that the runtime waits for its tasks at the exit. A native store
 /// call that passed its limit can stay on its blocking thread.
@@ -210,7 +214,7 @@ fn named_config_file(path: &std::path::Path) -> Result<std::path::PathBuf, Failu
     let path = std::path::absolute(path).map_err(|error| {
         Failure::usage(format!(
             "ncp cannot make the path {} absolute",
-            code(&path.display().to_string())
+            path_code(path)
         ))
         .caused_by(&error)
     })?;
@@ -219,7 +223,7 @@ fn named_config_file(path: &std::path::Path) -> Result<std::path::PathBuf, Failu
     } else {
         Err(Failure::usage(format!(
             "The configuration file {} does not exist",
-            code(&path.display().to_string())
+            path_code(&path)
         )))
     }
 }

@@ -4,7 +4,6 @@
 
 use std::process::ExitCode;
 
-pub use crate::text::{chain, chain_text};
 use crate::{
     credential::Destination,
     elicit::Page,
@@ -389,6 +388,12 @@ impl Failure {
         self.with_diagnostic(|diagnostic| diagnostic.cause(text.into()))
     }
 
+    /// Adds each text as a cause, in its order.
+    #[must_use]
+    pub fn with_causes(self, causes: impl IntoIterator<Item = String>) -> Self {
+        causes.into_iter().fold(self, Self::cause)
+    }
+
     /// Adds the error and each error of its source chain as causes.
     #[must_use]
     pub fn caused_by(self, error: &dyn std::error::Error) -> Self {
@@ -476,6 +481,7 @@ impl Failure {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::text::chain_text;
 
     #[derive(Debug, thiserror::Error)]
     #[error("outer: {inner}")]

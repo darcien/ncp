@@ -171,25 +171,20 @@ pub fn parse_item(secret: &Secret) -> Result<TokensItem, items::ItemError> {
 const FILE_FAILED: &str = "local: ";
 
 // rmcp keeps one text, so the store error and its causes go in as one
-// line, and the fix goes after a mark. Its Display text alone would lose
-// the reason.
+// line, with the kind before it and the fix after it. Its Display text
+// alone would lose the reason.
 fn store_error(error: &StoreError) -> AuthError {
+    let kind = if error.is_local() { FILE_FAILED } else { "" };
+    // The mark is always there, also with no fix. Thus the last mark is
+    // the mark of `ncp`, also when foreign text holds one.
+    let fix = error.fix().as_ref().map(fix_word).unwrap_or_default();
     let text = crate::text::chain_text(error);
-    let text = match error.fix() {
-        Some(fix) => format!("{text}{FIX_MARK}{}", fix_word(&fix)),
-        None => text,
-    };
-    let text = match error {
-        StoreError::Io { .. } | StoreError::OpenPermissions(_) | StoreError::Corrupt(_) => {
-            format!("{FILE_FAILED}{text}")
-        }
-        _ => text,
-    };
-    AuthError::CredentialStoreError(text)
+    AuthError::CredentialStoreError(format!("{kind}{text}{FIX_MARK}{fix}"))
 }
 
-/// The mark of the fix of a store error in the text of an rmcp error. A
-/// control character cannot be part of the text of a store error.
+/// The mark of the fix of a store error, at the end of the text of an rmcp
+/// error, with no word for no fix. Foreign text of a store can hold this
+/// control character too, so the read takes the last mark.
 const FIX_MARK: char = '\u{1f}';
 
 fn fix_word(fix: &StoreFix) -> String {
@@ -201,28 +196,55 @@ fn fix_word(fix: &StoreFix) -> String {
     }
 }
 
-/// The text of a store failure with no fix mark, and the fix.
-#[must_use]
-pub fn store_fix(text: &str) -> (&str, Option<StoreFix>) {
-    let Some((text, word)) = text.split_once(FIX_MARK) else {
-        return (text, None);
-    };
-    let fix = match word {
+fn read_fix(word: &str) -> Option<StoreFix> {
+    match word {
         "prompt" => Some(StoreFix::AnswerPrompt),
         "keyring" => Some(StoreFix::UnlockKeyring),
         "copies" => Some(StoreFix::RemoveCopies),
         _ => word
             .strip_prefix("close ")
             .map(|path| StoreFix::CloseFile(path.into())),
-    };
-    (text, fix)
+    }
 }
 
-/// The text of a failure of the file with no mark, or `None` for a failure
-/// of the native store.
+/// What the text of a `CredentialStoreError` of rmcp holds. `ncp` writes it,
+/// because rmcp keeps only a text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoreText<'a> {
+    /// The tokens are for another server or issuer (design B70).
+    Binding(items::BindingMismatch),
+    /// A store failed. A failure of the credential file is local. A failure
+    /// of the native store is an authorization error, and the file is a fix.
+    Store {
+        local: bool,
+        cause: &'a str,
+        fix: Option<StoreFix>,
+    },
+}
+
+/// Reads the text that `store_error` or `binding_error` wrote. Another text
+/// is the cause of a failure of the native store.
 #[must_use]
-pub fn file_failure(text: &str) -> Option<&str> {
-    text.strip_prefix(FILE_FAILED)
+pub fn read_store_text(text: &str) -> StoreText<'_> {
+    if let Some(mismatch) = read_binding(text) {
+        return StoreText::Binding(mismatch);
+    }
+    let (local, text) = match text.strip_prefix(FILE_FAILED) {
+        Some(text) => (true, text),
+        None => (false, text),
+    };
+    match text.rsplit_once(FIX_MARK) {
+        Some((cause, word)) => StoreText::Store {
+            local,
+            cause,
+            fix: read_fix(word),
+        },
+        None => StoreText::Store {
+            local,
+            cause: text,
+            fix: None,
+        },
+    }
 }
 
 /// The mark of tokens of another server in the text of an rmcp error. The
@@ -239,10 +261,7 @@ fn binding_error(mismatch: &items::BindingMismatch) -> AuthError {
     AuthError::CredentialStoreError(format!("{BINDING_FAILED}{kind}"))
 }
 
-/// The binding mismatch in the text of an rmcp error, or `None` for
-/// another failure of the store.
-#[must_use]
-pub fn binding_mismatch(text: &str) -> Option<items::BindingMismatch> {
+fn read_binding(text: &str) -> Option<items::BindingMismatch> {
     match text.strip_prefix(BINDING_FAILED)? {
         "missing" => Some(items::BindingMismatch::Missing),
         "resource" => Some(items::BindingMismatch::Resource),
@@ -492,36 +511,58 @@ mod tests {
         let Err(AuthError::CredentialStoreError(text)) = adapter.load().await else {
             panic!("tokens of another binding must not load");
         };
-        assert_eq!(
-            binding_mismatch(&text),
-            Some(items::BindingMismatch::Resource)
-        );
-        assert_eq!(file_failure(&text), None);
+        assert_eq!(read_binding(&text), Some(items::BindingMismatch::Resource));
+        assert!(matches!(read_store_text(&text), StoreText::Binding(_)));
         let same = TokenStore::new(server(), backing).with_binding(binding("https://b/mcp"));
         assert!(same.load().await.unwrap().is_some());
     }
 
+    fn read_back(error: &StoreError) -> (bool, String, Option<StoreFix>) {
+        let AuthError::CredentialStoreError(text) = store_error(error) else {
+            panic!("a store error");
+        };
+        match read_store_text(&text) {
+            StoreText::Store { local, cause, fix } => (local, cause.to_string(), fix),
+            StoreText::Binding(mismatch) => panic!("a binding: {mismatch:?}"),
+        }
+    }
+
     #[test]
-    fn the_fix_of_a_store_error_reads_back_from_its_error_text() {
-        let AuthError::CredentialStoreError(text) =
-            store_error(&StoreError::OpenPermissions("/c/credentials.json".into()))
-        else {
-            panic!("a store error");
-        };
-        let text = file_failure(&text).unwrap_or_default();
-        let (text, fix) = store_fix(text);
+    fn each_store_error_reads_back_with_its_kind_cause_and_fix() {
+        let errors = [
+            StoreError::Unavailable("x".into()),
+            StoreError::Denied(store::Detail::with_foreign("y", "a\u{1f}b")),
+            StoreError::Locked(2),
+            StoreError::Ambiguous(2),
+            StoreError::Failure("z".into()),
+            StoreError::Io {
+                path: "/c".into(),
+                source: std::io::Error::other("w"),
+            },
+            StoreError::OpenPermissions("/c".into()),
+            StoreError::Corrupt("/c".into()),
+            StoreError::NoAnswer(std::time::Duration::from_secs(60)),
+            StoreError::Interrupted,
+        ];
+        for error in &errors {
+            assert_eq!(
+                read_back(error),
+                (
+                    error.is_local(),
+                    crate::text::chain_text(error),
+                    error.fix()
+                ),
+                "{error:?}"
+            );
+        }
         assert_eq!(
-            text,
-            "Other users can open the credential file `/c/credentials.json`"
+            read_store_text("no mark"),
+            StoreText::Store {
+                local: false,
+                cause: "no mark",
+                fix: None
+            }
         );
-        assert_eq!(fix, Some(StoreFix::CloseFile("/c/credentials.json".into())));
-        let AuthError::CredentialStoreError(text) =
-            store_error(&StoreError::NoAnswer(std::time::Duration::from_secs(60)))
-        else {
-            panic!("a store error");
-        };
-        assert_eq!(store_fix(&text).1, Some(StoreFix::AnswerPrompt));
-        assert_eq!(store_fix("no mark"), ("no mark", None));
     }
 
     #[test]
@@ -537,9 +578,9 @@ mod tests {
             let AuthError::CredentialStoreError(text) = binding_error(&mismatch) else {
                 unreachable!()
             };
-            assert_eq!(binding_mismatch(&text), Some(mismatch));
+            assert_eq!(read_store_text(&text), StoreText::Binding(mismatch));
         }
-        assert_eq!(binding_mismatch("keyring is locked"), None);
+        assert_eq!(read_binding("keyring is locked"), None);
     }
 
     #[tokio::test]

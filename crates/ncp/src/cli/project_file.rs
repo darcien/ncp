@@ -2,7 +2,7 @@
 //! the owner check, and the trust records. The rules are in
 //! `crate::project` and in docs/design/project-config.md.
 
-use super::outcome::chain_text;
+use crate::text::chain_text;
 use std::{
     fs::OpenOptions,
     io::{ErrorKind, Read as _},
@@ -35,6 +35,17 @@ pub enum ProjectFile {
         reasons: Vec<String>,
     },
     Read(Project),
+}
+
+/// The failure for a project file that `ncp` does not use, with the
+/// consequence for the command as a second sentence (design rule 8).
+#[must_use]
+pub fn unusable(file: &Path, reasons: &[String], consequence: &str) -> Failure {
+    Failure::usage(format!(
+        "ncp does not use {}.{consequence}",
+        crate::text::path_code(file)
+    ))
+    .with_causes(reasons.iter().cloned())
 }
 
 impl ProjectFile {

@@ -31,7 +31,7 @@ use crate::{
         http::OAuthHttp,
         items::{self, ClientItem},
         scopes,
-        store::{TokenStore, parse_item},
+        store::{StoreText, TokenStore, parse_item, read_store_text},
     },
     server::ServerName,
     store::CredentialStore,
@@ -148,8 +148,29 @@ fn remote(server: &Server) -> Result<&RemoteServer, Failure> {
     }
 }
 
-// The text of rmcp is a cause, because it is foreign text.
+// The text of rmcp is a cause, because it is foreign text. A store error
+// in the text of rmcp has the marks of `ncp`, so it gets its own cause.
 fn auth_failure(step: &str, server: &str, error: &AuthError) -> Failure {
+    let failed = |exit| {
+        Failure::new(
+            exit,
+            format!("The {step} for the server {} failed", code(server)),
+        )
+        .about(server)
+    };
+    if let AuthError::CredentialStoreError(text) = error {
+        return match read_store_text(text) {
+            StoreText::Binding(mismatch) => {
+                failed(Exit::Auth).cause(binding_reason(&mismatch, &code))
+            }
+            StoreText::Store { local, cause, fix } => {
+                let exit = if local { Exit::Protocol } else { Exit::Auth };
+                failed(exit)
+                    .cause(cause)
+                    .with_hints(fix.iter().map(super::fixes::fix_hint))
+            }
+        };
+    }
     let exit = match error {
         AuthError::AuthorizationRequired
         | AuthError::AuthorizationFailed(_)
@@ -159,12 +180,7 @@ fn auth_failure(step: &str, server: &str, error: &AuthError) -> Failure {
         | AuthError::AuthorizationServerMissingIssuer { .. } => Exit::Auth,
         _ => Exit::Protocol,
     };
-    Failure::new(
-        exit,
-        format!("The {step} for the server {} failed", code(server)),
-    )
-    .about(server)
-    .caused_by(error)
+    failed(exit).caused_by(error)
 }
 
 // rmcp falls back to endpoints that it makes from the server URL. `ncp`
@@ -344,7 +360,7 @@ async fn login(
     session
         .handle_callback_with_issuer(&callback.code, &callback.state, callback.iss.as_deref())
         .await
-        .map_err(|error| token_failure(&error, name, place))?;
+        .map_err(|error| token_failure(&error, server, place))?;
     // A list of the old login can differ from the list of this one.
     crate::list_cache::remove(&crate::list_cache::path(
         &context.paths.cache_dir,
@@ -447,34 +463,41 @@ async fn hold_tokens_lock(
 // A store that cannot keep the tokens has its own fix. A file that fails
 // is a local error. A native store that fails, for example a locked
 // Keychain, can give way to the file.
-fn token_failure(error: &AuthError, name: &str, place: CredentialPlace) -> Failure {
-    let keep = || {
-        format!(
-            "ncp cannot keep the OAuth tokens of the server {}",
-            code(name)
-        )
-    };
+fn token_failure(error: &AuthError, server: &Server, place: CredentialPlace) -> Failure {
     match error {
-        AuthError::CredentialStoreError(text) => match crate::oauth::store::file_failure(text) {
-            Some(text) => store_text_failure(Failure::protocol(keep()).about(name), text),
-            None if place == CredentialPlace::Native => {
-                store_text_failure(Failure::new(Exit::Auth, keep()).about(name), text)
-                    .hint(file_login_hint(name))
-            }
-            None => auth_failure("OAuth token request", name, error),
-        },
-        error => auth_failure("OAuth token request", name, error),
+        AuthError::CredentialStoreError(text) => {
+            token_text_failure(server, text, place == CredentialPlace::Native)
+        }
+        error => auth_failure("OAuth token request", server.name.as_str(), error),
     }
 }
 
-/// The store error that rmcp keeps as one text: one cause (design rule 7),
-/// then the hint of its fix.
-pub(super) fn store_text_failure(failure: Failure, text: &str) -> Failure {
-    let (text, fix) = crate::oauth::store::store_fix(text);
-    let failure = failure.cause(text);
-    match fix {
-        Some(fix) => failure.hint(super::fixes::fix_hint(&fix)),
-        None => failure,
+/// The failure for a store error that rmcp keeps as one text. The store
+/// text is one cause (design rule 7), then the hints of its fix. When the
+/// native store failed and `file_fix` is true, the credential file is
+/// the last fix (design B51).
+pub(super) fn token_text_failure(server: &Server, text: &str, file_fix: bool) -> Failure {
+    let name = server.name.as_str();
+    match read_store_text(text) {
+        StoreText::Binding(mismatch) => binding_failure(server, &mismatch),
+        StoreText::Store { local, cause, fix } => {
+            let exit = if local { Exit::Protocol } else { Exit::Auth };
+            let failure = Failure::new(
+                exit,
+                format!(
+                    "ncp cannot keep the OAuth tokens of the server {}",
+                    code(name)
+                ),
+            )
+            .about(name)
+            .cause(cause)
+            .with_hints(fix.iter().map(super::fixes::fix_hint));
+            if local || !file_fix {
+                failure
+            } else {
+                failure.hint(file_login_hint(name))
+            }
+        }
     }
 }
 
@@ -618,18 +641,9 @@ pub(super) async fn stored_login(
 /// B70).
 pub(super) fn binding_failure(server: &Server, mismatch: &items::BindingMismatch) -> Failure {
     let name = server.name.as_str();
-    let reason = match mismatch {
-        items::BindingMismatch::Missing => {
-            "The tokens do not name the server that they are for".to_string()
-        }
-        items::BindingMismatch::Resource => {
-            "The tokens are for a URL that is not the URL of the entry".to_string()
-        }
-        items::BindingMismatch::Issuer { current } => format!(
-            "The tokens are from an authorization server that is not {}",
-            code(&session::hide_expanded_url(server, current.clone()))
-        ),
-    };
+    let reason = binding_reason(mismatch, &|current| {
+        code(&session::hide_expanded_url(server, current.to_string()))
+    });
     // Requirement A13: the message says that the stop is on purpose.
     Failure::new(
         Exit::Auth,
@@ -641,6 +655,23 @@ pub(super) fn binding_failure(server: &Server, mismatch: &items::BindingMismatch
     .about(name)
     .cause(reason)
     .hint(session::login_hint(server))
+}
+
+// Why `ncp` did not send the tokens. `shown` writes the current issuer,
+// which can hold a `${NAME}` value of the server URL.
+fn binding_reason(mismatch: &items::BindingMismatch, shown: &dyn Fn(&str) -> String) -> String {
+    match mismatch {
+        items::BindingMismatch::Missing => {
+            "The tokens do not name the server that they are for".to_string()
+        }
+        items::BindingMismatch::Resource => {
+            "The tokens are for a URL that is not the URL of the entry".to_string()
+        }
+        items::BindingMismatch::Issuer { current } => format!(
+            "The tokens are from an authorization server that is not {}",
+            shown(current)
+        ),
+    }
 }
 
 // A stored item that is not valid JSON of ncp.

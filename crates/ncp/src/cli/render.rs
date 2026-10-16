@@ -3,7 +3,7 @@
 //! The JSON output copies MCP objects with no change, so it needs no code
 //! here. Text output is for reading, and can change between versions.
 
-use super::outcome::chain_text;
+use crate::text::chain_text;
 use std::{
     fmt::Write as _,
     path::{Path, PathBuf},
@@ -78,7 +78,7 @@ pub struct Reason {
 impl Reason {
     #[must_use]
     pub fn of(error: &dyn std::error::Error) -> Self {
-        let mut texts = super::outcome::chain(error).into_iter();
+        let mut texts = crate::text::chain(error).into_iter();
         Self {
             error: texts.next().unwrap_or_default(),
             causes: texts.collect(),

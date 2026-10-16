@@ -57,6 +57,12 @@ pub fn chain_text(error: &dyn std::error::Error) -> String {
     chain(error).join(": ")
 }
 
+/// A path in backticks (rule 14 of `docs/design/output-messages.md`).
+#[must_use]
+pub fn path_code(path: &std::path::Path) -> String {
+    code(&path.display().to_string())
+}
+
 /// The text with a capital first letter.
 #[must_use]
 pub fn capitalized(text: &str) -> String {

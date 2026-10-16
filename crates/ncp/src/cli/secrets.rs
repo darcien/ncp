@@ -21,7 +21,7 @@ use serde_json::json;
 use super::{
     args::{CredentialPlace, SecretCommand},
     ask,
-    outcome::{Exit, Failure, Hint, Warning, chain_text},
+    outcome::{Exit, Failure, Hint, Warning},
     project_file::ProjectFile,
     render,
     session::{self, Context},
@@ -34,7 +34,7 @@ use crate::{
     project::Trust,
     server::{Origin, OriginError},
     store::{self, CredentialStore, FileStore, StoreError},
-    text::code,
+    text::{chain_text, code, path_code},
 };
 
 /// Tests replace the native store with a fake. The limit applies to each
@@ -429,17 +429,13 @@ pub(super) fn store_failure_about(
 /// errors (exit 4). A credential file that `ncp` cannot read or write is a
 /// local error (exit 3).
 pub(super) fn store_failure(error: &StoreError) -> Failure {
-    let exit = match error {
-        StoreError::Interrupted => return session::interrupted(None),
-        StoreError::Io { .. } | StoreError::OpenPermissions(_) | StoreError::Corrupt(_) => {
-            Exit::Protocol
-        }
-        StoreError::Unavailable(_)
-        | StoreError::Denied(_)
-        | StoreError::Locked(_)
-        | StoreError::Ambiguous(_)
-        | StoreError::Failure(_)
-        | StoreError::NoAnswer(_) => Exit::Auth,
+    if let StoreError::Interrupted = error {
+        return session::interrupted(None);
+    }
+    let exit = if error.is_local() {
+        Exit::Protocol
+    } else {
+        Exit::Auth
     };
     // Rule 7 drops the error itself from the causes: the message holds it.
     let failure = Failure::new(exit, error.to_string()).caused_by(error);
@@ -1441,7 +1437,7 @@ async fn strict_config(
         let failure = Failure::usage(format!(
             "The entry of the server {} in {} is not valid.{unknown}",
             code(server),
-            code(&file.display().to_string())
+            path_code(file)
         ))
         .about(server)
         .caused_by(error);
@@ -1452,11 +1448,7 @@ async fn strict_config(
     }
     let waiting = match &loaded.project {
         ProjectFile::Unusable { file, reasons } => {
-            let failure = Failure::usage(format!(
-                "ncp does not use {}.{unknown}",
-                code(&file.display().to_string())
-            ));
-            return Err(reasons.iter().cloned().fold(failure, Failure::cause));
+            return Err(super::project_file::unusable(file, reasons, unknown));
         }
         ProjectFile::Read(project) if project.trust != Trust::Trusted => Some(project),
         _ => None,
@@ -1510,7 +1502,7 @@ fn untrusted_use(
             "The server {} names {} in {}, {state}",
             code(&entry.name),
             reference(name.as_str()),
-            code(&project.file.display().to_string())
+            path_code(&project.file)
         ))
         .about(entry.name.as_str())
         .hint(trust_hint()),

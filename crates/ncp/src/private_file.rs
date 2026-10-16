@@ -4,6 +4,7 @@
 //! A write goes to a new file that replaces the old file, so a failed write
 //! cannot leave a partial file.
 
+use crate::text::path_code;
 use std::{
     fs::{self, DirBuilder, OpenOptions},
     io::Write,
@@ -133,7 +134,7 @@ pub fn lock(path: &Path, limit: std::time::Duration) -> std::io::Result<Lock> {
                     std::io::ErrorKind::TimedOut,
                     format!(
                         "Another ncp process holds {} for more than {} s",
-                        crate::text::code(&path.display().to_string()),
+                        path_code(path),
                         limit.as_secs()
                     ),
                 ));

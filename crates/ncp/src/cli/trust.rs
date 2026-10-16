@@ -1,6 +1,7 @@
 //! `ncp trust`, as `mise trust`: the commands of the project file of the
 //! current folder.
 
+use crate::text::path_code;
 use serde_json::json;
 
 use super::{
@@ -32,15 +33,11 @@ pub fn command(context: &Context<'_>, args: &TrustArgs) -> Result<(), Failure> {
             return Err(Failure::usage(format!(
                 "ncp found no `{}` from the current folder up to {}",
                 project::FILE_NAME,
-                crate::text::code(&folder.display().to_string())
+                path_code(&folder)
             )));
         }
         ProjectFile::Unusable { file, reasons } => {
-            let failure = Failure::usage(format!(
-                "ncp does not use {}",
-                crate::text::code(&file.display().to_string())
-            ));
-            return Err(reasons.into_iter().fold(failure, Failure::cause));
+            return Err(project_file::unusable(&file, &reasons, ""));
         }
     };
     let change = match (args.show, args.untrust, args.ignore) {

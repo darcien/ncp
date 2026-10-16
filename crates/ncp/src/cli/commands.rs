@@ -25,7 +25,7 @@ use crate::{
     config::Server,
     list_cache,
     project::Trust,
-    text::code,
+    text::{code, path_code},
 };
 
 pub async fn server(context: &Context<'_>, command: ServerCommand) -> Result<(), Failure> {
@@ -72,7 +72,7 @@ async fn server_list(context: &Context<'_>) -> Result<(), Failure> {
     }
     let rows = list_rows(&loaded);
     if rows.is_empty() {
-        let path = code(&loaded.path.display().to_string());
+        let path = path_code(&loaded.path);
         let fact = if loaded.exists {
             format!("{path} has no server")
         } else {
@@ -294,7 +294,7 @@ fn keep_tools(
                 context.ui.warn(
                     &Warning::new(format!(
                         "ncp cannot write the list cache {}",
-                        code(&path.display().to_string())
+                        path_code(&path)
                     ))
                     .caused_by(&error),
                 );
@@ -400,6 +400,8 @@ fn tool_word<'a>(server: &str, tool: Option<&'a str>) -> Result<&'a str, Failure
     }
 }
 
+const PROMPT_PAIRS: &str = "Each argument of a prompt must be a `key=value` pair";
+
 /// What the arguments are for. A prompt takes only `key=value` pairs.
 #[derive(Clone, Copy)]
 enum Arguments {
@@ -421,20 +423,26 @@ fn arguments_failure(error: &tool_args::ArgumentError, of: Arguments) -> Failure
         ),
     };
     let failure = Failure::usage(message);
-    // The text of most argument errors names the forms of a tool call,
-    // which a prompt does not take.
-    let failure = match (of, error) {
+    // The texts of these errors name the forms of a tool call, which a
+    // prompt does not take.
+    match (of, error) {
+        (Arguments::Prompt, tool_args::ArgumentError::NotPair(word)) => {
+            failure.cause(format!("The argument {} is not `key=value`", code(word)))
+        }
         (
             Arguments::Prompt,
+            tool_args::ArgumentError::NotAlone(_) | tool_args::ArgumentError::NotObject(_),
+        ) => failure.cause(PROMPT_PAIRS),
+        (_, tool_args::ArgumentError::JsonPair(_)) => failure.caused_by(error).hint(fix),
+        (
+            Arguments::Tool,
             tool_args::ArgumentError::NotPair(_)
             | tool_args::ArgumentError::NotAlone(_)
             | tool_args::ArgumentError::NotObject(_),
-        ) => failure.cause("Each argument of a prompt must be a `key=value` pair"),
-        _ => failure.caused_by(error),
-    };
-    match error {
-        tool_args::ArgumentError::JsonPair(_) => failure.hint(fix),
-        _ => failure,
+        )
+        | (_, tool_args::ArgumentError::EmptyKey(_) | tool_args::ArgumentError::Repeated(_)) => {
+            failure.caused_by(error)
+        }
     }
 }
 
@@ -822,9 +830,9 @@ fn prompt_arguments(words: &[String]) -> Result<JsonObject, Failure> {
             .into_iter()
             .map(|(key, text)| (key, Value::String(text)))
             .collect()),
-        _ => Err(Failure::usage(
-            "Each argument of a prompt must be a `key=value` pair",
-        )),
+        Input::Object(_) | Input::Stdin => {
+            Err(Failure::usage("The prompt arguments are not valid").cause(PROMPT_PAIRS))
+        }
     }
 }
 

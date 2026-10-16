@@ -31,7 +31,7 @@ use crate::{
     project::{self, Project, Trust},
     server::ServerName,
     store::StoreError,
-    text::code,
+    text::{code, path_code},
 };
 
 /// The wait for the lock of the configuration files, as for the refresh
@@ -40,16 +40,24 @@ const LOCK_LIMIT: Duration = Duration::from_secs(45);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Scope {
-    Global,
+    /// `named`: `--config-file` names the global file.
+    Global {
+        named: bool,
+    },
     Project,
 }
 
 impl Scope {
     fn word(self) -> &'static str {
         match self {
-            Self::Global => "global",
+            Self::Global { .. } => "global",
             Self::Project => "project",
         }
+    }
+
+    /// Only for the default global file, `ncp` makes the missing folders.
+    fn makes_folders(self) -> bool {
+        self == Self::Global { named: false }
     }
 }
 
@@ -62,10 +70,6 @@ struct Target {
     scope: Scope,
     /// `None` for a new file.
     base: Option<String>,
-    /// Only for the default global file, `ncp` makes the missing folders.
-    makes_folders: bool,
-    /// `--config-file` names the file.
-    named: bool,
 }
 
 impl Target {
@@ -221,23 +225,19 @@ fn two_files() -> Failure {
 // `--config-file`.
 fn remove_hint(name: &str, target: &Target) -> Hint {
     let word = render::shell_word(name);
-    let command = match (target.scope, target.named) {
-        (Scope::Global, true) => format!(
+    let command = match target.scope {
+        Scope::Global { named: true } => format!(
             "ncp --config-file {} server remove {word}",
             render::shell_word(&target.file.display().to_string())
         ),
-        (Scope::Global, false) => format!("ncp server remove {word} --global"),
-        (Scope::Project, _) => format!("ncp server remove {word}"),
+        Scope::Global { named: false } => format!("ncp server remove {word} --global"),
+        Scope::Project => format!("ncp server remove {word}"),
     };
     Hint::run_text("remove the entry", &command)
 }
 
 fn global_hint() -> Hint {
     Hint::text("To change the global file, run the command again with `--global`")
-}
-
-fn path_text(path: &Path) -> String {
-    code(&path.display().to_string())
 }
 
 // `server add` writes to the project file. It writes to the global file
@@ -258,17 +258,12 @@ async fn add_target(
             trusted_for_write(context, project).await?;
             Ok(project_target(project))
         }
-        ProjectFile::Unusable { file, reasons } => Err(reasons
-            .iter()
-            .cloned()
-            .fold(
-                Failure::usage(format!(
-                    "ncp does not use {}. ncp does not change it.",
-                    path_text(file)
-                )),
-                Failure::cause,
+        ProjectFile::Unusable { file, reasons } => {
+            Err(
+                project_file::unusable(file, reasons, " ncp does not change it.")
+                    .hint(global_hint()),
             )
-            .hint(global_hint())),
+        }
         ProjectFile::Absent(_) => {
             let folder = std::env::current_dir()
                 .and_then(fs::canonicalize)
@@ -286,8 +281,6 @@ async fn add_target(
                 file: folder.join(project::FILE_NAME),
                 scope: Scope::Project,
                 base: None,
-                makes_folders: false,
-                named: false,
             })
         }
     }
@@ -297,9 +290,9 @@ fn global_target(context: &Context<'_>) -> Result<Target, Failure> {
     let file = context.paths.config_file.clone();
     Ok(Target {
         base: read(&file)?,
-        scope: Scope::Global,
-        makes_folders: !context.named_config,
-        named: context.named_config,
+        scope: Scope::Global {
+            named: context.named_config,
+        },
         file,
     })
 }
@@ -309,8 +302,6 @@ fn project_target(project: &Project) -> Target {
         file: project.file.clone(),
         scope: Scope::Project,
         base: Some(project.text.clone()),
-        makes_folders: false,
-        named: false,
     }
 }
 
@@ -319,7 +310,7 @@ fn read(file: &Path) -> Result<Option<String>, Failure> {
         Ok(text) => Ok(Some(text)),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
         Err(error) => {
-            Err(Failure::protocol(format!("ncp cannot read {}", path_text(file))).caused_by(&error))
+            Err(Failure::protocol(format!("ncp cannot read {}", path_code(file))).caused_by(&error))
         }
     }
 }
@@ -329,7 +320,7 @@ fn read(file: &Path) -> Result<Option<String>, Failure> {
 // untrusted file gets the question: a Yes trusts it, and a No writes the
 // ignored record and stops.
 async fn trusted_for_write(context: &Context<'_>, project: &Project) -> Result<(), Failure> {
-    let file = path_text(&project.file);
+    let file = path_code(&project.file);
     match project.trust {
         Trust::Trusted => Ok(()),
         Trust::Ignored => Err(Failure::usage(format!(
@@ -359,7 +350,7 @@ async fn trusted_for_write(context: &Context<'_>, project: &Project) -> Result<(
 }
 
 fn untrusted(project: &Project) -> Failure {
-    let file = path_text(&project.file);
+    let file = path_code(&project.file);
     let state = match project.trust {
         Trust::Untrusted { changed: true } => format!("{file} changed after you trusted it"),
         // `trusted_for_write` gives no trusted or ignored file.
@@ -400,7 +391,7 @@ async fn change(
             unchanged(target, &real, target.base.as_ref())?;
             target.base.clone()
         }
-        Scope::Global => read(&real)?,
+        Scope::Global { .. } => read(&real)?,
     };
     let Some(text) =
         edit(base.as_deref().unwrap_or("")).map_err(|error| edit_failure(target, &error))?
@@ -408,7 +399,7 @@ async fn change(
         return Ok(Outcome::Unchanged);
     };
     let mode = mode_for_write(target, &real)?;
-    if target.makes_folders {
+    if target.scope.makes_folders() {
         DirBuilder::new()
             .recursive(true)
             .mode(0o700)
@@ -468,7 +459,7 @@ fn real_path(file: &Path) -> Result<PathBuf, Failure> {
         Ok(real) => Ok(real),
         Err(_) if file.symlink_metadata().is_ok() => Err(Failure::protocol(format!(
             "The file {} is a symlink to a file that does not exist",
-            path_text(file)
+            path_code(file)
         ))),
         Err(_) => Ok(file.to_path_buf()),
     }
@@ -488,7 +479,7 @@ fn mode_for_write(target: &Target, real: &Path) -> Result<u32, Failure> {
 }
 
 fn cannot_write(target: &Target, error: &dyn std::error::Error) -> Failure {
-    Failure::protocol(format!("ncp cannot write {}", path_text(&target.file))).caused_by(error)
+    Failure::protocol(format!("ncp cannot write {}", path_code(&target.file))).caused_by(error)
 }
 
 // The file has the bytes that the user checked. The lock cannot stop an
@@ -499,17 +490,17 @@ fn unchanged(target: &Target, real: &Path, base: Option<&String>) -> Result<(), 
     } else {
         Err(Failure::protocol(format!(
             "The file {} changed after ncp read it, so ncp did not change it",
-            path_text(&target.file)
+            path_code(&target.file)
         ))
         .hint(format!(
             "Another process changed {}. To apply your change to the new file, run the command again.",
-            path_text(&target.file)
+            path_code(&target.file)
         )))
     }
 }
 
 fn edit_failure(target: &Target, error: &EditError) -> Failure {
-    let file = path_text(&target.file);
+    let file = path_code(&target.file);
     match error {
         EditError::SelfCheck => Failure::protocol(format!(
             "The edit of {file} failed its check. ncp did not change the file."
@@ -665,15 +656,15 @@ fn warn_about_other_file(
             .map(|_| {
                 format!(
                     "The global file {} also has the server {}. The entry in {} takes effect in this folder.",
-                    path_text(global),
+                    path_code(global),
                     code(name),
-                    path_text(&target.file)
+                    path_code(&target.file)
                 )
             }),
-        Scope::Global => view.and_then(|view| view.project_of(name)).map(|project| {
+        Scope::Global { .. } => view.and_then(|view| view.project_of(name)).map(|project| {
             format!(
                 "The project file {} also has the server {}. Its entry takes effect in this folder.",
-                path_text(&project.file),
+                path_code(&project.file),
                 code(name)
             )
         }),
@@ -744,7 +735,7 @@ pub async fn remove(context: &Context<'_>, name: &str, global: bool) -> Result<(
             return Err(Failure::usage(format!(
                 "The server {} is in {}, which you ignored",
                 code(name),
-                path_text(&project.file)
+                path_code(&project.file)
             ))
             .about(name)
             .hint(Hint::run_text("trust the file", "ncp trust")));
@@ -763,7 +754,7 @@ pub async fn remove(context: &Context<'_>, name: &str, global: bool) -> Result<(
             return Err(Failure::usage(format!(
                 "The global file has no server {}, but {} has it",
                 code(name),
-                path_text(&project.file)
+                path_code(&project.file)
             ))
             .about(name)
             .hint(hint));
@@ -783,7 +774,7 @@ pub async fn remove(context: &Context<'_>, name: &str, global: bool) -> Result<(
                 context.paths.config_file.display()
             )
         }),
-        Scope::Global => loaded.project_of(name).map(|project| {
+        Scope::Global { .. } => loaded.project_of(name).map(|project| {
             format!(
                 "the entry of {name} in {} still takes effect in this folder",
                 project.file.display()

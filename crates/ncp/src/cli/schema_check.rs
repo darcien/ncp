@@ -3,7 +3,7 @@
 //! The check runs with no network and no file access. Thus a `$ref` to
 //! another document does not resolve, and the schema is not usable.
 
-use super::outcome::chain_text;
+use crate::text::chain_text;
 use rmcp::model::JsonObject;
 use serde_json::Value;
 

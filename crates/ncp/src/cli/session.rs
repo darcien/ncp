@@ -27,7 +27,7 @@ use crate::{
     project::{self, Project, Trust},
     protocol_version::{ProtocolVersion, VersionCache},
     protocol_version_file,
-    text::code,
+    text::{code, path_code},
 };
 
 /// What `ncp` does with its caches (the protocol version cache and the list cache).
@@ -155,7 +155,7 @@ pub fn load_config(paths: &Paths, env: &Env, search: bool) -> Result<Loaded, Fai
         Err(error) => {
             return Err(Failure::protocol(format!(
                 "ncp cannot read the configuration file {}",
-                code(&path.display().to_string())
+                path_code(path)
             ))
             .caused_by(&error));
         }
@@ -163,7 +163,7 @@ pub fn load_config(paths: &Paths, env: &Env, search: bool) -> Result<Loaded, Fai
     let global = config::parse(&text, env).map_err(|error| {
         Failure::usage(format!(
             "The configuration file {} is not valid",
-            code(&path.display().to_string())
+            path_code(path)
         ))
         .caused_by(&error)
     })?;
@@ -188,7 +188,7 @@ fn trusted(loaded: Loaded, env: &Env) -> Result<Loaded, Failure> {
     let entries = config::parse(&project.text, env).map_err(|error| {
         Failure::usage(format!(
             "The project file {} is not valid",
-            code(&project.file.display().to_string())
+            path_code(&project.file)
         ))
         .caused_by(&error)
     })?;
@@ -266,13 +266,9 @@ fn report_files(context: &Context<'_>, loaded: &Loaded) {
                 folder.display()
             ),
         ),
-        ProjectFile::Unusable { file, reasons } => context.ui.warn(&reasons.iter().cloned().fold(
-            Warning::new(format!(
-                "ncp does not use {}",
-                code(&file.display().to_string())
-            )),
-            Warning::cause,
-        )),
+        ProjectFile::Unusable { file, reasons } => context
+            .ui
+            .warn(&Warning::from(project_file::unusable(file, reasons, ""))),
         ProjectFile::Read(project) => context.ui.debug(
             None,
             &format!(
@@ -315,7 +311,7 @@ pub fn select<'a>(loaded: &'a Loaded, name: &str, ui: Ui) -> Result<&'a Server, 
     }
     let server = loaded.config.server(name).map_err(|error| match error {
         LookupError::NotFound(_) => {
-            let shown = |path: &Path| code(&path.display().to_string());
+            let shown = |path: &Path| path_code(path);
             let place = match (&loaded.project, loaded.exists) {
                 (ProjectFile::Read(project), _) if project.trust == Trust::Trusted => {
                     format!(" in {} or {}", shown(&loaded.path), shown(&project.file))
@@ -341,7 +337,7 @@ pub fn select<'a>(loaded: &'a Loaded, name: &str, ui: Ui) -> Result<&'a Server, 
         return Err(Failure::usage(format!(
             "The server {} has the type `sse` in {}. ncp connects only to `stdio` and `http` servers.",
             code(name),
-            code(&loaded.file_of(name).display().to_string())
+            path_code(loaded.file_of(name))
         ))
         .about(name));
     }
@@ -360,7 +356,7 @@ fn blocked(name: &str, project: &Project, in_global: bool) -> Failure {
     let head = format!(
         "The server {} is in {}",
         code(name),
-        code(&project.file.display().to_string())
+        path_code(&project.file)
     );
     let trust = Hint::run_text("trust the file", "ncp trust");
     let state = match project.trust {
@@ -400,7 +396,7 @@ pub fn unknown_key(warning: &config::Warning, loaded: &Loaded) -> Warning {
         Some(server) => Warning::new(format!(
             "The entry of the server {} in {} has the unknown key {key}. ncp ignores it.",
             code(server),
-            code(&loaded.file_of(server).display().to_string())
+            path_code(loaded.file_of(server))
         ))
         .about(server.as_str()),
         None => Warning::new(format!(
@@ -413,7 +409,7 @@ fn entry_failure(name: &str, error: &EntryError, path: &Path) -> Failure {
     let failure = Failure::usage(format!(
         "The entry of the server {} in {} is not valid",
         code(name),
-        code(&path.display().to_string())
+        path_code(path)
     ))
     .about(name)
     .caused_by(error);
@@ -1019,21 +1015,7 @@ pub fn interrupted(server: Option<&str>) -> Failure {
 // is an authorization error, because the file can keep the tokens
 // (design B51).
 fn token_store_failure(server: &Server, text: &str) -> Failure {
-    if let Some(mismatch) = crate::oauth::store::binding_mismatch(text) {
-        return super::auth::binding_failure(server, &mismatch);
-    }
-    let name = server.name.as_str();
-    let keep = format!(
-        "ncp cannot keep the OAuth tokens of the server {}",
-        code(name)
-    );
-    // rmcp keeps the store error as one text, so it is one cause (design
-    // rule 7).
-    match crate::oauth::store::file_failure(text) {
-        Some(text) => super::auth::store_text_failure(Failure::protocol(keep).about(name), text),
-        None => super::auth::store_text_failure(Failure::new(Exit::Auth, keep).about(name), text)
-            .hint(super::auth::file_login_hint(name)),
-    }
+    super::auth::token_text_failure(server, text, true)
 }
 
 // The text of the server error is free text, so it is a cause.

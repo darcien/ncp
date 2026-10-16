@@ -33,7 +33,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 
 use super::{CredentialStore, Detail, StoreError};
 use crate::credential::{CredentialKey, SERVICE, Secret};
-use crate::text::code;
+use crate::text::{code, path_code};
 
 const PROGRAM: &str = "/usr/bin/security";
 
@@ -130,7 +130,7 @@ impl SecurityStore {
             StoreError::Failure(Detail::with_foreign(
                 format!(
                     "ncp cannot send the command to {}",
-                    code(&self.program.display().to_string())
+                    path_code(&self.program)
                 ),
                 error.to_string(),
             ))
@@ -146,10 +146,7 @@ impl SecurityStore {
     fn wait(&self, child: &mut Child, deadline: Instant) -> Result<ExitStatus, StoreError> {
         let failure = |error: io::Error| {
             StoreError::Failure(Detail::with_foreign(
-                format!(
-                    "ncp cannot wait for {}",
-                    code(&self.program.display().to_string())
-                ),
+                format!("ncp cannot wait for {}", path_code(&self.program)),
                 error.to_string(),
             ))
         };
@@ -482,7 +479,7 @@ fn ncp_accounts(dump: &str) -> Vec<String> {
 
 fn not_started(program: &Path, error: &io::Error) -> StoreError {
     StoreError::Unavailable(Detail::with_foreign(
-        format!("ncp cannot run {}", code(&program.display().to_string())),
+        format!("ncp cannot run {}", path_code(program)),
         error.to_string(),
     ))
 }
