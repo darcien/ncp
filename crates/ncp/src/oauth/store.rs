@@ -20,7 +20,7 @@ use crate::{
     credential::{CredentialKey, Secret},
     private_file,
     server::ServerName,
-    store::{self, CredentialStore, StoreError, StoreFix},
+    store::{self, CredentialStore, StoreError, StoreFix, StoreKind},
 };
 
 /// The copy in memory of the tokens item.
@@ -174,7 +174,10 @@ const FILE_FAILED: &str = "local: ";
 // line, with the kind before it and the fix after it. Its Display text
 // alone would lose the reason.
 fn store_error(error: &StoreError) -> AuthError {
-    let kind = if error.is_local() { FILE_FAILED } else { "" };
+    let kind = match error.kind() {
+        StoreKind::Local => FILE_FAILED,
+        StoreKind::Native => "",
+    };
     // The mark is always there, also with no fix. Thus the last mark is
     // the mark of `ncp`, also when foreign text holds one.
     let fix = error.fix().as_ref().map(fix_word).unwrap_or_default();
@@ -187,12 +190,21 @@ fn store_error(error: &StoreError) -> AuthError {
 /// control character too, so the read takes the last mark.
 const FIX_MARK: char = '\u{1f}';
 
+// A path with the mark gives no word: the read takes the last mark, and
+// the fix is only a hint.
 fn fix_word(fix: &StoreFix) -> String {
     match fix {
         StoreFix::AnswerPrompt => "prompt".to_string(),
         StoreFix::UnlockKeyring => "keyring".to_string(),
         StoreFix::RemoveCopies => "copies".to_string(),
-        StoreFix::CloseFile(path) => format!("close {}", path.display()),
+        StoreFix::CloseFile(path) => {
+            let path = path.display().to_string();
+            if path.contains(FIX_MARK) {
+                String::new()
+            } else {
+                format!("close {path}")
+            }
+        }
     }
 }
 
@@ -216,7 +228,7 @@ pub enum StoreText<'a> {
     /// A store failed. A failure of the credential file is local. A failure
     /// of the native store is an authorization error, and the file is a fix.
     Store {
-        local: bool,
+        kind: StoreKind,
         cause: &'a str,
         fix: Option<StoreFix>,
     },
@@ -229,18 +241,18 @@ pub fn read_store_text(text: &str) -> StoreText<'_> {
     if let Some(mismatch) = read_binding(text) {
         return StoreText::Binding(mismatch);
     }
-    let (local, text) = match text.strip_prefix(FILE_FAILED) {
-        Some(text) => (true, text),
-        None => (false, text),
+    let (kind, text) = match text.strip_prefix(FILE_FAILED) {
+        Some(text) => (StoreKind::Local, text),
+        None => (StoreKind::Native, text),
     };
     match text.rsplit_once(FIX_MARK) {
         Some((cause, word)) => StoreText::Store {
-            local,
+            kind,
             cause,
             fix: read_fix(word),
         },
         None => StoreText::Store {
-            local,
+            kind,
             cause: text,
             fix: None,
         },
@@ -517,48 +529,78 @@ mod tests {
         assert!(same.load().await.unwrap().is_some());
     }
 
-    fn read_back(error: &StoreError) -> (bool, String, Option<StoreFix>) {
+    fn read_back(error: &StoreError) -> (StoreKind, String, Option<StoreFix>) {
         let AuthError::CredentialStoreError(text) = store_error(error) else {
             panic!("a store error");
         };
         match read_store_text(&text) {
-            StoreText::Store { local, cause, fix } => (local, cause.to_string(), fix),
+            StoreText::Store { kind, cause, fix } => (kind, cause.to_string(), fix),
             StoreText::Binding(mismatch) => panic!("a binding: {mismatch:?}"),
+        }
+    }
+
+    // One sample of each variant. The match makes a new variant a compile
+    // error here, so that the test covers it.
+    fn sample(error: &StoreError) -> StoreError {
+        match error {
+            StoreError::Unavailable(_) => StoreError::Unavailable("x".into()),
+            StoreError::Denied(_) => {
+                StoreError::Denied(store::Detail::with_foreign("y", "a\u{1f}b"))
+            }
+            StoreError::Locked(_) => StoreError::Locked(2),
+            StoreError::Ambiguous(_) => StoreError::Ambiguous(2),
+            StoreError::Failure(_) => StoreError::Failure("z".into()),
+            StoreError::Io { .. } => StoreError::Io {
+                path: "/c".into(),
+                source: std::io::Error::other("w"),
+            },
+            StoreError::OpenPermissions(_) => StoreError::OpenPermissions("/c".into()),
+            StoreError::Corrupt(_) => StoreError::Corrupt("/c".into()),
+            StoreError::NoAnswer(_) => StoreError::NoAnswer(std::time::Duration::from_secs(60)),
+            StoreError::Interrupted => StoreError::Interrupted,
         }
     }
 
     #[test]
     fn each_store_error_reads_back_with_its_kind_cause_and_fix() {
-        let errors = [
+        let variants = [
             StoreError::Unavailable("x".into()),
-            StoreError::Denied(store::Detail::with_foreign("y", "a\u{1f}b")),
-            StoreError::Locked(2),
-            StoreError::Ambiguous(2),
-            StoreError::Failure("z".into()),
+            StoreError::Denied("x".into()),
+            StoreError::Locked(1),
+            StoreError::Ambiguous(1),
+            StoreError::Failure("x".into()),
             StoreError::Io {
                 path: "/c".into(),
-                source: std::io::Error::other("w"),
+                source: std::io::Error::other("x"),
             },
             StoreError::OpenPermissions("/c".into()),
             StoreError::Corrupt("/c".into()),
-            StoreError::NoAnswer(std::time::Duration::from_secs(60)),
+            StoreError::NoAnswer(std::time::Duration::from_secs(1)),
             StoreError::Interrupted,
         ];
-        for error in &errors {
+        let errors = variants
+            .iter()
+            .map(sample)
+            .chain([StoreError::OpenPermissions("/a\u{1f}b".into())]);
+        for error in errors {
+            let expected_fix = match &error {
+                StoreError::OpenPermissions(path)
+                    if path.display().to_string().contains('\u{1f}') =>
+                {
+                    None
+                }
+                other => other.fix(),
+            };
             assert_eq!(
-                read_back(error),
-                (
-                    error.is_local(),
-                    crate::text::chain_text(error),
-                    error.fix()
-                ),
+                read_back(&error),
+                (error.kind(), crate::text::chain_text(&error), expected_fix),
                 "{error:?}"
             );
         }
         assert_eq!(
             read_store_text("no mark"),
             StoreText::Store {
-                local: false,
+                kind: StoreKind::Native,
                 cause: "no mark",
                 fix: None
             }

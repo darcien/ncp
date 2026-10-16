@@ -116,21 +116,27 @@ pub enum StoreFix {
     RemoveCopies,
 }
 
+/// Where a store error comes from. A failure of the credential file is a
+/// local error (exit 3). A failure of the native store is an authorization
+/// error (exit 4), because the file can keep the item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoreKind {
+    Local,
+    Native,
+}
+
 impl StoreError {
-    /// A failure of the credential file is a local error (exit 3). A
-    /// failure of the native store is an authorization error (exit 4),
-    /// because the file can keep the item.
     #[must_use]
-    pub fn is_local(&self) -> bool {
+    pub fn kind(&self) -> StoreKind {
         match self {
-            Self::Io { .. } | Self::OpenPermissions(_) | Self::Corrupt(_) => true,
+            Self::Io { .. } | Self::OpenPermissions(_) | Self::Corrupt(_) => StoreKind::Local,
             Self::Unavailable(_)
             | Self::Denied(_)
             | Self::Locked(_)
             | Self::Ambiguous(_)
             | Self::Failure(_)
             | Self::NoAnswer(_)
-            | Self::Interrupted => false,
+            | Self::Interrupted => StoreKind::Native,
         }
     }
 

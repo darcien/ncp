@@ -37,7 +37,7 @@ pub fn command(context: &Context<'_>, args: &TrustArgs) -> Result<(), Failure> {
             )));
         }
         ProjectFile::Unusable { file, reasons } => {
-            return Err(project_file::unusable(&file, &reasons, ""));
+            return Err(project_file::unusable(&file, &reasons, None));
         }
     };
     let change = match (args.show, args.untrust, args.ignore) {

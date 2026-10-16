@@ -163,12 +163,9 @@ fn auth_failure(step: &str, server: &str, error: &AuthError) -> Failure {
             StoreText::Binding(mismatch) => {
                 failed(Exit::Auth).cause(binding_reason(&mismatch, &code))
             }
-            StoreText::Store { local, cause, fix } => {
-                let exit = if local { Exit::Protocol } else { Exit::Auth };
-                failed(exit)
-                    .cause(cause)
-                    .with_hints(fix.iter().map(super::fixes::fix_hint))
-            }
+            StoreText::Store { kind, cause, fix } => failed(secrets::exit_of(kind))
+                .cause(cause)
+                .with_hints(fix.iter().map(super::fixes::fix_hint)),
         };
     }
     let exit = match error {
@@ -480,8 +477,8 @@ pub(super) fn token_text_failure(server: &Server, text: &str, file_fix: bool) ->
     let name = server.name.as_str();
     match read_store_text(text) {
         StoreText::Binding(mismatch) => binding_failure(server, &mismatch),
-        StoreText::Store { local, cause, fix } => {
-            let exit = if local { Exit::Protocol } else { Exit::Auth };
+        StoreText::Store { kind, cause, fix } => {
+            let exit = secrets::exit_of(kind);
             let failure = Failure::new(
                 exit,
                 format!(
@@ -492,7 +489,7 @@ pub(super) fn token_text_failure(server: &Server, text: &str, file_fix: bool) ->
             .about(name)
             .cause(cause)
             .with_hints(fix.iter().map(super::fixes::fix_hint));
-            if local || !file_fix {
+            if kind == crate::store::StoreKind::Local || !file_fix {
                 failure
             } else {
                 failure.hint(file_login_hint(name))

@@ -40,12 +40,13 @@ pub enum ProjectFile {
 /// The failure for a project file that `ncp` does not use, with the
 /// consequence for the command as a second sentence (design rule 8).
 #[must_use]
-pub fn unusable(file: &Path, reasons: &[String], consequence: &str) -> Failure {
-    Failure::usage(format!(
-        "ncp does not use {}.{consequence}",
-        crate::text::path_code(file)
-    ))
-    .with_causes(reasons.iter().cloned())
+pub fn unusable(file: &Path, reasons: &[String], consequence: Option<&str>) -> Failure {
+    let head = format!("ncp does not use {}", crate::text::path_code(file));
+    let message = match consequence {
+        Some(consequence) => format!("{head}. {consequence}"),
+        None => head,
+    };
+    Failure::usage(message).with_causes(reasons.iter().cloned())
 }
 
 impl ProjectFile {

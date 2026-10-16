@@ -288,12 +288,10 @@ fn a_project_file_that_is_not_a_regular_file_is_not_used() {
     let run = home.run(&["server", "list"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
     let warning = &run.warnings()[0];
-    assert!(
-        warning["message"]
-            .as_str()
-            .unwrap()
-            .starts_with("ncp does not use `"),
-        "{warning}"
+    let file = std::fs::canonicalize(&home.cwd).unwrap().join(".mcp.json");
+    assert_eq!(
+        warning["message"],
+        format!("ncp does not use `{}`", file.display())
     );
     assert_eq!(warning["causes"], json!(["The file is not a regular file"]));
 }

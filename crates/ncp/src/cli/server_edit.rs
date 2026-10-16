@@ -260,7 +260,7 @@ async fn add_target(
         }
         ProjectFile::Unusable { file, reasons } => {
             Err(
-                project_file::unusable(file, reasons, " ncp does not change it.")
+                project_file::unusable(file, reasons, Some("ncp does not change it."))
                     .hint(global_hint()),
             )
         }

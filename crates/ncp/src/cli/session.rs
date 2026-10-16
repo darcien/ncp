@@ -268,7 +268,7 @@ fn report_files(context: &Context<'_>, loaded: &Loaded) {
         ),
         ProjectFile::Unusable { file, reasons } => context
             .ui
-            .warn(&Warning::from(project_file::unusable(file, reasons, ""))),
+            .warn(&Warning::from(project_file::unusable(file, reasons, None))),
         ProjectFile::Read(project) => context.ui.debug(
             None,
             &format!(
