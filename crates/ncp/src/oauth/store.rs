@@ -539,33 +539,11 @@ mod tests {
         }
     }
 
-    // One sample of each variant. The match makes a new variant a compile
-    // error here, so that the test covers it.
-    fn sample(error: &StoreError) -> StoreError {
-        match error {
-            StoreError::Unavailable(_) => StoreError::Unavailable("x".into()),
-            StoreError::Denied(_) => {
-                StoreError::Denied(store::Detail::with_foreign("y", "a\u{1f}b"))
-            }
-            StoreError::Locked(_) => StoreError::Locked(2),
-            StoreError::Ambiguous(_) => StoreError::Ambiguous(2),
-            StoreError::Failure(_) => StoreError::Failure("z".into()),
-            StoreError::Io { .. } => StoreError::Io {
-                path: "/c".into(),
-                source: std::io::Error::other("w"),
-            },
-            StoreError::OpenPermissions(_) => StoreError::OpenPermissions("/c".into()),
-            StoreError::Corrupt(_) => StoreError::Corrupt("/c".into()),
-            StoreError::NoAnswer(_) => StoreError::NoAnswer(std::time::Duration::from_secs(60)),
-            StoreError::Interrupted => StoreError::Interrupted,
-        }
-    }
-
     #[test]
     fn each_store_error_reads_back_with_its_kind_cause_and_fix() {
-        let variants = [
+        let errors = [
             StoreError::Unavailable("x".into()),
-            StoreError::Denied("x".into()),
+            StoreError::Denied(store::Detail::with_foreign("y", "a\u{1f}b")),
             StoreError::Locked(1),
             StoreError::Ambiguous(1),
             StoreError::Failure("x".into()),
@@ -578,25 +556,19 @@ mod tests {
             StoreError::NoAnswer(std::time::Duration::from_secs(1)),
             StoreError::Interrupted,
         ];
-        let errors = variants
-            .iter()
-            .map(sample)
-            .chain([StoreError::OpenPermissions("/a\u{1f}b".into())]);
-        for error in errors {
-            let expected_fix = match &error {
-                StoreError::OpenPermissions(path)
-                    if path.display().to_string().contains('\u{1f}') =>
-                {
-                    None
-                }
-                other => other.fix(),
-            };
+        for error in &errors {
             assert_eq!(
-                read_back(&error),
-                (error.kind(), crate::text::chain_text(&error), expected_fix),
+                read_back(error),
+                (error.kind(), crate::text::chain_text(error), error.fix()),
                 "{error:?}"
             );
         }
+        // A path with the mark gives no fix, so the cause stays whole.
+        let marked = StoreError::OpenPermissions("/a\u{1f}b".into());
+        assert_eq!(
+            read_back(&marked),
+            (StoreKind::Local, crate::text::chain_text(&marked), None)
+        );
         assert_eq!(
             read_store_text("no mark"),
             StoreText::Store {

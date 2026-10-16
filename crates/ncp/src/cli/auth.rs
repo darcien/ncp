@@ -163,7 +163,7 @@ fn auth_failure(step: &str, server: &str, error: &AuthError) -> Failure {
             StoreText::Binding(mismatch) => {
                 failed(Exit::Auth).cause(binding_reason(&mismatch, &code))
             }
-            StoreText::Store { kind, cause, fix } => failed(secrets::exit_of(kind))
+            StoreText::Store { kind, cause, fix } => failed(Exit::from(kind))
                 .cause(cause)
                 .with_hints(fix.iter().map(super::fixes::fix_hint)),
         };
@@ -478,7 +478,7 @@ pub(super) fn token_text_failure(server: &Server, text: &str, file_fix: bool) ->
     match read_store_text(text) {
         StoreText::Binding(mismatch) => binding_failure(server, &mismatch),
         StoreText::Store { kind, cause, fix } => {
-            let exit = secrets::exit_of(kind);
+            let exit = Exit::from(kind);
             let failure = Failure::new(
                 exit,
                 format!(

@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use crate::{
     credential::Destination,
     elicit::Page,
+    store::StoreKind,
     text::{code, kept_causes, source_texts},
 };
 
@@ -48,6 +49,18 @@ impl Exit {
             Self::Auth => "auth",
             Self::InputRequired => "input_required",
             Self::Interrupted => "interrupted",
+        }
+    }
+}
+
+/// A failure of the credential file is local (exit 3). A failure of the
+/// native store is an authorization error (exit 4), because the file can
+/// keep the item.
+impl From<StoreKind> for Exit {
+    fn from(kind: StoreKind) -> Self {
+        match kind {
+            StoreKind::Local => Self::Protocol,
+            StoreKind::Native => Self::Auth,
         }
     }
 }

@@ -33,7 +33,7 @@ use crate::{
     expand::{self, Env},
     project::Trust,
     server::{Origin, OriginError},
-    store::{self, CredentialStore, FileStore, StoreError, StoreKind},
+    store::{self, CredentialStore, FileStore, StoreError},
     text::{chain_text, code, path_code},
 };
 
@@ -425,14 +425,6 @@ pub(super) fn store_failure_about(
     }
 }
 
-/// The exit code of a store failure.
-pub(super) fn exit_of(kind: StoreKind) -> Exit {
-    match kind {
-        StoreKind::Local => Exit::Protocol,
-        StoreKind::Native => Exit::Auth,
-    }
-}
-
 /// A store error. The native store and its time limit are authorization
 /// errors (exit 4). A credential file that `ncp` cannot read or write is a
 /// local error (exit 3).
@@ -440,7 +432,7 @@ pub(super) fn store_failure(error: &StoreError) -> Failure {
     if let StoreError::Interrupted = error {
         return session::interrupted(None);
     }
-    let exit = exit_of(error.kind());
+    let exit = Exit::from(error.kind());
     // Rule 7 drops the error itself from the causes: the message holds it.
     let failure = Failure::new(exit, error.to_string()).caused_by(error);
     super::fixes::store_hints(error)
