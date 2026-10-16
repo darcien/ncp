@@ -146,7 +146,7 @@ pub struct TokensItem {
 pub fn parse_item(secret: &Secret) -> Result<TokensItem, items::ItemError> {
     let error = |error: serde_json::Error| items::ItemError {
         item: "tokens",
-        reason: error.to_string(),
+        reason: items::ItemReason(error.to_string()),
     };
     let json: Value = serde_json::from_str(secret.expose()).map_err(error)?;
     let scope_fields = items::SCOPE_FIELDS

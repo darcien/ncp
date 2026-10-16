@@ -5,6 +5,7 @@
 //! specified at the time of the request for loopback IP redirect URIs".
 //! RFC 8252 §8.3: use the loopback IP literal, not `localhost`.
 
+use crate::text::code;
 use std::fmt;
 
 const HOST: &str = "127.0.0.1";
@@ -79,29 +80,33 @@ impl fmt::Debug for Callback {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CallbackError {
-    #[error("the text is not a URL")]
+    #[error("The text is not a URL")]
     NotUrl,
-    #[error("the URL does not start with {0}")]
+    #[error("The URL does not start with {}", code(.0))]
     WrongTarget(String),
-    #[error("the authorization server refused the login: {}", describe(.error, .description.as_deref()))]
+    #[error(
+        "The authorization server refused the login with the error {}",
+        describe(.error, .description.as_deref())
+    )]
     Refused {
         error: String,
         description: Option<String>,
     },
-    #[error("the redirect URL has no {0} parameter")]
+    #[error("The redirect URL has no `{0}` parameter")]
     Missing(&'static str),
-    #[error("the redirect URL is from another login: its state does not agree")]
+    #[error("The redirect URL is from another login, because its `state` does not agree")]
     WrongState,
     #[error(
-        "the redirect URL names the issuer {0:?}, which is not the authorization server of the login"
+        "The redirect URL names the issuer {}, which is not the authorization server of the login",
+        code(.0)
     )]
     WrongIssuer(String),
 }
 
 fn describe(error: &str, description: Option<&str>) -> String {
     match description {
-        Some(description) => format!("{error} ({description})"),
-        None => error.to_string(),
+        Some(description) => format!("{} and the text {}", code(error), code(description)),
+        None => code(error),
     }
 }
 
@@ -166,6 +171,23 @@ fn check_issuer(iss: Option<String>, expected: &Expected) -> Result<(), Callback
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_texts_follow_the_message_rules() {
+        let texts = [
+            CallbackError::NotUrl.to_string(),
+            CallbackError::WrongTarget("http://127.0.0.1:1/callback".into()).to_string(),
+            CallbackError::Refused {
+                error: "access_denied".into(),
+                description: None,
+            }
+            .to_string(),
+            CallbackError::Missing("code").to_string(),
+            CallbackError::WrongState.to_string(),
+            CallbackError::WrongIssuer("https://as".into()).to_string(),
+        ];
+        crate::style::assert_style(&texts);
+    }
 
     fn redirect() -> RedirectUri {
         RedirectUri::new(4711)
@@ -241,7 +263,8 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             error.to_string(),
-            "the authorization server refused the login: access_denied (no consent)"
+            "The authorization server refused the login with the error `access_denied` and the \
+             text `no consent`"
         );
     }
 

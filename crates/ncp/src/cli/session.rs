@@ -842,7 +842,7 @@ fn with_transport_causes(
 
 // A failure of the HTTP client names the variable and the path of a bad
 // `SSL_CERT_FILE` in the message (requirement N4).
-fn http_failure(name: &str, error: &client::http::HttpError) -> Failure {
+pub(super) fn http_failure(name: &str, error: &client::http::HttpError) -> Failure {
     let failure = Failure::protocol(format!("{error} for the server {}", code(name)))
         .about(name)
         .caused_by(error);
@@ -978,7 +978,7 @@ fn needs_login_text(server: &Server) -> String {
     )
 }
 
-fn login_hint(server: &Server) -> Hint {
+pub(super) fn login_hint(server: &Server) -> Hint {
     Hint::run(
         "log in",
         format!(
@@ -1019,16 +1019,20 @@ fn token_store_failure(server: &Server, text: &str) -> Failure {
     if let Some(mismatch) = crate::oauth::store::binding_mismatch(text) {
         return super::auth::binding_failure(server, &mismatch);
     }
-    if let Some(text) = crate::oauth::store::file_failure(text) {
-        return Failure::protocol(format!("cannot keep the OAuth tokens: {text}"))
-            .server(server.name.as_str());
+    let name = server.name.as_str();
+    let keep = format!(
+        "ncp cannot keep the OAuth tokens of the server {}",
+        code(name)
+    );
+    // rmcp keeps the store error as one text, so it is one cause (design
+    // rule 7).
+    match crate::oauth::store::file_failure(text) {
+        Some(text) => Failure::protocol(keep).about(name).cause(text),
+        None => Failure::new(Exit::Auth, keep)
+            .about(name)
+            .cause(text)
+            .hint(super::auth::file_login_hint(name)),
     }
-    Failure::new(Exit::Auth, format!("cannot keep the OAuth tokens: {text}"))
-        .server(server.name.as_str())
-        .hint(format!(
-            "ncp auth login {} --credential-store file",
-            super::render::shell_word(server.name.as_str())
-        ))
 }
 
 // The text of the server error is free text, so it is a cause.

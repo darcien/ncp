@@ -31,7 +31,7 @@ const REQUEST_LIMIT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
 enum OAuthHttpError {
-    #[error("the response body is larger than {MAX_BODY} bytes")]
+    #[error("The response body is larger than {MAX_BODY} bytes")]
     BodyTooLarge,
 }
 

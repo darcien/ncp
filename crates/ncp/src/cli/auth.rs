@@ -18,7 +18,7 @@ use tokio::{
 use super::{
     args::{AuthCommand, CredentialPlace},
     diagnostics,
-    outcome::{Exit, Failure, Hint, Warning, chain_text},
+    outcome::{Exit, Failure, Hint, Warning},
     secrets,
     session::{self, Context},
 };
@@ -74,10 +74,12 @@ pub(super) async fn command(context: &Context<'_>, command: AuthCommand) -> Resu
         } => {
             let limit = context.request_limit;
             let timeout = Failure::protocol(format!(
-                "the login did not complete in {} s",
+                "The login to the server {} did not complete in {} s",
+                code(&server),
                 limit.as_secs()
             ))
-            .hint("give a longer limit with --timeout <SECONDS>");
+            .about(server.as_str())
+            .hint(session::wait_longer());
             let notes = crate::client::http::ConnectNotes::default();
             let loaded = session::load(context, Some(&server)).await?;
             let name = limited(
@@ -137,14 +139,17 @@ pub(super) async fn limited<T>(
 fn remote(server: &Server) -> Result<&RemoteServer, Failure> {
     match &server.transport {
         Transport::Http(remote) => Ok(remote),
-        _ => Err(Failure::usage(
-            "OAuth is only for http servers; a stdio server gets its credentials through env",
-        )
-        .server(server.name.as_str())),
+        _ => Err(Failure::usage(format!(
+            "The server {} is a stdio server, and OAuth is only for http servers",
+            code(server.name.as_str())
+        ))
+        .about(server.name.as_str())
+        .hint("Give the credentials of a stdio server in `env`")),
     }
 }
 
-fn auth_failure(step: &str, error: &AuthError) -> Failure {
+// The text of rmcp is a cause, because it is foreign text.
+fn auth_failure(step: &str, server: &str, error: &AuthError) -> Failure {
     let exit = match error {
         AuthError::AuthorizationRequired
         | AuthError::AuthorizationFailed(_)
@@ -154,7 +159,12 @@ fn auth_failure(step: &str, error: &AuthError) -> Failure {
         | AuthError::AuthorizationServerMissingIssuer { .. } => Exit::Auth,
         _ => Exit::Protocol,
     };
-    Failure::new(exit, format!("{step}: {error}", error = chain_text(&error)))
+    Failure::new(
+        exit,
+        format!("The {step} for the server {} failed", code(server)),
+    )
+    .about(server)
+    .caused_by(error)
 }
 
 // rmcp falls back to endpoints that it makes from the server URL. `ncp`
@@ -163,24 +173,30 @@ fn auth_failure(step: &str, error: &AuthError) -> Failure {
 async fn discover(
     manager: &AuthorizationManager,
     challenge: Option<&str>,
+    server: &str,
 ) -> Result<AuthorizationMetadata, Failure> {
     let resolution = manager
         .resolve_metadata_from_challenge(challenge)
         .await
-        .map_err(|error| auth_failure("OAuth discovery", &error))?;
+        .map_err(|error| auth_failure("OAuth discovery", server, &error))?;
     if !resolution.source.is_discovered() {
-        return Err(Failure::protocol(
-            "the server names no authorization server: it has no protected resource metadata and no authorization server metadata",
+        return Err(Failure::protocol(format!(
+            "The server {} names no authorization server",
+            code(server)
+        ))
+        .about(server)
+        .cause(
+            "The server has no protected resource metadata and no authorization server metadata",
         ));
     }
-    check_https(&resolution.metadata)?;
+    check_https(server, &resolution.metadata)?;
     Ok(resolution.metadata)
 }
 
 // The endpoints of the authorization server must use HTTPS, except on a
 // loopback host (MCP 2025-11-25, basic/authorization, "Communication
 // Security"). rmcp does not do this check.
-fn check_https(metadata: &AuthorizationMetadata) -> Result<(), Failure> {
+fn check_https(server: &str, metadata: &AuthorizationMetadata) -> Result<(), Failure> {
     let endpoints = [
         Some(&metadata.authorization_endpoint),
         Some(&metadata.token_endpoint),
@@ -192,8 +208,11 @@ fn check_https(metadata: &AuthorizationMetadata) -> Result<(), Failure> {
         .find(|endpoint| !is_secure(endpoint))
         .map_or(Ok(()), |endpoint| {
             Err(Failure::protocol(format!(
-                "the authorization server endpoint {endpoint} does not use HTTPS"
-            )))
+                "The authorization server of the server {} has the endpoint {}, which does not use `https`",
+                code(server),
+                code(endpoint)
+            ))
+            .about(server))
         })
 }
 
@@ -221,8 +240,18 @@ async fn place_store(
 ) -> Result<Arc<dyn CredentialStore>, Failure> {
     match place {
         CredentialPlace::Native => secrets::native(context).await.map_err(|error| {
-            secrets::store_failure(&error)
-                .hint(format!("ncp auth login {server} --credential-store file"))
+            let message = format!(
+                "ncp cannot open the native store for the tokens of the server {}",
+                code(server)
+            );
+            let file = Hint::run_text(
+                "store the tokens in the credential file",
+                &format!(
+                    "ncp auth login {} --credential-store file",
+                    super::render::shell_word(server)
+                ),
+            );
+            secrets::store_failure_of(&error, message, [file]).about(server)
         }),
         CredentialPlace::File => Ok(secrets::file(context)),
     }
@@ -245,17 +274,15 @@ async fn login(
         session::shown_url(server),
     );
     let http = OAuthHttp::new(context.env, &observer, notes)
-        .map_err(|error| Failure::protocol(chain_text(&error)).server(name))?;
+        .map_err(|error| session::http_failure(name, &error))?;
     let mut manager = AuthorizationManager::new_with_oauth_http_client(
         remote.url.without_query(),
         Arc::new(http),
     )
     .await
-    .map_err(|error| auth_failure("OAuth setup", &error).server(name))?;
+    .map_err(|error| auth_failure("OAuth setup", name, &error))?;
     let challenge = session::challenge(context, server).await?;
-    let metadata = discover(&manager, challenge.as_deref())
-        .await
-        .map_err(|failure| failure.server(name))?;
+    let metadata = discover(&manager, challenge.as_deref(), name).await?;
     let issuer = issuer_of(&metadata);
     context
         .ui
@@ -292,27 +319,25 @@ async fn login(
         &metadata,
         (&redirect, &scopes),
     )
-    .await
-    .map_err(|failure| failure.server(name))?;
+    .await?;
     let session = AuthorizationSession::new(manager, request)
         .await
-        .map_err(|(_, error)| auth_failure("OAuth login", &error).server(name))?;
+        .map_err(|(_, error)| auth_failure("OAuth login", name, &error))?;
     let url = session.get_authorization_url().to_string();
     let state = state_of(&url).ok_or_else(|| {
-        Failure::protocol("the authorization URL of rmcp has no state").server(name)
+        Failure::protocol(format!(
+            "The authorization URL of rmcp for the server {} has no `state`",
+            code(name)
+        ))
+        .about(name)
     })?;
     let read_stdin = no_browser || std::io::stdin().is_terminal();
     show_url(context, name, &url, read_stdin);
-    if !no_browser && let Err(error) = (context.open_browser)(&url) {
-        context.ui.warning(
-            Some(name),
-            &format!("cannot open a browser: {error}", error = chain_text(&error)),
-        );
+    if !no_browser {
+        show_in_browser(context, name, &url);
     }
     let expected = expected_redirect(state, &metadata);
-    let callback = wait_for_redirect(listener, &redirect, &expected, read_stdin)
-        .await
-        .map_err(|failure| failure.server(name))?;
+    let callback = wait_for_redirect(listener, &redirect, &expected, read_stdin, name).await?;
     // A refresh of the old tokens in another process must not save over
     // the new tokens.
     let _lock = hold_tokens_lock(context, &server.name).await;
@@ -341,6 +366,22 @@ async fn login(
     Ok(server.name.clone())
 }
 
+// The URL is on the screen already, so a browser that does not open gives
+// only a warning.
+fn show_in_browser(context: &Context<'_>, name: &str, url: &str) {
+    if let Err(error) = (context.open_browser)(url) {
+        context.ui.warn(
+            &Warning::new(format!(
+                "ncp cannot open a browser for the login to the server {}",
+                code(name)
+            ))
+            .about(name)
+            .caused_by(&error)
+            .hint("Open the URL above in a browser"),
+        );
+    }
+}
+
 // What the redirect of the login must have: its state, and the issuer of the
 // metadata in `iss` (RFC 9207 §2.4). The metadata says if `iss` must be
 // present.
@@ -359,10 +400,7 @@ fn expected_redirect(state: String, metadata: &AuthorizationMetadata) -> callbac
 // The redirect uses a random loopback port (RFC 8252 §7.3).
 async fn listen() -> Result<(TcpListener, RedirectUri), Failure> {
     let failure = |error: std::io::Error| {
-        Failure::protocol(format!(
-            "cannot listen for the redirect: {error}",
-            error = chain_text(&error)
-        ))
+        Failure::protocol("ncp cannot listen for the redirect of the login").caused_by(&error)
     };
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.map_err(failure)?;
     let port = listener.local_addr().map_err(failure)?.port();
@@ -392,9 +430,14 @@ async fn hold_tokens_lock(
         // Another process holds the lock past its limit: go on, but say so,
         // because that process can undo this change.
         Ok(Err(error)) if error.kind() == std::io::ErrorKind::TimedOut => {
-            context
-                .ui
-                .warning(Some(server.as_str()), &chain_text(&error));
+            context.ui.warn(
+                &Warning::new(format!(
+                    "ncp goes on with no lock of the tokens of the server {}",
+                    code(server.as_str())
+                ))
+                .about(server.as_str())
+                .caused_by(&error),
+            );
             None
         }
         _ => None,
@@ -405,22 +448,35 @@ async fn hold_tokens_lock(
 // is a local error. A native store that fails, for example a locked
 // Keychain, can give way to the file.
 fn token_failure(error: &AuthError, name: &str, place: CredentialPlace) -> Failure {
+    let keep = || {
+        format!(
+            "ncp cannot keep the OAuth tokens of the server {}",
+            code(name)
+        )
+    };
     match error {
         AuthError::CredentialStoreError(text) => match crate::oauth::store::file_failure(text) {
-            Some(text) => Failure::protocol(format!("cannot keep the tokens: {text}")).server(name),
-            None if place == CredentialPlace::Native => Failure::new(
-                Exit::Auth,
-                format!(
-                    "cannot keep the tokens: {error}",
-                    error = chain_text(&error)
-                ),
-            )
-            .hint(format!("ncp auth login {name} --credential-store file"))
-            .server(name),
-            None => auth_failure("OAuth token request", error).server(name),
+            Some(text) => Failure::protocol(keep()).about(name).cause(text),
+            None if place == CredentialPlace::Native => Failure::new(Exit::Auth, keep())
+                .about(name)
+                .cause(text.as_str())
+                .hint(file_login_hint(name)),
+            None => auth_failure("OAuth token request", name, error),
         },
-        error => auth_failure("OAuth token request", error).server(name),
+        error => auth_failure("OAuth token request", name, error),
     }
+}
+
+/// The hint to keep the tokens of a login in the credential file. It stores,
+/// so it has no command (design rule 10).
+pub(super) fn file_login_hint(name: &str) -> Hint {
+    Hint::run_text(
+        "store the tokens in the credential file",
+        &format!(
+            "ncp auth login {} --credential-store file",
+            super::render::shell_word(name)
+        ),
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -452,19 +508,18 @@ pub(super) async fn stored_login(
     } = *login;
     let name = server.name.as_str();
     let (store, secret) = found;
-    let item =
-        parse_item(&secret).map_err(|error| Failure::protocol(chain_text(&error)).server(name))?;
+    let item = parse_item(&secret).map_err(|error| tokens_failure(name, &error))?;
     let client_id = item.tokens.client_id.clone();
     let stored_binding = item.binding.clone();
     context.ui.debug(Some(name), "read the stored OAuth tokens");
     let oauth_http = OAuthHttp::new(context.env, observer, notes)
-        .map_err(|error| Failure::protocol(chain_text(&error)).server(name))?;
+        .map_err(|error| session::http_failure(name, &error))?;
     let mut manager = AuthorizationManager::new_with_oauth_http_client(
         remote.url.without_query(),
         Arc::new(oauth_http),
     )
     .await
-    .map_err(|error| auth_failure("OAuth setup", &error).server(name))?;
+    .map_err(|error| auth_failure("OAuth setup", name, &error))?;
     manager.set_credential_store(
         TokenStore::new(server.name.clone(), store.clone())
             .with_item(item)
@@ -473,9 +528,7 @@ pub(super) async fn stored_login(
     );
     // The challenge can name the protected resource metadata (RFC 9728
     // §5.1). With metadata in place, rmcp does no discovery of its own.
-    let metadata = discover(&manager, challenge)
-        .await
-        .map_err(|failure| failure.server(name))?;
+    let metadata = discover(&manager, challenge, name).await?;
     // Check the issuer of the configured client before rmcp reads the
     // tokens, because rmcp removes the tokens of another issuer. The check
     // also comes before a refresh sends the secret.
@@ -496,7 +549,7 @@ pub(super) async fn stored_login(
     let usable = manager
         .initialize_from_store()
         .await
-        .map_err(|error| auth_failure("OAuth discovery", &error).server(name))?;
+        .map_err(|error| auth_failure("OAuth discovery", name, &error))?;
     if !usable {
         return Ok(None);
     }
@@ -508,7 +561,7 @@ pub(super) async fn stored_login(
                 .with_client_secret(secret.expose());
             manager
                 .configure_client(config)
-                .map_err(|error| auth_failure("OAuth setup", &error).server(name))?;
+                .map_err(|error| auth_failure("OAuth setup", name, &error))?;
         }
         return Ok(Some(AuthClient::new(
             crate::client::http::observed(http, observer),
@@ -522,7 +575,13 @@ pub(super) async fn stored_login(
         timer(started.elapsed());
     }
     let client = client
-        .map_err(|error| secrets::store_failure(&error).server(name))?
+        .map_err(|error| {
+            let message = format!(
+                "ncp cannot read the OAuth client of the server {}",
+                code(name)
+            );
+            secrets::store_failure_of(&error, message, []).about(name)
+        })?
         .and_then(|secret| ClientItem::from_secret(&secret).ok());
     if let Some(ClientItem {
         client_id: stored_id,
@@ -535,7 +594,7 @@ pub(super) async fn stored_login(
             .with_client_secret(client_secret);
         manager
             .configure_client(config)
-            .map_err(|error| auth_failure("OAuth setup", &error).server(name))?;
+            .map_err(|error| auth_failure("OAuth setup", name, &error))?;
     }
     Ok(Some(AuthClient::new(
         crate::client::http::observed(http, observer),
@@ -550,25 +609,37 @@ pub(super) fn binding_failure(server: &Server, mismatch: &items::BindingMismatch
     let name = server.name.as_str();
     let reason = match mismatch {
         items::BindingMismatch::Missing => {
-            "the tokens do not name the server that they are for".to_string()
+            "The tokens do not name the server that they are for".to_string()
         }
         items::BindingMismatch::Resource => {
-            "the tokens are for another URL than the entry names".to_string()
+            "The tokens are for a URL that is not the URL of the entry".to_string()
         }
         items::BindingMismatch::Issuer { current } => format!(
-            "the tokens are from another authorization server than {}",
-            session::hide_expanded_url(server, current.clone())
+            "The tokens are from an authorization server that is not {}",
+            code(&session::hide_expanded_url(server, current.clone()))
         ),
     };
+    // Requirement A13: the message says that the stop is on purpose.
     Failure::new(
         Exit::Auth,
-        format!("ncp did not send the stored token, on purpose: {reason}"),
+        format!(
+            "ncp did not send the stored token of the server {}. ncp did this on purpose.",
+            code(name)
+        ),
     )
-    .hint(format!(
-        "ncp auth login {}",
-        super::render::shell_word(name)
+    .about(name)
+    .cause(reason)
+    .hint(session::login_hint(server))
+}
+
+// A stored item that is not valid JSON of ncp.
+fn tokens_failure(name: &str, error: &items::ItemError) -> Failure {
+    Failure::protocol(format!(
+        "ncp cannot read the stored OAuth items of the server {}",
+        code(name)
     ))
-    .server(name)
+    .about(name)
+    .caused_by(error)
 }
 
 // A refresh reads and writes the tokens again, so `--timings` counts these
@@ -591,8 +662,11 @@ pub(super) async fn remember_scopes(context: &Context<'_>, server: &Server, erro
     let name = server.name.as_str();
     if let Err(failure) = add_required_scopes(context, server, &scopes).await {
         context.ui.warn(
-            &Warning::from(failure.context("cannot keep the scopes for the next login"))
-                .server(name),
+            &Warning::from(failure.context(format!(
+                "ncp cannot keep the scopes of the server {} for the next login",
+                code(name)
+            )))
+            .about(name),
         );
     }
 }
@@ -607,23 +681,23 @@ async fn add_required_scopes(
     let _lock = hold_tokens_lock(context, &server.name).await;
     let key = CredentialKey::OAuthTokens(server.name.clone());
     if let Some((store, secret)) = find_tokens(context, server).await? {
-        let mut tokens: Value = serde_json::from_str(secret.expose()).map_err(|error| {
-            Failure::protocol(format!(
-                "the stored tokens are not JSON: {error}",
-                error = chain_text(&error)
-            ))
-        })?;
+        let name = server.name.as_str();
+        let mut tokens: Value = serde_json::from_str(secret.expose())
+            .map_err(|error| not_json(name).caused_by(&error))?;
         let required = scopes::union(&scopes::list(tokens.get(items::REQUIRED_SCOPES)), scopes);
         tokens[items::REQUIRED_SCOPES] = json!(required);
-        let secret = items::to_secret("tokens", &tokens)
-            .map_err(|error| Failure::protocol(chain_text(&error)))?;
+        let secret =
+            items::to_secret("tokens", &tokens).map_err(|error| tokens_failure(name, &error))?;
         let saved = key.clone();
         let started = std::time::Instant::now();
         let result = secrets::call(context, &store, move |store| store.save(&saved, &secret)).await;
         if let Some(timer) = credentials_timer(context) {
             timer(started.elapsed());
         }
-        result.map_err(|error| secrets::store_failure(&error))?;
+        result.map_err(|error| {
+            let message = format!("ncp cannot store the tokens of the server {}", code(name));
+            secrets::store_failure_of(&error, message, []).about(name)
+        })?;
         context.ui.debug(
             Some(server.name.as_str()),
             &format!("kept the scopes {} for the next login", required.join(" ")),
@@ -695,7 +769,7 @@ impl TokenPlaces {
             timings
                 .update(|record| super::timings::add(&mut record.credentials, started.elapsed()));
         }
-        found.map_err(|failure| failure.server(server.name.as_str()))
+        found
     }
 
     async fn search(
@@ -703,40 +777,54 @@ impl TokenPlaces {
         context: &Context<'_>,
         server: &Server,
     ) -> Result<Option<FoundTokens>, Failure> {
+        let name = server.name.as_str();
         let key = CredentialKey::OAuthTokens(server.name.clone());
+        let read_failure = |error: &crate::store::StoreError, place| {
+            let message = format!(
+                "ncp cannot read the OAuth tokens of the server {} from {}",
+                code(name),
+                secrets::place_text(place)
+            );
+            match error {
+                crate::store::StoreError::Interrupted => session::interrupted(Some(name)),
+                _ => secrets::store_failure_of(error, message, []).about(name),
+            }
+        };
         if let Some(native) = self.native.clone() {
             let wanted = key.clone();
             match secrets::call(context, &native, move |store| store.load(&wanted)).await {
                 Ok(Some(secret)) => return Ok(Some((native, secret))),
                 Ok(None) => {}
-                Err(crate::store::StoreError::Interrupted) => {
-                    return Err(session::interrupted(None));
-                }
                 Err(error) if secrets::store_is_down(&error) => {
+                    if let crate::store::StoreError::Interrupted = error {
+                        return Err(session::interrupted(Some(name)));
+                    }
                     self.native = None;
                     self.down = Some(error);
                 }
-                Err(error) => return Err(secrets::store_failure(&error)),
+                Err(error) => return Err(read_failure(&error, CredentialPlace::Native)),
             }
         }
         let file = self.file.clone();
         let found = secrets::call(context, &file, move |store| store.load(&key))
             .await
-            .map_err(|error| secrets::store_failure(&error))?;
+            .map_err(|error| read_failure(&error, CredentialPlace::File))?;
         match (found, &self.down) {
             (Some(secret), _) => Ok(Some((file, secret))),
-            (None, Some(crate::store::StoreError::Interrupted)) => Err(session::interrupted(None)),
+            (None, Some(crate::store::StoreError::Interrupted)) => {
+                Err(session::interrupted(Some(name)))
+            }
             (None, Some(error)) => Err(Failure::new(
                 Exit::Auth,
                 format!(
-                    "the file has no tokens, and the native store gave none: {error}",
-                    error = chain_text(&error)
+                    "The credential file has no OAuth tokens of the server {}, and the native store gave none",
+                    code(name)
                 ),
             )
-            .hint(format!(
-                "ncp auth login {} --credential-store file",
-                super::render::shell_word(server.name.as_str())
-            ))),
+            .about(name)
+            .caused_by(error)
+            .with_hints(super::fixes::store_hints(error))
+            .hint(file_login_hint(name))),
             (None, None) => Ok(None),
         }
     }
@@ -838,12 +926,13 @@ async fn remove_old_tokens(
         Err(crate::store::StoreError::Interrupted) => {
             return Err(session::interrupted(Some(name)));
         }
-        Err(error) => context.ui.warning(
-            Some(name),
-            &format!(
-                "cannot remove the old tokens of the other place: {error}",
-                error = chain_text(&error)
-            ),
+        Err(error) => context.ui.warn(
+            &Warning::new(format!(
+                "ncp cannot remove the old tokens of the server {} from the other store",
+                code(name)
+            ))
+            .about(name)
+            .caused_by(&error),
         ),
     }
     Ok(())
@@ -882,23 +971,35 @@ async fn client_request(
         move |store| store.load(&key)
     })
     .await
-    .map_err(|error| secrets::store_failure(&error))?
+    .map_err(|error| {
+        let message = format!(
+            "ncp cannot read the OAuth client of the server {}",
+            code(name)
+        );
+        secrets::store_failure_of(&error, message, []).about(name)
+    })?
     .map(|secret| ClientItem::from_secret(&secret))
     .transpose()
-    .map_err(|error| Failure::protocol(chain_text(&error)))?;
+    .map_err(|error| tokens_failure(name, &error))?;
     let client = if let Some(item) = stored.filter(|item| item.is_for(&issuer)) {
         item
     } else {
         if metadata.registration_endpoint.is_none() {
             return Err(no_registration(name, metadata));
         }
-        let item = register(manager, &issuer, redirect, scopes).await?;
+        let item = register(manager, name, &issuer, redirect, scopes).await?;
         let secret = item
             .to_secret()
-            .map_err(|error| Failure::protocol(chain_text(&error)))?;
+            .map_err(|error| tokens_failure(name, &error))?;
         secrets::call(context, store, move |store| store.save(&key, &secret))
             .await
-            .map_err(|error| secrets::store_failure(&error))?;
+            .map_err(|error| {
+                let message = format!(
+                    "ncp cannot store the OAuth client of the server {}",
+                    code(name)
+                );
+                secrets::store_failure_of(&error, message, []).about(name)
+            })?;
         context.ui.debug(
             Some(name),
             &format!("registered the client {} at {issuer}", item.client_id),
@@ -923,11 +1024,16 @@ fn registration_page(metadata: &AuthorizationMetadata) -> Option<String> {
         .map(String::from)
 }
 
+// "Register a client at `I`." and, when it is safe (B63), the page that
+// tells how.
 fn register_there(metadata: &AuthorizationMetadata) -> String {
-    let issuer = issuer_of(metadata);
+    let issuer = code(&issuer_of(metadata));
     match registration_page(metadata) {
-        Some(page) => format!("register a client at {issuer} (see {page})"),
-        None => format!("register a client at {issuer}"),
+        Some(page) => format!(
+            "Register a client at {issuer}. The page {} tells how.",
+            code(&page)
+        ),
+        None => format!("Register a client at {issuer}."),
     }
 }
 
@@ -935,13 +1041,16 @@ fn no_registration(name: &str, metadata: &AuthorizationMetadata) -> Failure {
     Failure::new(
         Exit::Auth,
         format!(
-            "the authorization server {} does not register clients, and the entry names no client",
-            issuer_of(metadata)
+            "The authorization server {} does not register clients, and the entry of the server {} names no client",
+            code(&issuer_of(metadata)),
+            code(name)
         ),
     )
+    .about(name)
     .hint(format!(
-        "{}, then set \"clientId\", \"clientSecret\" and \"issuer\" in the \"oauth\" object of {name}",
-        register_there(metadata)
+        "{} Then set `clientId`, `clientSecret` and `issuer` in the `oauth` object of the server {}.",
+        register_there(metadata),
+        code(name)
     ))
 }
 
@@ -963,30 +1072,34 @@ fn check_issuer(
         ""
     };
     let keys = if client.secret().is_some() {
-        "\"clientId\", \"clientSecret\" and \"issuer\""
+        "`clientId`, `clientSecret` and `issuer`"
     } else {
-        "\"clientId\" and \"issuer\""
+        "`clientId` and `issuer`"
     };
+    let object = format!("the `oauth` object of the server {}", code(name));
     let moved = if metadata.registration_endpoint.is_some() {
         format!(
-            "remove {keys} from the \"oauth\" object of {name}, then run: ncp auth login {name}"
+            "If the server moved on purpose, remove {keys} from {object}. Then run `ncp auth login {}`.",
+            super::render::shell_word(name)
         )
     } else {
         format!(
-            "{}, then change {keys} in the \"oauth\" object of {name}",
+            "If the server moved on purpose, register a client there. {} Then change {keys} in {object}.",
             register_there(metadata)
         )
     };
     Err(Failure::new(
         Exit::Auth,
         format!(
-            "ncp stopped on purpose: the server names the authorization server {actual}, and the entry names {expected}.{not_sent}"
+            "ncp stopped the login to the server {} on purpose. The server names the authorization server {}, and the entry names {}.{not_sent}",
+            code(name),
+            code(&actual),
+            code(expected)
         ),
     )
-    .hint(format!(
-        "if the server moved on purpose, {moved}; if not, keep the configuration and tell the owner of the server"
-    ))
-    .server(name))
+    .about(name)
+    .hint(moved)
+    .hint("If you did not expect the move, tell the owner of the server. Do not change the entry."))
 }
 
 // For an entry with a client secret and no issuer, the failure names the
@@ -1039,7 +1152,7 @@ async fn with_server_issuer(
         return failure;
     };
     let limit = ISSUER_LOOKUP_LIMIT.min(context.request_limit / 2);
-    match tokio::time::timeout(limit, discover(&manager, None)).await {
+    match tokio::time::timeout(limit, discover(&manager, None, name)).await {
         // The issuer of the server is the same fix as the general hint,
         // with the value. Thus it replaces that hint.
         Ok(Ok(metadata)) => {
@@ -1057,6 +1170,7 @@ async fn with_server_issuer(
 
 async fn register(
     manager: &mut AuthorizationManager,
+    server: &str,
     issuer: &str,
     redirect: &RedirectUri,
     scopes: &[String],
@@ -1065,7 +1179,7 @@ async fn register(
     let config = manager
         .register_client(CLIENT_NAME, &redirect.to_string(), &scope_refs)
         .await
-        .map_err(|error| auth_failure("OAuth client registration", &error))?;
+        .map_err(|error| auth_failure("OAuth client registration", server, &error))?;
     Ok(ClientItem {
         issuer: issuer.to_string(),
         client_id: config.client_id,
@@ -1140,14 +1254,11 @@ async fn redirect_of(
             let _ = stream.write_all(page("200 OK", message).as_bytes()).await;
         }
         Err(error) if error.is_for_this_login() => {
-            let message = format!("The login failed: {error}.", error = chain_text(&error));
+            let message = format!("The login failed. {error}.");
             let _ = stream.write_all(page("200 OK", &message).as_bytes()).await;
         }
         Err(error) => {
-            let message = format!(
-                "This redirect is not for the login that waits: {error}.",
-                error = chain_text(&error)
-            );
+            let message = format!("This redirect is not for the login that waits. {error}.");
             let _ = stream
                 .write_all(page("400 Bad Request", &message).as_bytes())
                 .await;
@@ -1209,6 +1320,7 @@ async fn wait_for_redirect(
     redirect: &RedirectUri,
     expected: &callback::Expected,
     read_stdin: bool,
+    server: &str,
 ) -> Result<callback::Callback, Failure> {
     let from_stdin = async {
         if !read_stdin {
@@ -1225,7 +1337,14 @@ async fn wait_for_redirect(
         result = from_listener(listener, redirect, expected) => result,
         result = from_stdin => result,
     };
-    result.map_err(|error| Failure::new(Exit::Auth, chain_text(&error)))
+    result.map_err(|error| {
+        Failure::new(
+            Exit::Auth,
+            format!("The login to the server {} failed", code(server)),
+        )
+        .about(server)
+        .caused_by(&error)
+    })
 }
 
 async fn logout(context: &Context<'_>, word: &str) -> Result<(), Failure> {
@@ -1303,13 +1422,14 @@ pub(super) async fn remove_bound_items(
             Ok(Found::Nothing) => {}
             Ok(Found::Removed) => removal.removed.push(place),
             Ok(Found::Kept) => removal.kept = true,
-            Err(error) => context.ui.warning(
-                Some(server.as_str()),
-                &format!(
-                    "ncp cannot check {} for tokens, and they stay: {error}",
+            Err(error) => context.ui.warn(
+                &Warning::new(format!(
+                    "ncp cannot check {} for tokens of the server {}, so the tokens stay",
                     secrets::place_text(place),
-                    error = chain_text(&error)
-                ),
+                    code(server.as_str())
+                ))
+                .about(server.as_str())
+                .caused_by(&error),
             ),
         }
     }
@@ -1364,27 +1484,48 @@ async fn remove_everywhere(
             match secrets::call(context, &native, move |store| store.delete(&key)).await {
                 Ok(true) => removed.push(CredentialPlace::Native),
                 Ok(false) => {}
-                Err(error) => return Err(secrets::store_failure(&error).server(name)),
+                Err(error) => return Err(delete_failure(name, CredentialPlace::Native, &error)),
             }
         }
         Err(crate::store::StoreError::Unavailable(_)) => {}
-        Err(error) => context.ui.warning(
-            Some(name),
-            &format!(
-                "the native store gave no answer: {error}",
-                error = chain_text(&error)
+        Err(error) => context.ui.warn(&Warning::from(secrets::store_failure_of(
+            &error,
+            format!(
+                "ncp cannot open the native store to delete the tokens of the server {}",
+                code(name)
             ),
-        ),
+            [],
+        ))),
     }
     let file = secrets::file(context);
     let key = key.clone();
     if secrets::call(context, &file, move |store| store.delete(&key))
         .await
-        .map_err(|error| secrets::store_failure(&error).server(name))?
+        .map_err(|error| delete_failure(name, CredentialPlace::File, &error))?
     {
         removed.push(CredentialPlace::File);
     }
     Ok(removed)
+}
+
+fn delete_failure(name: &str, place: CredentialPlace, error: &crate::store::StoreError) -> Failure {
+    let message = format!(
+        "ncp cannot delete the tokens of the server {} from {}",
+        code(name),
+        secrets::place_text(place)
+    );
+    match error {
+        crate::store::StoreError::Interrupted => session::interrupted(Some(name)),
+        _ => secrets::store_failure_of(error, message, []).about(name),
+    }
+}
+
+fn not_json(name: &str) -> Failure {
+    Failure::protocol(format!(
+        "The stored OAuth tokens of the server {} are not JSON",
+        code(name)
+    ))
+    .about(name)
 }
 
 async fn status(context: &Context<'_>, word: Option<&str>) -> Result<(), Failure> {
@@ -1406,14 +1547,10 @@ async fn status(context: &Context<'_>, word: Option<&str>) -> Result<(), Failure
     let mut rows = Vec::new();
     for server in servers {
         let tokens = match places.find(context, server).await? {
-            Some((_, secret)) => Some(serde_json::from_str::<Value>(secret.expose()).map_err(
-                |error| {
-                    Failure::protocol(format!(
-                        "the stored tokens are not JSON: {error}",
-                        error = chain_text(&error)
-                    ))
-                },
-            )?),
+            Some((_, secret)) => Some(
+                serde_json::from_str::<Value>(secret.expose())
+                    .map_err(|error| not_json(server.name.as_str()).caused_by(&error))?,
+            ),
             None => None,
         };
         rows.push((server.name.to_string(), items::status(tokens.as_ref())));
@@ -1471,7 +1608,7 @@ mod tests {
         let server = config.server("web").unwrap();
         let resource = binding_failure(server, &items::BindingMismatch::Resource);
         assert!(
-            resource.message().contains("another URL"),
+            resource.message().contains("on purpose"),
             "{}",
             resource.message()
         );
@@ -1496,10 +1633,10 @@ mod tests {
 
     #[test]
     fn authorization_server_must_use_https_except_on_loopback() {
-        assert!(check_https(&metadata("https://as.test")).is_ok());
-        assert!(check_https(&metadata("http://127.0.0.1:9")).is_ok());
-        assert!(check_https(&metadata("http://localhost:9")).is_ok());
-        let failure = check_https(&metadata("http://as.test")).unwrap_err();
+        assert!(check_https("web", &metadata("https://as.test")).is_ok());
+        assert!(check_https("web", &metadata("http://127.0.0.1:9")).is_ok());
+        assert!(check_https("web", &metadata("http://localhost:9")).is_ok());
+        let failure = check_https("web", &metadata("http://as.test")).unwrap_err();
         assert!(
             failure.message().contains("http://as.test/authorize"),
             "{failure:?}"

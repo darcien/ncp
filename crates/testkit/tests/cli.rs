@@ -1665,7 +1665,7 @@ async fn login_stops_before_the_browser_when_the_server_names_another_issuer() {
     .await;
     let run = home.run(&LOGIN_TO_FILE);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    let error = run.old_error();
+    let error = run.error();
     let message = error["message"].as_str().unwrap();
     assert!(message.contains("on purpose"), "{message}");
     assert!(message.contains(&auth.issuer()) && message.contains("https://as.example"));
@@ -1673,9 +1673,15 @@ async fn login_stops_before_the_browser_when_the_server_names_another_issuer() {
         message.contains("did not send the client secret"),
         "{message}"
     );
-    let hint = common::hints(&error)[0].clone();
-    assert!(hint.contains("https://as.test/register-a-client"), "{hint}");
-    assert!(hint.contains("tell the owner of the server"), "{hint}");
+    let hints = common::hints(&error);
+    assert!(
+        hints[0].contains("https://as.test/register-a-client"),
+        "{hints:?}"
+    );
+    assert!(
+        hints[1].contains("tell the owner of the server"),
+        "{hints:?}"
+    );
     let record = auth.record();
     assert_eq!((record.authorize_calls, record.code_grants), (0, 0));
 }
@@ -1685,9 +1691,10 @@ async fn login_with_no_registration_and_no_client_names_the_registration_page() 
     let (_auth, _fixture, home) = pre_registered("login-no-dcr", |_| json!({})).await;
     let run = home.run(&LOGIN_TO_FILE);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    let hint = run.hints()[0].clone();
+    let error = run.error();
+    let hint = common::hints(&error)[0].clone();
     assert!(hint.contains("https://as.test/register-a-client"), "{hint}");
-    assert!(hint.contains("\"clientSecret\""), "{hint}");
+    assert!(hint.contains("`clientSecret`"), "{hint}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1764,11 +1771,13 @@ async fn login_reports_a_refusal_of_the_authorization_server() {
     let home = oauth_home("login-deny", &fixture.url);
     let run = home.run(&LOGIN_TO_FILE);
     assert_eq!(run.code(), 4, "{}", run.describe());
+    let error = run.error();
+    assert_eq!(error["message"], "The login to the server `web` failed");
     assert!(
-        run.old_error()["message"]
+        error["causes"][0]
             .as_str()
             .unwrap()
-            .contains("access_denied"),
+            .contains("`access_denied`"),
         "{}",
         run.describe()
     );
@@ -1887,7 +1896,11 @@ async fn tool_list_sends_the_stored_token_after_a_login() {
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
     // The test has no native store, so a login can go only to the file.
-    assert_eq!(run.hints()[0], "ncp auth login web --credential-store file");
+    assert_eq!(
+        run.error()["hints"],
+        json!([{"message": "To store the tokens in the credential file, run \
+            `ncp auth login web --credential-store file`"}])
+    );
     assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
@@ -1938,15 +1951,15 @@ async fn stored_token_for_another_server_url_is_not_sent() {
     });
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    let error = run.old_error();
+    let error = run.error();
     let message = error["message"].as_str().unwrap();
     assert!(
         message.contains("did not send the stored token"),
         "{message}"
     );
     // A stored URL can hold an old secret, so it does not show.
-    assert!(!message.contains("other.example"), "{message}");
-    assert_eq!(common::hints(&error)[0], "ncp auth login web");
+    assert!(!run.stderr_text().contains("other.example"), "{message}");
+    assert_eq!(error["hints"][0]["command"], "ncp auth login web");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2337,8 +2350,8 @@ async fn login_that_gets_no_redirect_stops_at_the_time_limit() {
     assert_eq!(run.code(), 3, "{}", run.describe());
     assert!(started.elapsed() < std::time::Duration::from_secs(10));
     assert_eq!(
-        run.hints()[0],
-        "give a longer limit with --timeout <SECONDS>"
+        run.error()["hints"],
+        json!([{"message": "To wait longer, run the command again with `--timeout <SECONDS>`"}])
     );
 }
 

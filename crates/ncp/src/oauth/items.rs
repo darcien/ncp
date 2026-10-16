@@ -101,11 +101,17 @@ impl fmt::Debug for ClientItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("the stored {item} item is not valid JSON of ncp: {reason}")]
+#[error("The stored {item} item is not valid JSON of ncp")]
 pub struct ItemError {
     pub item: &'static str,
-    pub reason: String,
+    #[source]
+    pub reason: ItemReason,
 }
+
+/// The text of the JSON parser.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct ItemReason(pub String);
 
 impl ClientItem {
     /// The item as a secret: compact JSON, because the macOS Keychain
@@ -124,7 +130,7 @@ impl ClientItem {
     pub fn from_secret(secret: &Secret) -> Result<Self, ItemError> {
         serde_json::from_str(secret.expose()).map_err(|error| ItemError {
             item: "client",
-            reason: error.to_string(),
+            reason: ItemReason(error.to_string()),
         })
     }
 
@@ -146,7 +152,7 @@ pub fn to_secret(item: &'static str, value: &impl Serialize) -> Result<Secret, I
         .map(Secret::new)
         .map_err(|error| ItemError {
             item,
-            reason: error.to_string(),
+            reason: ItemReason(error.to_string()),
         })
 }
 
@@ -242,6 +248,15 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn error_texts_follow_the_message_rules() {
+        let error = ItemError {
+            item: "tokens",
+            reason: ItemReason("x".into()),
+        };
+        crate::style::assert_style(&[error.to_string()]);
+    }
 
     #[test]
     fn client_item_round_trips_as_compact_json_and_hides_the_secret_in_debug() {
