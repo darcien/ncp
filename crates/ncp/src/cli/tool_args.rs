@@ -3,7 +3,7 @@
 //! object, and the text of a file comes from the shell, for example
 //! `key="$(cat FILE)"` (design B57).
 
-use super::outcome::chain_text;
+use crate::text::code;
 use std::collections::BTreeSet;
 
 use serde_json::Value;
@@ -31,20 +31,18 @@ pub enum Input {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ArgumentError {
-    #[error("argument {0:?} is not key=value, a JSON object, or -")]
+    #[error("The argument {} is not `key=value`, a JSON object, or `-`", code(.0))]
     NotPair(String),
-    #[error(
-        "argument {0:?} is key:=json, which ncp does not read; give the arguments as one JSON object, for example '{{\"n\": 12}}'"
-    )]
+    #[error("The argument {} is `key:=json`, which ncp does not read", code(.0))]
     JsonPair(String),
-    #[error("argument {0:?} has an empty key")]
+    #[error("The argument {} has an empty key", code(.0))]
     EmptyKey(String),
-    #[error("key {0:?} is given more than one time")]
+    #[error("The key {} is given more than one time", code(.0))]
     Repeated(String),
-    #[error("{0} must be the only argument")]
+    #[error("An argument of {0} must be the only argument")]
     NotAlone(&'static str),
-    #[error("the arguments are not a JSON object: {0}")]
-    NotObject(String),
+    #[error("The arguments are not a JSON object")]
+    NotObject(#[source] crate::config::ParserText),
 }
 
 /// # Errors
@@ -57,7 +55,7 @@ pub fn parse(words: &[String]) -> Result<Input, ArgumentError> {
         [only] if only.starts_with('{') => object(only).map(Input::Object),
         _ => {
             if words.iter().any(|word| word == "-") {
-                return Err(ArgumentError::NotAlone("-"));
+                return Err(ArgumentError::NotAlone("`-`"));
             }
             if words.iter().any(|word| word.starts_with('{')) {
                 return Err(ArgumentError::NotAlone("a JSON object"));
@@ -73,8 +71,12 @@ pub fn parse(words: &[String]) -> Result<Input, ArgumentError> {
 pub fn object(text: &str) -> Result<JsonObject, ArgumentError> {
     match serde_json::from_str::<Value>(text) {
         Ok(Value::Object(map)) => Ok(map),
-        Ok(_) => Err(ArgumentError::NotObject("it is another JSON value".into())),
-        Err(error) => Err(ArgumentError::NotObject(chain_text(&error))),
+        Ok(_) => Err(ArgumentError::NotObject(crate::config::ParserText(
+            "The text is another JSON value".into(),
+        ))),
+        Err(error) => Err(ArgumentError::NotObject(crate::config::ParserText(
+            error.to_string(),
+        ))),
     }
 }
 
@@ -242,6 +244,19 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn error_texts_follow_the_message_rules() {
+        let texts = [
+            ArgumentError::NotPair("x".into()).to_string(),
+            ArgumentError::JsonPair("n:=1".into()).to_string(),
+            ArgumentError::EmptyKey("=x".into()).to_string(),
+            ArgumentError::Repeated("k".into()).to_string(),
+            ArgumentError::NotAlone("`-`").to_string(),
+            ArgumentError::NotObject(crate::config::ParserText("x".into())).to_string(),
+        ];
+        crate::style::assert_style(&texts);
+    }
+
     fn words(list: &[&str]) -> Vec<String> {
         list.iter().map(ToString::to_string).collect()
     }
@@ -318,7 +333,7 @@ mod tests {
     fn json_object_and_stdin_marker_must_be_alone() {
         assert_eq!(
             parse(&words(&["-", "a=1"])),
-            Err(ArgumentError::NotAlone("-"))
+            Err(ArgumentError::NotAlone("`-`"))
         );
         assert_eq!(
             parse(&words(&["{}", "a=1"])),

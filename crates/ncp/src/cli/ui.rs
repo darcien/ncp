@@ -10,7 +10,7 @@ use std::{
 
 use serde_json::{Value, json};
 
-use super::outcome::{Diagnostic, Failure, Warning};
+use super::outcome::{Diagnostic, Failure, Hint, Warning};
 use crate::client::stdio::ServerLog;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,9 +98,11 @@ impl Ui {
         }
     }
 
-    pub fn hint(self, server: Option<&str>, message: &str) {
+    /// A standalone hint. Its message names the server, so the text has
+    /// no prefix.
+    pub fn hint(self, server: Option<&str>, hint: &Hint) {
         if self.verbosity > Verbosity::Quiet {
-            self.note(&note("hint", self.format, server, message));
+            self.note(&hint_text(self.format, server, hint));
         }
     }
 
@@ -385,6 +387,25 @@ pub fn note(kind: &str, format: Format, server: Option<&str>, message: &str) -> 
                 body["server"] = json!(server);
             }
             json_line(&json!({ kind: body }))
+        }
+    }
+}
+
+/// A standalone hint. Text: `hint: message`. JSON: `{"hint": {"message",
+/// "server", "command"}}`, with `server` and `command` only when present.
+#[must_use]
+pub fn hint_text(format: Format, server: Option<&str>, hint: &Hint) -> String {
+    match format {
+        Format::Text => format!("hint: {}\n", one_line(hint.message())),
+        Format::Json => {
+            let mut body = json!({"message": one_line(hint.message())});
+            if let Some(server) = server {
+                body["server"] = json!(server);
+            }
+            if let Some(command) = hint.command() {
+                body["command"] = json!(command);
+            }
+            json_line(&json!({ "hint": body }))
         }
     }
 }

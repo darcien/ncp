@@ -86,6 +86,15 @@ impl Hint {
         Self::text(format!("To {goal}, run {}", code(command)))
     }
 
+    /// The hint with a sentence of fact before it (design rule 9).
+    #[must_use]
+    pub fn after(self, fact: &str) -> Self {
+        Self {
+            message: format!("{fact}. {}.", self.message),
+            ..self
+        }
+    }
+
     #[must_use]
     pub fn text(message: impl Into<String>) -> Self {
         Self {

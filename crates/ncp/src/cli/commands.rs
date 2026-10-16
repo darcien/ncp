@@ -1,7 +1,7 @@
 //! The commands. Each one reads its inputs, does its I/O, and gives its
 //! result to the UI. The pure parts are in the other modules.
 
-use std::{fmt::Write as _, io::IsTerminal};
+use std::io::IsTerminal;
 
 use clap::CommandFactory;
 use rmcp::{
@@ -13,7 +13,7 @@ use tokio::io::AsyncReadExt;
 
 use super::{
     args::{CallArgs, Cli, PromptCommand, ResourceCommand, ServerCommand, ToolCommand},
-    outcome::{Exit, Failure, Hint, chain_text},
+    outcome::{Exit, Failure, Hint, Warning},
     render,
     schema_check::{self, Outcome},
     session::{self, Context, Loaded},
@@ -25,6 +25,7 @@ use crate::{
     config::Server,
     list_cache,
     project::Trust,
+    text::code,
 };
 
 pub async fn server(context: &Context<'_>, command: ServerCommand) -> Result<(), Failure> {
@@ -71,13 +72,14 @@ async fn server_list(context: &Context<'_>) -> Result<(), Failure> {
     }
     let rows = list_rows(&loaded);
     if rows.is_empty() {
-        let path = loaded.path.display();
-        let message = if loaded.exists {
-            format!("no server is configured in {path}")
+        let path = code(&loaded.path.display().to_string());
+        let fact = if loaded.exists {
+            format!("{path} has no server")
         } else {
-            format!("no server is configured: {path} does not exist")
+            format!("{path} does not exist, so ncp has no server")
         };
-        context.ui.hint(None, &message);
+        let add = Hint::text("To add a server, run `ncp server add <SERVER> <URL>`");
+        context.ui.hint(None, &add.after(&fact));
     }
     let (servers, invalid) = render::rows_json(&rows);
     context.ui.result(
@@ -188,12 +190,16 @@ fn asked<T>(
     result: Result<T, Failure>,
 ) -> Result<T, Failure> {
     if connection.refused_a_question() {
+        let name = server.name.as_str();
         return Err(Failure::new(
             Exit::InputRequired,
-            "the server asked a question, and ncp cannot ask with no terminal",
+            format!(
+                "The server {} asked a question, and ncp cannot ask with no terminal",
+                code(name)
+            ),
         )
-        .server(server.name.as_str())
-        .hint("run the command in a terminal to answer the question"));
+        .about(name)
+        .hint("To answer the question, run the command in a terminal"));
     }
     result
 }
@@ -285,13 +291,12 @@ fn keep_tools(
                 tools: tools.to_vec(),
             };
             if let Err(error) = list_cache::save(&path, &cached) {
-                context.ui.warning(
-                    None,
-                    &format!(
-                        "cannot write the list cache {}: {error}",
-                        path.display(),
-                        error = chain_text(&error)
-                    ),
+                context.ui.warn(
+                    &Warning::new(format!(
+                        "ncp cannot write the list cache {}",
+                        code(&path.display().to_string())
+                    ))
+                    .caused_by(&error),
                 );
             }
         }
@@ -340,9 +345,16 @@ async fn tool_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
     };
     let name = server.name.as_str();
     if has_instructions {
+        let show = Hint::run(
+            "see the instructions",
+            format!("ncp server show {}", render::shell_word(name)),
+        );
         context.ui.hint(
             Some(name),
-            &format!("the server has instructions for clients: ncp server show {name}"),
+            &show.after(&format!(
+                "The server {} has instructions for clients",
+                code(name)
+            )),
         );
     }
     context.ui.result(
@@ -354,30 +366,49 @@ async fn tool_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
 
 fn find_tool(server: &str, tools: Vec<Tool>, name: &str) -> Result<Tool, Failure> {
     let near = super::near::nearest(name, tools.iter().map(|tool| tool.name.as_ref()))
-        .map(|near| format!("; did you mean {near:?}?"))
-        .unwrap_or_default();
-    let message = format!("the server has no tool {name:?}{near}");
+        .map(|near| Hint::text(format!("Did you mean {}?", code(near))));
     tools
         .into_iter()
         .find(|tool| tool.name == name)
         .ok_or_else(|| {
-            Failure::usage(message)
-                .server(server)
-                .hint(format!("ncp tool list {}", render::shell_word(server)))
+            Failure::usage(format!(
+                "The server {} has no tool {}",
+                code(server),
+                code(name)
+            ))
+            .about(server)
+            .with_hints(near.into_iter().chain([tools_hint(server)]))
         })
 }
 
-// The tool word, or the failure that names the fix.
+fn tools_hint(server: &str) -> Hint {
+    Hint::run(
+        "see the tools of the server",
+        format!("ncp tool list {}", render::shell_word(server)),
+    )
+}
+
+// The tool word, or the failure that names the fix (design B23).
 fn tool_word<'a>(server: &str, tool: Option<&'a str>) -> Result<&'a str, Failure> {
-    let missing = |message: String| {
-        Failure::usage(message).hint(format!("ncp tool list {}", render::shell_word(server)))
-    };
+    let missing = || Failure::usage("The command line has no tool name").hint(tools_hint(server));
     match tool {
-        None => Err(missing("missing tool name".into())),
-        Some(word) if word.contains('=') || word.starts_with('{') || word == "-" => Err(missing(
-            format!("missing tool name: {word:?} is a tool argument"),
-        )),
+        None => Err(missing()),
+        Some(word) if word.contains('=') || word.starts_with('{') || word == "-" => {
+            Err(missing().cause(format!("The word {} is a tool argument", code(word))))
+        }
         Some(word) => Ok(word),
+    }
+}
+
+// A word that is not a tool argument. The fix of `key:=json` was in the
+// text before, so it is a hint now.
+fn arguments_failure(error: &tool_args::ArgumentError) -> Failure {
+    let failure = Failure::usage("The tool arguments are not valid").caused_by(error);
+    match error {
+        tool_args::ArgumentError::JsonPair(_) => {
+            failure.hint("Give the arguments as one JSON object, for example `'{\"n\": 12}'`")
+        }
+        _ => failure,
     }
 }
 
@@ -413,7 +444,8 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
     let word = match (call.server.as_deref(), call.tool.as_deref(), call.help) {
         (None, _, true) | (Some(_), None, true) => return print_call_help(),
         (None, _, false) => {
-            return Err(Failure::usage("missing server name").hint("ncp server list"));
+            return Err(Failure::usage("The command line has no server name")
+                .hint(Hint::run("see the configured servers", "ncp server list")));
         }
         (Some(word), _, _) => word,
     };
@@ -445,7 +477,7 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
     let input = if call.help {
         Input::Pairs(Vec::new())
     } else {
-        tool_args::parse(&call.arguments).map_err(|error| Failure::usage(chain_text(&error)))?
+        tool_args::parse(&call.arguments).map_err(|error| arguments_failure(&error))?
     };
     let loaded = session::load(context, Some(word)).await?;
     let server = session::select(&loaded, word, context.ui)?;
@@ -591,7 +623,10 @@ async fn resource_list(context: &Context<'_>, word: &str) -> Result<(), Failure>
     let (resources, templates) = found.unwrap_or_else(|| {
         context.ui.hint(
             Some(name),
-            "the server offers no resources in its handshake",
+            &Hint::text(format!(
+                "The server {} offers no resources in its handshake",
+                code(name)
+            )),
         );
         (Vec::new(), Vec::new())
     });
@@ -614,9 +649,17 @@ fn named_failure(server: &Server, method: &str, error: &RequestError, list: &str
             if data.code == ErrorCode::INVALID_PARAMS
                 || data.code == ErrorCode::RESOURCE_NOT_FOUND =>
         {
-            Failure::usage(format!("{method}: the server refused it: {}", data.message))
-                .server(name)
-                .hint(format!("ncp {list} list {}", render::shell_word(name)))
+            Failure::usage(format!(
+                "The server {} refused {}",
+                code(name),
+                code(method)
+            ))
+            .about(name)
+            .cause(data.message.as_ref())
+            .hint(Hint::run(
+                &format!("see the {list}s of the server"),
+                format!("ncp {list} list {}", render::shell_word(name)),
+            ))
         }
         _ => session::request_failure(server, method, error),
     }
@@ -664,10 +707,10 @@ fn raw_contents(result: &Value) -> Result<Vec<u8>, Failure> {
         .unwrap_or_default();
     let [content] = contents else {
         return Err(Failure::usage(format!(
-            "the resource has {} contents, and text output gives one",
+            "The resource has {} contents, and text output shows only one",
             contents.len()
         ))
-        .hint("use --output-format json"));
+        .hint("To get all the contents, run the command again with `--output-format json`"));
     };
     if let Some(text) = content.get("text").and_then(Value::as_str) {
         return Ok(text.as_bytes().to_vec());
@@ -677,10 +720,7 @@ fn raw_contents(result: &Value) -> Result<Vec<u8>, Failure> {
         .and_then(Value::as_str)
         .unwrap_or_default();
     base64::Engine::decode(&base64::engine::general_purpose::STANDARD, blob).map_err(|error| {
-        Failure::protocol(format!(
-            "the server sent a blob that is not base64: {error}",
-            error = chain_text(&error)
-        ))
+        Failure::protocol("The server sent a blob that is not base64").caused_by(&error)
     })
 }
 
@@ -697,9 +737,12 @@ fn input_required(
         .result(|| format!("{}\n", render::pretty(&value)), || value.clone())?;
     Err(Failure::new(
         Exit::InputRequired,
-        format!("{what} asks for more input, and ncp cannot give it yet"),
+        format!(
+            "The server {} asks for more input for {what}, and ncp cannot give it yet",
+            code(server)
+        ),
     )
-    .server(server))
+    .about(server))
 }
 
 async fn prompt_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
@@ -718,9 +761,13 @@ async fn prompt_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
     })
     .await?
     .unwrap_or_else(|| {
-        context
-            .ui
-            .hint(Some(name), "the server offers no prompts in its handshake");
+        context.ui.hint(
+            Some(name),
+            &Hint::text(format!(
+                "The server {} offers no prompts in its handshake",
+                code(name)
+            )),
+        );
         Vec::new()
     });
     let prompts = serde_json::to_value(&prompts).unwrap_or(Value::Null);
@@ -733,12 +780,14 @@ async fn prompt_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
 
 // The arguments of a prompt: text only, as the spec gives them.
 fn prompt_arguments(words: &[String]) -> Result<JsonObject, Failure> {
-    match tool_args::parse(words).map_err(|error| Failure::usage(chain_text(&error)))? {
+    match tool_args::parse(words).map_err(|error| arguments_failure(&error))? {
         Input::Pairs(pairs) => Ok(pairs
             .into_iter()
             .map(|(key, text)| (key, Value::String(text)))
             .collect()),
-        _ => Err(Failure::usage("prompt arguments are key=value pairs")),
+        _ => Err(Failure::usage(
+            "Each argument of a prompt must be a `key=value` pair",
+        )),
     }
 }
 
@@ -796,17 +845,25 @@ fn call_failure(server: &Server, tool: &str, listed: bool, error: &RequestError)
             if data.code == ErrorCode::INVALID_PARAMS =>
         {
             let hint = if listed {
-                format!(
-                    "ncp tool show {} {}",
-                    render::shell_word(name),
-                    render::shell_word(tool)
+                Hint::run(
+                    "see the arguments of the tool",
+                    format!(
+                        "ncp tool show {} {}",
+                        render::shell_word(name),
+                        render::shell_word(tool)
+                    ),
                 )
             } else {
-                format!("ncp tool list {}", render::shell_word(name))
+                tools_hint(name)
             };
-            Failure::usage(format!("the server refused the call: {}", data.message))
-                .server(name)
-                .hint(hint)
+            Failure::usage(format!(
+                "The server {} refused the call of the tool {}",
+                code(name),
+                code(tool)
+            ))
+            .about(name)
+            .cause(data.message.as_ref())
+            .hint(hint)
         }
         _ => session::request_failure(server, "tools/call", error),
     }
@@ -816,18 +873,18 @@ async fn read_stdin_object(context: &Context<'_>) -> Result<JsonObject, Failure>
     if std::io::stdin().is_terminal() {
         context.ui.hint(
             None,
-            "ncp reads the JSON arguments from stdin; end the input with Ctrl-D",
+            &Hint::text("ncp reads the JSON arguments from stdin. To end the input, push Ctrl-D."),
         );
     }
     let mut text = String::new();
     let mut stdin = tokio::io::stdin();
     tokio::select! {
         read = stdin.read_to_string(&mut text) => read.map_err(|error| {
-            Failure::usage(format!("cannot read the arguments from stdin: {error}", error = chain_text(&error)))
+            Failure::usage("ncp cannot read the arguments from stdin").caused_by(&error)
         })?,
         () = context.cancel.cancelled() => return Err(session::interrupted(None)),
     };
-    tool_args::object(&text).map_err(|error| Failure::usage(chain_text(&error)))
+    tool_args::object(&text).map_err(|error| arguments_failure(&error))
 }
 
 fn check_arguments(
@@ -839,12 +896,13 @@ fn check_arguments(
     match schema_check::check(&tool.input_schema, arguments) {
         Outcome::Valid => Ok(()),
         Outcome::SchemaNotUsable(reason) => {
-            context.ui.warning(
-                Some(server),
-                &format!(
-                    "ncp cannot use the input schema of tool {} ({reason}); the arguments are not checked",
-                    tool.name
-                ),
+            context.ui.warn(
+                &Warning::new(format!(
+                    "ncp cannot use the input schema of the tool {}. ncp does not check the arguments.",
+                    code(&tool.name)
+                ))
+                .about(server)
+                .cause(reason),
             );
             Ok(())
         }
@@ -863,22 +921,30 @@ fn check_arguments(
             failed.dedup();
             let failed: Vec<&str> = failed.iter().map(String::as_str).collect();
             let example = render::example_call_with(server, tool, &failed);
-            let problems = problems.iter().fold(String::new(), |mut text, problem| {
+            let problems = problems.iter().map(|problem| {
                 let path = if problem.path.is_empty() {
                     "/"
                 } else {
                     &problem.path
                 };
-                let _ = write!(text, "\n  {path}: {}", problem.message);
-                text
+                format!("{path}: {}", problem.message)
             });
-            Err(Failure::usage(format!(
-                "the arguments do not match the input schema of tool {}:{problems}\nExpected arguments:\n{}",
-                tool.name,
-                render::properties(&tool.input_schema).trim_end()
+            let expected = std::iter::once("Expected arguments:".to_string()).chain(
+                render::properties(&tool.input_schema)
+                    .lines()
+                    .map(str::to_string)
+                    .collect::<Vec<_>>(),
+            );
+            let failure = Failure::usage(format!(
+                "The arguments do not match the input schema of the tool {} of the server {}:",
+                code(&tool.name),
+                code(server)
             ))
-            .server(server)
-            .hint(example))
+            .about(server);
+            Err(problems
+                .chain(expected)
+                .fold(failure, Failure::data)
+                .hint(Hint::run_text("call the tool", &example)))
         }
     }
 }
@@ -889,7 +955,8 @@ fn print_response(
     tool: &str,
     response: CallToolResponse,
 ) -> Result<(), Failure> {
-    let failure = |exit: Exit, message: String| Err(Failure::new(exit, message).server(server));
+    let failure = |exit: Exit, message: String| Err(Failure::new(exit, message).about(server));
+    let tool = code(tool);
     match response {
         CallToolResponse::Complete(result) => {
             let value = serde_json::to_value(&result).unwrap_or(Value::Null);
@@ -897,7 +964,13 @@ fn print_response(
                 .ui
                 .result(|| render::call_result(&value), || value.clone())?;
             if result.is_error == Some(true) {
-                failure(Exit::Tool, format!("tool {tool} returned an error"))
+                failure(
+                    Exit::Tool,
+                    format!(
+                        "The tool {tool} of the server {} returned an error",
+                        code(server)
+                    ),
+                )
             } else {
                 Ok(())
             }
@@ -909,13 +982,19 @@ fn print_response(
                 .result(|| format!("{}\n", render::pretty(&value)), || value.clone())?;
             failure(
                 Exit::InputRequired,
-                format!("tool {tool} asks for more input, and ncp cannot give it yet"),
+                format!(
+                    "The tool {tool} of the server {} asks for more input, and ncp cannot give it yet",
+                    code(server)
+                ),
             )
         }
         // `ncp` asks for no task, so a task result is a protocol error.
         _ => failure(
             Exit::Protocol,
-            format!("tool {tool} gave a result that ncp did not ask for"),
+            format!(
+                "The tool {tool} of the server {} gave a result that ncp did not ask for",
+                code(server)
+            ),
         ),
     }
 }

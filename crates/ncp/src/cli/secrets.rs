@@ -1206,7 +1206,7 @@ async fn list(context: &Context<'_>) -> Result<(), Failure> {
     warn_unlisted(context, &stored.failed);
     let rows = secret_rows(stored.items, &servers);
     if rows.iter().any(|row| row.servers.is_empty()) {
-        context.ui.hint(None, UNUSED_SCOPE);
+        context.ui.hint(None, &Hint::text(UNUSED_SCOPE));
     }
     context.ui.result(
         || {
@@ -1370,7 +1370,7 @@ async fn chosen(
                 .hint(list_hint())),
                 (false, _) => {
                     warn_unlisted(context, &failed);
-                    context.ui.hint(None, UNUSED_SCOPE);
+                    context.ui.hint(None, &Hint::text(UNUSED_SCOPE));
                     Ok(choice(unused, Some(config_file)))
                 }
             }

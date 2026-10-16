@@ -13,13 +13,14 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     auth::OpenBrowser,
-    outcome::{Exit, Failure, Hint, chain_text},
+    outcome::{Exit, Failure, Hint, Warning},
     session::{self, Context},
     ui::{self, Ui},
 };
 use crate::{
     client::{Continuation, Elicitor},
     elicit::{self, Action, Request},
+    text::code,
 };
 
 /// The most rounds of one request. A server that asks again and again
@@ -65,6 +66,10 @@ struct Asker {
     open_browser: OpenBrowser,
     cancel: CancellationToken,
     limit: Duration,
+    /// The warnings that showed. An elicitation can run 8 rounds and give
+    /// the same warning in each round, so each warning shows one time
+    /// (design rule 20).
+    warned: std::sync::Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
 }
 
 // Text of the server in a block, with escapes. Each line after the first gets
@@ -86,6 +91,19 @@ impl Asker {
             open_browser: context.open_browser,
             cancel: context.cancel.clone(),
             limit: context.request_limit,
+            warned: std::sync::Arc::default(),
+        }
+    }
+
+    fn warn(&self, warning: Warning) {
+        let warning = warning.about(self.server.as_str());
+        let key = format!("{warning:?}");
+        let new = self
+            .warned
+            .lock()
+            .map_or(true, |mut warned| warned.insert(key));
+        if new {
+            self.ui.warn(&warning);
         }
     }
 
@@ -204,12 +222,12 @@ impl Asker {
         let request = match elicit::parse(params) {
             Ok(request) => request,
             Err(error) => {
-                self.ui.warning(
-                    Some(server),
-                    &format!(
-                        "cannot ask: {error}; ncp declines",
-                        error = chain_text(&error)
-                    ),
+                self.warn(
+                    Warning::new(format!(
+                        "The server {} sent a question that ncp cannot show. ncp declines.",
+                        code(server)
+                    ))
+                    .caused_by(&error),
                 );
                 return Ok(Action::Decline);
             }
@@ -234,24 +252,24 @@ impl Asker {
                 let url = match elicit::safe_url(&url) {
                     Ok(url) => url,
                     Err(reason) => {
-                        self.ui.warning(
-                            Some(server),
-                            &format!(
-                                "the server asks to open {}: {reason}; ncp declines",
-                                single(&url)
-                            ),
+                        self.warn(
+                            Warning::new(format!(
+                                "The server {} asks ncp to open {}. ncp declines.",
+                                code(server),
+                                code(&url)
+                            ))
+                            .cause(reason),
                         );
                         return Ok(Action::Decline);
                     }
                 };
                 let host = url.host_str().unwrap_or_default();
                 if has_punycode_label(host) {
-                    self.ui.warning(
-                        Some(server),
-                        &format!(
-                            "the host {host} has a Punycode label (xn--): its name can look like another name"
-                        ),
-                    );
+                    self.warn(Warning::new(format!(
+                        "The page of the server {} is on the host {}. This host has a Punycode label (`xn--`), so its name can look like another name.",
+                        code(server),
+                        code(host)
+                    )));
                 }
                 self.say(&format!(
                     "The server {server} asks you to open a page of {host}: {}\n  {}\n",
@@ -263,12 +281,13 @@ impl Asker {
                         // The person said yes and has the URL on the screen,
                         // so the answer stays yes when no browser opens.
                         if let Err(error) = (self.open_browser)(url.as_str()) {
-                            self.ui.warning(
-                                Some(server),
-                                &format!(
-                                    "cannot open a browser: {error}; open the URL above",
-                                    error = chain_text(&error)
-                                ),
+                            self.warn(
+                                Warning::new(format!(
+                                    "ncp cannot open a browser for the page of the server {}",
+                                    code(server)
+                                ))
+                                .caused_by(&error)
+                                .hint("Open the URL above in a browser"),
                             );
                         }
                         Action::Opened
@@ -305,7 +324,9 @@ impl Asker {
         }
         if opened {
             // This hint replaces "open the page": the page is open.
-            failure.with_hints([Hint::text("when the page is done, run the command again")])
+            failure.with_hints([Hint::text(
+                "After you complete the steps on the page, run the command again",
+            )])
         } else {
             failure
         }
@@ -396,12 +417,13 @@ fn unanswered(stop: Stop, context: &Context<'_>, server: &str) -> Failure {
         Stop::TimedOut | Stop::End => Failure::new(
             Exit::InputRequired,
             format!(
-                "the question of the server got no answer in {} s",
+                "The question of the server {} got no answer in {} s",
+                code(server),
                 context.request_limit.as_secs()
             ),
         )
-        .server(server)
-        .hint("give a longer limit with --timeout <SECONDS>"),
+        .about(server)
+        .hint(session::wait_longer()),
     }
 }
 

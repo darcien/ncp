@@ -181,9 +181,18 @@ fn tool_call_checks_arguments_before_the_call_unless_told_not_to() {
     let run = home.run(&["tool", "call", "fx", "wait", "ms=soon"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert!(run.stdout_is_empty());
-    let message = run.old_error()["message"].as_str().unwrap().to_string();
-    assert!(message.contains("/ms:"), "{message}");
-    assert!(message.contains("ms (integer, optional)"), "{message}");
+    let error = run.error();
+    assert_eq!(
+        error["message"],
+        "The arguments do not match the input schema of the tool `wait` of the server `fx`:"
+    );
+    let data = error["data"].to_string();
+    assert!(data.contains("/ms:"), "{data}");
+    assert!(data.contains("ms (integer, optional)"), "{data}");
+    assert!(
+        common::hints(&error)[0].starts_with("To call the tool, run `ncp tool call fx wait"),
+        "{error}"
+    );
     let run = home.run(&[
         "tool",
         "call",
@@ -243,14 +252,13 @@ fn argument_in_place_of_the_tool_gives_missing_tool_name() {
     let home = Home::new("missing-tool");
     let run = home.run(&["tool", "call", "github", "q=x"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    let error = run.old_error();
-    assert!(
-        error["message"]
-            .as_str()
-            .unwrap()
-            .starts_with("missing tool name")
+    let error = run.error();
+    assert_eq!(error["message"], "The command line has no tool name");
+    assert_eq!(
+        error["causes"],
+        json!(["The word `q=x` is a tool argument"])
     );
-    assert_eq!(common::hints(&error)[0], "ncp tool list github");
+    assert_eq!(error["hints"][0]["command"], "ncp tool list github");
 }
 
 #[test]
@@ -273,7 +281,11 @@ fn unknown_server_and_unknown_tool_name_the_command_that_lists_them() {
     );
     let run = home.run(&["tool", "call", "fx", "nope"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.hints()[0], "ncp tool list fx");
+    assert_eq!(run.error()["message"], "The server `fx` has no tool `nope`");
+    assert_eq!(
+        run.hints(),
+        ["To see the tools of the server, run `ncp tool list fx`"]
+    );
 }
 
 #[test]
@@ -1002,7 +1014,12 @@ fn unknown_tool_with_no_check_is_a_usage_error() {
     home.configure(&json!({"fx": stdio("modern")}));
     let run = home.run(&["tool", "call", "fx", "nope", "--no-validate"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.hints()[0], "ncp tool list fx");
+    let error = run.error();
+    assert_eq!(
+        error["message"],
+        "The server `fx` refused the call of the tool `nope`"
+    );
+    assert_eq!(error["hints"][0]["command"], "ncp tool list fx");
 }
 
 #[test]
@@ -2507,8 +2524,7 @@ fn unknown_names_get_the_nearest_known_name() {
     assert_eq!(run.error()["hints"][0]["message"], "Did you mean `fx`?");
     let run = home.run(&["tool", "show", "fx", "ech"]);
     assert_eq!(run.code(), 2);
-    let message = run.old_error()["message"].as_str().unwrap().to_string();
-    assert!(message.ends_with("did you mean \"echo\"?"), "{message}");
+    assert_eq!(run.error()["hints"][0]["message"], "Did you mean `echo`?");
 }
 
 #[test]
@@ -2540,7 +2556,11 @@ fn resource_read_gives_json_in_a_pipe_and_raw_contents_on_request() {
     assert_eq!(run.0.stdout, b"\x89PNG\r\n\x1a\n");
     let run = home.run(&["resource", "read", "fx", "fixture://none"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.hints()[0], "ncp resource list fx");
+    assert_eq!(
+        run.error()["hints"],
+        json!([{"message": "To see the resources of the server, run `ncp resource list fx`",
+            "command": "ncp resource list fx"}])
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2578,7 +2598,7 @@ fn prompt_list_and_get_use_the_prompt_arguments() {
     );
     let run = home.run(&["prompt", "get", "fx", "greet"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.hints()[0], "ncp prompt list fx");
+    assert_eq!(run.error()["hints"][0]["command"], "ncp prompt list fx");
     let run = home.run(&["prompt", "get", "fx", "greet", "name:=1"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
 }
@@ -2764,7 +2784,9 @@ fn raw_read_of_several_contents_is_a_usage_error_with_empty_stdout() {
     // --output-format text gives text on stderr too.
     let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
     assert!(
-        stderr.contains("hint: use --output-format json"),
+        stderr.contains(
+            "\nhint: To get all the contents, run the command again with `--output-format json`\n"
+        ),
         "{stderr}"
     );
 }

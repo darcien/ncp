@@ -204,12 +204,16 @@ pub enum Action {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RequestError {
-    #[error("the request has no mode that ncp knows: {0}")]
+    #[error("The request has the mode {}, which ncp does not know", crate::text::code(.0))]
     Mode(String),
-    #[error("field {0:?} has a type that a form cannot ask: {1}")]
+    #[error(
+        "The field {} has the type {}, which a form cannot ask",
+        crate::text::code(.0),
+        crate::text::code(.1)
+    )]
     FieldType(String, String),
-    #[error("the request is not valid: {0}")]
-    Shape(String),
+    #[error("The request has no `{0}` field")]
+    Missing(&'static str),
 }
 
 fn text(value: &Value, key: &str) -> Option<String> {
@@ -226,12 +230,12 @@ pub fn parse(params: &Value) -> Result<Request, RequestError> {
     match params.get("mode").and_then(Value::as_str).unwrap_or("form") {
         "url" => Ok(Request::Url {
             message,
-            url: text(params, "url").ok_or_else(|| RequestError::Shape("no url".into()))?,
+            url: text(params, "url").ok_or(RequestError::Missing("url"))?,
         }),
         "form" => {
             let schema = params
                 .get("requestedSchema")
-                .ok_or_else(|| RequestError::Shape("no requestedSchema".into()))?;
+                .ok_or(RequestError::Missing("requestedSchema"))?;
             let required: Vec<&str> = schema
                 .get("required")
                 .and_then(Value::as_array)
@@ -549,17 +553,31 @@ pub fn result(action: &Action) -> Value {
 ///
 /// Returns the reason when the URL is not safe to open.
 pub fn safe_url(text: &str) -> Result<url::Url, String> {
-    let url = url::Url::parse(text).map_err(|error| format!("the URL is not valid: {error}"))?;
+    let url =
+        url::Url::parse(text).map_err(|error| format!("ncp cannot parse the URL ({error})"))?;
     if crate::server::is_secure_url(&url) {
         Ok(url)
     } else {
-        Err(format!("ncp opens only https pages, not {}:", url.scheme()))
+        Err(format!(
+            "ncp opens only `https` pages, not `{}:` pages",
+            url.scheme()
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_texts_follow_the_message_rules() {
+        let texts = [
+            RequestError::Mode("x".into()).to_string(),
+            RequestError::FieldType("f".into(), "list".into()).to_string(),
+            RequestError::Missing("url").to_string(),
+        ];
+        crate::style::assert_style(&texts);
+    }
 
     fn form() -> Value {
         json!({
