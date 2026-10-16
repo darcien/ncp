@@ -501,7 +501,8 @@ orders the work. Research: `docs/research/uv-output-messages.md`.
 1. The user accepted the design on 2026-10-15.
 2. Do steps 2 to 10 of the migration plan (design section 8), in order.
    Each step changes the types, the call sites, the tests and the design
-   documents of one area.
+   documents of one area. Done on 2026-10-16, with an adversarial review
+   after each step.
 
 ## Last milestone: distribution (gate)
 
