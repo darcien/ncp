@@ -104,6 +104,36 @@ fn items(count: usize, word: &str) -> String {
     }
 }
 
+/// The fix of a store error. It is apart from the error text, so that a
+/// caller that gets only a text, as through rmcp, can still give it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoreFix {
+    /// A locked store waits for its unlock prompt.
+    AnswerPrompt,
+    /// Close the credential file to other users.
+    CloseFile(PathBuf),
+    UnlockKeyring,
+    RemoveCopies,
+}
+
+impl StoreError {
+    #[must_use]
+    pub fn fix(&self) -> Option<StoreFix> {
+        match self {
+            Self::NoAnswer(_) => Some(StoreFix::AnswerPrompt),
+            Self::OpenPermissions(path) => Some(StoreFix::CloseFile(path.clone())),
+            Self::Locked(_) => Some(StoreFix::UnlockKeyring),
+            Self::Ambiguous(_) => Some(StoreFix::RemoveCopies),
+            Self::Unavailable(_)
+            | Self::Denied(_)
+            | Self::Failure(_)
+            | Self::Io { .. }
+            | Self::Corrupt(_)
+            | Self::Interrupted => None,
+        }
+    }
+}
+
 /// What failed in a store, in the words of `ncp`. The text of the store
 /// program or library is its source, so that it shows as a separate cause.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

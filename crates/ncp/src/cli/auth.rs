@@ -456,14 +456,25 @@ fn token_failure(error: &AuthError, name: &str, place: CredentialPlace) -> Failu
     };
     match error {
         AuthError::CredentialStoreError(text) => match crate::oauth::store::file_failure(text) {
-            Some(text) => Failure::protocol(keep()).about(name).cause(text),
-            None if place == CredentialPlace::Native => Failure::new(Exit::Auth, keep())
-                .about(name)
-                .cause(text.as_str())
-                .hint(file_login_hint(name)),
+            Some(text) => store_text_failure(Failure::protocol(keep()).about(name), text),
+            None if place == CredentialPlace::Native => {
+                store_text_failure(Failure::new(Exit::Auth, keep()).about(name), text)
+                    .hint(file_login_hint(name))
+            }
             None => auth_failure("OAuth token request", name, error),
         },
         error => auth_failure("OAuth token request", name, error),
+    }
+}
+
+/// The store error that rmcp keeps as one text: one cause (design rule 7),
+/// then the hint of its fix.
+pub(super) fn store_text_failure(failure: Failure, text: &str) -> Failure {
+    let (text, fix) = crate::oauth::store::store_fix(text);
+    let failure = failure.cause(text);
+    match fix {
+        Some(fix) => failure.hint(super::fixes::fix_hint(&fix)),
+        None => failure,
     }
 }
 

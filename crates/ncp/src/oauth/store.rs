@@ -20,7 +20,7 @@ use crate::{
     credential::{CredentialKey, Secret},
     private_file,
     server::ServerName,
-    store::{self, CredentialStore, StoreError},
+    store::{self, CredentialStore, StoreError, StoreFix},
 };
 
 /// The copy in memory of the tokens item.
@@ -171,9 +171,14 @@ pub fn parse_item(secret: &Secret) -> Result<TokensItem, items::ItemError> {
 const FILE_FAILED: &str = "local: ";
 
 // rmcp keeps one text, so the store error and its causes go in as one
-// line. Its Display text alone would lose the reason.
+// line, and the fix goes after a mark. Its Display text alone would lose
+// the reason.
 fn store_error(error: &StoreError) -> AuthError {
     let text = crate::text::chain_text(error);
+    let text = match error.fix() {
+        Some(fix) => format!("{text}{FIX_MARK}{}", fix_word(&fix)),
+        None => text,
+    };
     let text = match error {
         StoreError::Io { .. } | StoreError::OpenPermissions(_) | StoreError::Corrupt(_) => {
             format!("{FILE_FAILED}{text}")
@@ -181,6 +186,36 @@ fn store_error(error: &StoreError) -> AuthError {
         _ => text,
     };
     AuthError::CredentialStoreError(text)
+}
+
+/// The mark of the fix of a store error in the text of an rmcp error. A
+/// control character cannot be part of the text of a store error.
+const FIX_MARK: char = '\u{1f}';
+
+fn fix_word(fix: &StoreFix) -> String {
+    match fix {
+        StoreFix::AnswerPrompt => "prompt".to_string(),
+        StoreFix::UnlockKeyring => "keyring".to_string(),
+        StoreFix::RemoveCopies => "copies".to_string(),
+        StoreFix::CloseFile(path) => format!("close {}", path.display()),
+    }
+}
+
+/// The text of a store failure with no fix mark, and the fix.
+#[must_use]
+pub fn store_fix(text: &str) -> (&str, Option<StoreFix>) {
+    let Some((text, word)) = text.split_once(FIX_MARK) else {
+        return (text, None);
+    };
+    let fix = match word {
+        "prompt" => Some(StoreFix::AnswerPrompt),
+        "keyring" => Some(StoreFix::UnlockKeyring),
+        "copies" => Some(StoreFix::RemoveCopies),
+        _ => word
+            .strip_prefix("close ")
+            .map(|path| StoreFix::CloseFile(path.into())),
+    };
+    (text, fix)
 }
 
 /// The text of a failure of the file with no mark, or `None` for a failure
@@ -464,6 +499,29 @@ mod tests {
         assert_eq!(file_failure(&text), None);
         let same = TokenStore::new(server(), backing).with_binding(binding("https://b/mcp"));
         assert!(same.load().await.unwrap().is_some());
+    }
+
+    #[test]
+    fn the_fix_of_a_store_error_reads_back_from_its_error_text() {
+        let AuthError::CredentialStoreError(text) =
+            store_error(&StoreError::OpenPermissions("/c/credentials.json".into()))
+        else {
+            panic!("a store error");
+        };
+        let text = file_failure(&text).unwrap_or_default();
+        let (text, fix) = store_fix(text);
+        assert_eq!(
+            text,
+            "Other users can open the credential file `/c/credentials.json`"
+        );
+        assert_eq!(fix, Some(StoreFix::CloseFile("/c/credentials.json".into())));
+        let AuthError::CredentialStoreError(text) =
+            store_error(&StoreError::NoAnswer(std::time::Duration::from_secs(60)))
+        else {
+            panic!("a store error");
+        };
+        assert_eq!(store_fix(&text).1, Some(StoreFix::AnswerPrompt));
+        assert_eq!(store_fix("no mark"), ("no mark", None));
     }
 
     #[test]

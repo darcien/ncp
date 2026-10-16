@@ -1030,10 +1030,8 @@ fn token_store_failure(server: &Server, text: &str) -> Failure {
     // rmcp keeps the store error as one text, so it is one cause (design
     // rule 7).
     match crate::oauth::store::file_failure(text) {
-        Some(text) => Failure::protocol(keep).about(name).cause(text),
-        None => Failure::new(Exit::Auth, keep)
-            .about(name)
-            .cause(text)
+        Some(text) => super::auth::store_text_failure(Failure::protocol(keep).about(name), text),
+        None => super::auth::store_text_failure(Failure::new(Exit::Auth, keep).about(name), text)
             .hint(super::auth::file_login_hint(name)),
     }
 }
