@@ -211,7 +211,7 @@ fn tool_error_result_goes_to_stdout_with_exit_1() {
     let run = home.run(&["tool", "call", "fx", "fail", "text=bad"]);
     assert_eq!(run.code(), 1, "{}", run.describe());
     assert_eq!(run.stdout()["isError"], true);
-    assert_eq!(run.old_error()["code"], "tool");
+    assert_eq!(run.error()["code"], "tool");
 }
 
 #[test]
@@ -221,7 +221,7 @@ fn input_required_result_goes_to_stdout_with_exit_5() {
     let run = home.run(&["tool", "call", "fx", "ask"]);
     assert_eq!(run.code(), 5, "{}", run.describe());
     assert_eq!(run.stdout()["requestState"], "state-1");
-    assert_eq!(run.old_error()["code"], "input_required");
+    assert_eq!(run.error()["code"], "input_required");
 }
 
 #[test]
@@ -855,7 +855,7 @@ fn client_secret_is_stored_for_the_origin_of_the_issuer() {
     // A header at the origin of the MCP server cannot read it.
     let run = home.run(&["tool", "list", "x"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.old_error()["destination"], "https://mcp.acme.example");
+    assert_eq!(run.error()["destination"], "https://mcp.acme.example");
 }
 
 #[test]
@@ -903,7 +903,7 @@ fn request_timeout_exits_with_3_and_names_the_option() {
     let run = home.run(&["tool", "call", "fx", "wait", "ms=30000", "--timeout", "1"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
     assert!(run.stdout_is_empty());
-    let error = run.old_error();
+    let error = run.error();
     assert_eq!(error["code"], "protocol");
     assert!(common::hints(&error)[0].as_str().contains("--timeout"));
 }
@@ -914,7 +914,7 @@ fn server_that_cannot_start_exits_with_3() {
     home.configure(&json!({"fx": {"command": "/nonexistent/ncp-server"}}));
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
-    assert_eq!(run.old_error()["server"], "fx");
+    assert_eq!(run.error()["server"], "fx");
 }
 
 #[test]
@@ -960,7 +960,7 @@ async fn http_server_that_needs_a_login_exits_with_4() {
     home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    assert_eq!(run.old_error()["code"], "auth");
+    assert_eq!(run.error()["code"], "auth");
     home.configure(&json!({"web": {"type": "http", "url": fixture.url,
         "headers": {"Authorization": "Bearer t0ken"}}}));
     assert_eq!(home.run(&["tool", "list", "web"]).code(), 0);
@@ -1392,7 +1392,7 @@ fn unreadable_ssl_cert_file_gives_a_local_error_that_names_the_variable() {
     home.configure(&json!({"web": {"type": "http", "url": "https://127.0.0.1:9/mcp"}}));
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
-    let message = run.old_error()["message"].as_str().unwrap().to_string();
+    let message = run.error()["message"].as_str().unwrap().to_string();
     assert!(
         message.contains("SSL_CERT_FILE") && message.contains(&missing),
         "{message}"
@@ -1743,7 +1743,7 @@ async fn refresh_stops_and_keeps_the_tokens_when_the_issuer_changes() {
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
     assert!(
-        run.old_error()["message"]
+        run.error()["message"]
             .as_str()
             .unwrap()
             .contains("did not send the client secret")
@@ -1990,7 +1990,7 @@ async fn stored_token_with_no_binding_is_not_sent_until_a_new_login() {
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
     assert!(
-        run.old_error()["message"]
+        run.error()["message"]
             .as_str()
             .unwrap()
             .contains("on purpose")
@@ -2301,7 +2301,7 @@ async fn native_store_that_cannot_answer_gives_its_reason_and_not_a_login_hint()
     std::fs::write(home.root.join("keychain/fail"), "36").unwrap();
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
-    let error = run.old_error();
+    let error = run.error();
     assert!(
         error["hints"]
             .as_array()
@@ -2378,7 +2378,7 @@ async fn login_to_a_server_that_names_no_authorization_server_is_an_error() {
     let home = oauth_home("login-no-as", &fixture.url);
     let run = home.run(&LOGIN_TO_FILE);
     assert_eq!(run.code(), 3, "{}", run.describe());
-    let message = run.old_error()["message"].as_str().unwrap().to_string();
+    let message = run.error()["message"].as_str().unwrap().to_string();
     assert!(
         message.contains("names no authorization server"),
         "{message}"
@@ -2426,7 +2426,7 @@ async fn refresh_that_cannot_write_the_credential_file_is_a_local_error() {
     let run = home.run(&["tool", "list", "web"]);
     mode(0o700);
     assert_eq!(run.code(), 3, "{}", run.describe());
-    let error = run.old_error();
+    let error = run.error();
     assert_eq!(error["hints"], json!([]), "{error}");
     assert!(
         !error["message"].as_str().unwrap().contains("local:"),
@@ -2471,7 +2471,7 @@ fn quiet_hides_warnings_and_hints_but_not_errors() {
     assert!(quiet.stderr().is_empty(), "{}", quiet.describe());
     let failed = home.run(&["-q", "tool", "list", "nothing"]);
     assert_eq!(failed.code(), 2);
-    assert_eq!(failed.old_error()["code"], "usage");
+    assert_eq!(failed.error()["code"], "usage");
     let conflict = home.run(&["-q", "-v", "server", "list"]);
     assert_eq!(conflict.code(), 2);
     assert_eq!(conflict.hints().len(), 1, "{}", conflict.describe());
@@ -3062,7 +3062,7 @@ fn legacy_question_with_no_tty_gets_invalid_params_and_exit_5() {
     let run = home.run(&["tool", "call", "fx", "elicit-legacy", "text=x"]);
     assert_eq!(run.code(), 5, "{}", run.describe());
     assert!(
-        run.old_error()["message"]
+        run.error()["message"]
             .as_str()
             .unwrap()
             .contains("cannot ask with no terminal")
@@ -3215,7 +3215,7 @@ fn a_request_that_needs_a_page_gives_exit_5_with_the_pages() {
     home.configure(&json!({"fx": stdio("modern")}));
     let run = home.run(&["tool", "call", "fx", "needs-page", "text=x"]);
     assert_eq!(run.code(), 5, "{}", run.describe());
-    let error = run.old_error();
+    let error = run.error();
     assert_eq!(
         error["pages"],
         json!([{"url": "https://login.example.test/start", "message": "Connect your account"}])
@@ -3288,7 +3288,7 @@ fn http_server_that_redirects_stops_and_sends_no_header_to_the_new_location() {
     );
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 3, "{}", run.describe());
-    let error = run.old_error();
+    let error = run.error();
     let message = error["message"].as_str().unwrap();
     assert!(message.contains("308"), "{message}");
     assert!(

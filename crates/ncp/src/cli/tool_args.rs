@@ -39,7 +39,7 @@ pub enum ArgumentError {
     EmptyKey(String),
     #[error("The key {} is given more than one time", code(.0))]
     Repeated(String),
-    #[error("An argument of {0} must be the only argument")]
+    #[error("{} must be the only argument", crate::text::capitalized(.0))]
     NotAlone(&'static str),
     #[error("The arguments are not a JSON object")]
     NotObject(#[source] crate::config::ParserText),

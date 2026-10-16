@@ -400,14 +400,29 @@ fn tool_word<'a>(server: &str, tool: Option<&'a str>) -> Result<&'a str, Failure
     }
 }
 
-// A word that is not a tool argument. The fix of `key:=json` was in the
-// text before, so it is a hint now.
-fn arguments_failure(error: &tool_args::ArgumentError) -> Failure {
-    let failure = Failure::usage("The tool arguments are not valid").caused_by(error);
+/// What the arguments are for. A prompt takes only `key=value` pairs.
+#[derive(Clone, Copy)]
+enum Arguments {
+    Tool,
+    Prompt,
+}
+
+// A word that is not an argument. The fix of `key:=json` was in the text
+// before, so it is a hint now.
+fn arguments_failure(error: &tool_args::ArgumentError, of: Arguments) -> Failure {
+    let (message, fix) = match of {
+        Arguments::Tool => (
+            "The tool arguments are not valid",
+            "Give the arguments as one JSON object, for example `'{\"n\": 12}'`",
+        ),
+        Arguments::Prompt => (
+            "The prompt arguments are not valid",
+            "Give each argument as `key=value`",
+        ),
+    };
+    let failure = Failure::usage(message).caused_by(error);
     match error {
-        tool_args::ArgumentError::JsonPair(_) => {
-            failure.hint("Give the arguments as one JSON object, for example `'{\"n\": 12}'`")
-        }
+        tool_args::ArgumentError::JsonPair(_) => failure.hint(fix),
         _ => failure,
     }
 }
@@ -477,7 +492,8 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
     let input = if call.help {
         Input::Pairs(Vec::new())
     } else {
-        tool_args::parse(&call.arguments).map_err(|error| arguments_failure(&error))?
+        tool_args::parse(&call.arguments)
+            .map_err(|error| arguments_failure(&error, Arguments::Tool))?
     };
     let loaded = session::load(context, Some(word)).await?;
     let server = session::select(&loaded, word, context.ui)?;
@@ -682,14 +698,19 @@ async fn resource_read(context: &Context<'_>, word: &str, uri: &str) -> Result<(
     let result = match answer {
         Answer::Complete(result) => result,
         Answer::InputRequired(result) => {
-            return input_required(context, name, "the resource", &result);
+            return input_required(
+                context,
+                name,
+                &format!("the resource {}", code(uri)),
+                &result,
+            );
         }
     };
     let value = serde_json::to_value(&result).unwrap_or(Value::Null);
     // A pipe gets JSON, as from each command. `--output-format text` in a
     // pipe gives the contents as they are, for example into a file.
     if context.ui.format == ui::Format::Text && !std::io::stdout().is_terminal() {
-        return ui::write_stdout_bytes(&raw_contents(&value)?);
+        return ui::write_stdout_bytes(&raw_contents(name, &value)?);
     }
     context
         .ui
@@ -699,7 +720,7 @@ async fn resource_read(context: &Context<'_>, word: &str, uri: &str) -> Result<(
 // The one content of a resource as bytes: the text, or the decoded blob.
 // Several contents have no raw form, because the bytes alone lose their
 // borders and types.
-fn raw_contents(result: &Value) -> Result<Vec<u8>, Failure> {
+fn raw_contents(server: &str, result: &Value) -> Result<Vec<u8>, Failure> {
     let contents = result
         .get("contents")
         .and_then(Value::as_array)
@@ -720,7 +741,12 @@ fn raw_contents(result: &Value) -> Result<Vec<u8>, Failure> {
         .and_then(Value::as_str)
         .unwrap_or_default();
     base64::Engine::decode(&base64::engine::general_purpose::STANDARD, blob).map_err(|error| {
-        Failure::protocol("The server sent a blob that is not base64").caused_by(&error)
+        Failure::protocol(format!(
+            "The server {} sent a blob that is not base64",
+            code(server)
+        ))
+        .about(server)
+        .caused_by(&error)
     })
 }
 
@@ -780,7 +806,7 @@ async fn prompt_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
 
 // The arguments of a prompt: text only, as the spec gives them.
 fn prompt_arguments(words: &[String]) -> Result<JsonObject, Failure> {
-    match tool_args::parse(words).map_err(|error| arguments_failure(&error))? {
+    match tool_args::parse(words).map_err(|error| arguments_failure(&error, Arguments::Prompt))? {
         Input::Pairs(pairs) => Ok(pairs
             .into_iter()
             .map(|(key, text)| (key, Value::String(text)))
@@ -818,7 +844,12 @@ async fn prompt_get(
                 .ui
                 .result(|| render::prompt_messages(&value), || value.clone())
         }
-        Answer::InputRequired(result) => input_required(context, name, "the prompt", &result),
+        Answer::InputRequired(result) => input_required(
+            context,
+            name,
+            &format!("the prompt {}", code(prompt)),
+            &result,
+        ),
     }
 }
 
@@ -884,7 +915,7 @@ async fn read_stdin_object(context: &Context<'_>) -> Result<JsonObject, Failure>
         })?,
         () = context.cancel.cancelled() => return Err(session::interrupted(None)),
     };
-    tool_args::object(&text).map_err(|error| arguments_failure(&error))
+    tool_args::object(&text).map_err(|error| arguments_failure(&error, Arguments::Tool))
 }
 
 fn check_arguments(
@@ -898,8 +929,9 @@ fn check_arguments(
         Outcome::SchemaNotUsable(reason) => {
             context.ui.warn(
                 &Warning::new(format!(
-                    "ncp cannot use the input schema of the tool {}. ncp does not check the arguments.",
-                    code(&tool.name)
+                    "ncp cannot use the input schema of the tool {} of the server {}. ncp does not check the arguments.",
+                    code(&tool.name),
+                    code(server)
                 ))
                 .about(server)
                 .cause(reason),

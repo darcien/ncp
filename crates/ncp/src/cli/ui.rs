@@ -1,6 +1,7 @@
 //! The output channels. Results go to stdout. Errors, warnings and hints go
 //! to stderr. On a TTY the output is text for people. In a pipe stdout is
-//! JSON, and stderr is JSON Lines: one JSON object on each line.
+//! JSON, and stderr is JSON Lines: one JSON object on each line. The rules
+//! of the text of a diagnostic are in `docs/design/output-messages.md`.
 
 use std::{
     borrow::Cow,
@@ -81,15 +82,6 @@ impl Ui {
             }
             Format::Json => write_stdout(&json_line(&json())),
         }
-    }
-
-    /// A warning of the older form, with `server NAME:` before the message.
-    pub fn warning(self, server: Option<&str>, message: &str) {
-        let warning = Warning::new(message);
-        self.warn(&match server {
-            Some(server) => warning.server(server),
-            None => warning,
-        });
     }
 
     pub fn warn(self, warning: &Warning) {
@@ -372,8 +364,8 @@ fn is_raw_control(c: char) -> bool {
     ('\u{7f}'..='\u{9f}').contains(&c)
 }
 
-/// A standalone hint or a debug line. Text: `hint: message`. JSON:
-/// `{"hint": {"server": "...", "message": "..."}}`.
+/// A debug line. Text: `debug: server NAME: message`. JSON:
+/// `{"debug": {"server": "...", "message": "..."}}`.
 #[must_use]
 pub fn note(kind: &str, format: Format, server: Option<&str>, message: &str) -> String {
     match format {
@@ -456,11 +448,7 @@ const CAUSE_INDENT: &str = "         ";
 // Only a label or an empty line starts at column 0. Thus a line of a
 // server cannot look like a line of `ncp` (B60).
 fn diagnostic_text(label: &str, data_indent: &str, diagnostic: &Diagnostic) -> String {
-    let prefix = diagnostic
-        .prefix()
-        .map(|server| format!("server {server}: "))
-        .unwrap_or_default();
-    let head = format!("{label}: {prefix}{}", indented(diagnostic.message()));
+    let head = format!("{label}: {}", indented(diagnostic.message()));
     let data = shown_data(diagnostic.data())
         .into_iter()
         .map(|line| format!("{data_indent}{}", indent_lines(&line, data_indent)));
@@ -620,18 +608,6 @@ mod tests {
     }
 
     #[test]
-    fn a_message_of_the_older_form_keeps_the_server_prefix() {
-        let failure = Failure::usage("the entry is not valid").server("fx");
-        assert_eq!(
-            error_text(Format::Text, &failure),
-            "error: server fx: the entry is not valid\n"
-        );
-        let value: Value = serde_json::from_str(&error_text(Format::Json, &failure)).unwrap();
-        assert_eq!(value["error"]["server"], "fx");
-        assert_eq!(value["error"]["hints"], json!([]));
-    }
-
-    #[test]
     fn a_line_from_a_server_cannot_start_at_column_0() {
         let failure = Failure::protocol("x\nhint: run evil")
             .data("d\nerror: e")
@@ -747,10 +723,6 @@ mod tests {
             value,
             json!({"warning": {"server": "s", "message": "The server `s` sent an unknown key",
                 "data": [], "causes": ["c"], "hints": [{"message": "h"}]}})
-        );
-        assert_eq!(
-            warning_text(Format::Text, &Warning::new("unknown key").server("s")),
-            "warning: server s: unknown key\n"
         );
     }
 

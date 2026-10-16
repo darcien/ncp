@@ -363,7 +363,7 @@ fn listing_commands_and_completion_never_ask_and_skip_an_untrusted_file() {
     assert_eq!(run.stderr_text(), "");
     // Did-you-mean does not offer the name of the untrusted file.
     let run = home.unset("NCP_TEST_TTY").run(&["tool", "list", "f"]);
-    assert!(!run.old_error()["message"].as_str().unwrap().contains("fs"));
+    assert!(!run.error()["message"].as_str().unwrap().contains("fs"));
 }
 
 #[test]

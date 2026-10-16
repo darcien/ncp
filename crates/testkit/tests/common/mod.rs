@@ -212,46 +212,38 @@ impl Run {
 
     /// The error object, after a check of the message rules.
     pub fn error(&self) -> Value {
-        let error = self.old_error();
+        let error = self
+            .stderr()
+            .into_iter()
+            .find_map(|line| line.get("error").cloned())
+            .unwrap_or_else(|| panic!("no error: {}", self.describe()));
         check_style(&error, &self.describe());
         error
     }
 
-    /// The error object of a message of the older form, with no check.
-    pub fn old_error(&self) -> Value {
-        self.stderr()
-            .into_iter()
-            .find_map(|line| line.get("error").cloned())
-            .unwrap_or_else(|| panic!("no error: {}", self.describe()))
-    }
-
     /// The warning objects, after a check of the message rules.
     pub fn warnings(&self) -> Vec<Value> {
-        let warnings = self.old_warnings();
+        let warnings: Vec<Value> = self
+            .stderr()
+            .into_iter()
+            .filter_map(|line| line.get("warning").cloned())
+            .collect();
         for warning in &warnings {
             check_style(warning, &self.describe());
         }
         warnings
     }
 
-    /// The warning objects of messages of the older form, with no check.
-    pub fn old_warnings(&self) -> Vec<Value> {
-        self.stderr()
-            .into_iter()
-            .filter_map(|line| line.get("warning").cloned())
-            .collect()
-    }
-
     /// The hint messages of the error, in their order.
     pub fn hints(&self) -> Vec<String> {
-        hints(&self.old_error())
+        hints(&self.error())
     }
 
     /// The message, the data lines and the causes of the error, one on
-    /// each line. A check of a text that can move from the message to a
+    /// each line. A check of a text that can be in the message or in a
     /// cause reads this.
     pub fn error_text(&self) -> String {
-        error_text(&self.old_error())
+        error_text(&self.error())
     }
 
     pub fn describe(&self) -> String {

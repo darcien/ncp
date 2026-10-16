@@ -785,10 +785,7 @@ impl TokenPlaces {
                 code(name),
                 secrets::place_text(place)
             );
-            match error {
-                crate::store::StoreError::Interrupted => session::interrupted(Some(name)),
-                _ => secrets::store_failure_about(Some(name), error, message, []),
-            }
+            secrets::store_failure_about(Some(name), error, message, [])
         };
         if let Some(native) = self.native.clone() {
             let wanted = key.clone();
@@ -1254,7 +1251,7 @@ async fn redirect_of(
             let _ = stream.write_all(page("200 OK", message).as_bytes()).await;
         }
         Err(error) if error.is_for_this_login() => {
-            let message = format!("The login failed. {error}.");
+            let message = format!("The login failed. {}.", crate::text::chain_text(error));
             let _ = stream.write_all(page("200 OK", &message).as_bytes()).await;
         }
         Err(error) => {
@@ -1488,6 +1485,9 @@ async fn remove_everywhere(
             }
         }
         Err(crate::store::StoreError::Unavailable(_)) => {}
+        Err(crate::store::StoreError::Interrupted) => {
+            return Err(session::interrupted(Some(name)));
+        }
         Err(error) => context.ui.warn(&Warning::from(secrets::store_failure_about(
             Some(name),
             &error,
@@ -1515,10 +1515,7 @@ fn delete_failure(name: &str, place: CredentialPlace, error: &crate::store::Stor
         code(name),
         secrets::place_text(place)
     );
-    match error {
-        crate::store::StoreError::Interrupted => session::interrupted(Some(name)),
-        _ => secrets::store_failure_about(Some(name), error, message, []),
-    }
+    secrets::store_failure_about(Some(name), error, message, [])
 }
 
 fn not_json(name: &str) -> Failure {

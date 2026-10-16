@@ -133,21 +133,12 @@ impl From<&str> for Hint {
     }
 }
 
-/// The server of a diagnostic.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum About {
-    /// The message names the server.
-    Named(String),
-    /// The text puts `server NAME:` before a message of the older form.
-    /// It goes when each message names its server.
-    Prefixed(String),
-}
-
 /// The parts that an error and a warning share: the message, the data
 /// lines, the causes and the hints.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Diagnostic {
-    server: Option<About>,
+    /// The server that the message names.
+    server: Option<String>,
     message: String,
     data: Box<[String]>,
     causes: Box<[String]>,
@@ -164,18 +155,7 @@ impl Diagnostic {
 
     #[must_use]
     pub fn server_name(&self) -> Option<&str> {
-        self.server.as_ref().map(|about| match about {
-            About::Named(name) | About::Prefixed(name) => name.as_str(),
-        })
-    }
-
-    /// The server that the text names before a message of the older form.
-    #[must_use]
-    pub fn prefix(&self) -> Option<&str> {
-        match &self.server {
-            Some(About::Prefixed(name)) => Some(name),
-            _ => None,
-        }
+        self.server.as_deref()
     }
 
     #[must_use]
@@ -196,20 +176,6 @@ impl Diagnostic {
     #[must_use]
     pub fn hints(&self) -> &[Hint] {
         &self.hints
-    }
-
-    fn prefixed(self, server: String) -> Self {
-        match self.server {
-            Some(About::Named(ref named)) => {
-                // A remap names the same server as the inner failure.
-                debug_assert_eq!(*named, server, "two servers for one failure");
-                self
-            }
-            _ => Self {
-                server: Some(About::Prefixed(server)),
-                ..self
-            },
-        }
     }
 
     fn data_line(self, line: String) -> Self {
@@ -287,17 +253,9 @@ impl Warning {
     #[must_use]
     pub fn about(self, server: impl Into<String>) -> Self {
         Self(Diagnostic {
-            server: Some(About::Named(server.into())),
+            server: Some(server.into()),
             ..self.0
         })
-    }
-
-    /// Sets the server of a message of the older form. A message that
-    /// names its server keeps it, so that the text does not name the
-    /// server two times.
-    #[must_use]
-    pub fn server(self, server: impl Into<String>) -> Self {
-        Self(self.0.prefixed(server.into()))
     }
 
     #[must_use]
@@ -416,17 +374,9 @@ impl Failure {
     #[must_use]
     pub fn about(self, server: impl Into<String>) -> Self {
         self.with_diagnostic(|diagnostic| Diagnostic {
-            server: Some(About::Named(server.into())),
+            server: Some(server.into()),
             ..diagnostic
         })
-    }
-
-    /// Sets the server of a message of the older form. A message that
-    /// names its server keeps it, so that the text does not name the
-    /// server two times.
-    #[must_use]
-    pub fn server(self, server: impl Into<String>) -> Self {
-        self.with_diagnostic(|diagnostic| diagnostic.prefixed(server.into()))
     }
 
     #[must_use]
@@ -655,18 +605,8 @@ mod tests {
         );
         let diagnostic = warning.diagnostic();
         assert_eq!(diagnostic.server_name(), Some("fx"));
-        assert_eq!(diagnostic.prefix(), None);
         assert_eq!(diagnostic.causes(), ["denied"]);
         assert_eq!(diagnostic.hints(), [Hint::text("y")]);
-    }
-
-    #[test]
-    fn a_failure_that_names_its_server_gets_no_prefix() {
-        let failure = Failure::usage("The server `fx` failed")
-            .about("fx")
-            .server("fx");
-        assert_eq!(failure.diagnostic().prefix(), None);
-        assert_eq!(failure.server_name(), Some("fx"));
     }
 
     #[test]

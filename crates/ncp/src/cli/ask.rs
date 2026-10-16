@@ -6,14 +6,18 @@
 //! only the result. Each answer has the limit of `--timeout`, so that a
 //! question that nobody answers does not keep `ncp` for ever.
 
-use std::{io::IsTerminal, time::Duration};
+use std::{
+    io::IsTerminal,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
 
 use super::{
     auth::OpenBrowser,
-    outcome::{Exit, Failure, Hint, Warning},
+    outcome::{Exit, Failure, Warning},
     session::{self, Context},
     ui::{self, Ui},
 };
@@ -69,7 +73,7 @@ struct Asker {
     /// The warnings that showed. An elicitation can run 8 rounds and give
     /// the same warning in each round, so each warning shows one time
     /// (design rule 20).
-    warned: std::sync::Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
+    warned: Arc<Mutex<Vec<Warning>>>,
 }
 
 // Text of the server in a block, with escapes. Each line after the first gets
@@ -91,17 +95,19 @@ impl Asker {
             open_browser: context.open_browser,
             cancel: context.cancel.clone(),
             limit: context.request_limit,
-            warned: std::sync::Arc::default(),
+            warned: Arc::default(),
         }
     }
 
     fn warn(&self, warning: Warning) {
         let warning = warning.about(self.server.as_str());
-        let key = format!("{warning:?}");
-        let new = self
-            .warned
-            .lock()
-            .map_or(true, |mut warned| warned.insert(key));
+        let new = self.warned.lock().map_or(true, |mut warned| {
+            let new = !warned.contains(&warning);
+            if new {
+                warned.push(warning.clone());
+            }
+            new
+        });
         if new {
             self.ui.warn(&warning);
         }
@@ -310,26 +316,18 @@ pub(super) fn has_punycode_label(host: &str) -> bool {
 impl Asker {
     // Asks to open each page that the server needs, as a URL-mode question.
     // `ncp` does not run the request again: the server can need time, and the
-    // person knows when the work on the page is complete.
+    // person knows when the work on the page is complete. The hint of the
+    // failure says so, also for a page that the person opens later.
     async fn open_pages(&self, failure: Failure) -> Failure {
-        let mut opened = false;
         for page in failure.pages() {
             let params =
                 serde_json::json!({"mode": "url", "message": page.message, "url": page.url});
             match self.ask(&params).await {
-                Ok(action) => opened |= action == Action::Opened,
-                Err(Stop::End | Stop::TimedOut) => {}
+                Ok(_) | Err(Stop::End | Stop::TimedOut) => {}
                 Err(Stop::Interrupted) => return session::interrupted(Some(&self.server)),
             }
         }
-        if opened {
-            // This hint replaces "open the page": the page is open.
-            failure.with_hints([Hint::text(
-                "After you complete the steps on the page, run the command again",
-            )])
-        } else {
-            failure
-        }
+        failure
     }
 }
 

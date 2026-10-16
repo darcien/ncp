@@ -413,11 +413,15 @@ pub(super) fn store_failure_about(
     message: String,
     hints: impl IntoIterator<Item = Hint>,
 ) -> Failure {
-    match error {
-        StoreError::Interrupted => session::interrupted(server),
-        _ => hints
-            .into_iter()
-            .fold(store_failure(error).context(message), Failure::hint),
+    if let StoreError::Interrupted = error {
+        return session::interrupted(server);
+    }
+    let failure = hints
+        .into_iter()
+        .fold(store_failure(error).context(message), Failure::hint);
+    match server {
+        Some(server) => failure.about(server),
+        None => failure,
     }
 }
 
