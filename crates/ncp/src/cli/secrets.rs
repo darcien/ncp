@@ -1115,10 +1115,7 @@ pub(super) async fn store_for_add(
             destination_text(&destination)
         ))
         .hint(Hint::run_text(
-            &format!(
-                "store a value for the server {} only",
-                code(server.name.as_str())
-            ),
+            "replace the stored value for each entry with this origin",
             &format!("ncp secret set {name} --server {word}"),
         )));
     }
@@ -1454,12 +1451,12 @@ async fn strict_config(
         return Err(invalid_entry(server, error, loaded.file_of(server)));
     }
     let waiting = match &loaded.project {
-        ProjectFile::Unusable { file, reason } => {
-            return Err(Failure::usage(format!(
+        ProjectFile::Unusable { file, reasons } => {
+            let failure = Failure::usage(format!(
                 "ncp does not use {}.{unknown}",
                 code(&file.display().to_string())
-            ))
-            .cause(reason.as_str()));
+            ));
+            return Err(reasons.iter().cloned().fold(failure, Failure::cause));
         }
         ProjectFile::Read(project) if project.trust != Trust::Trusted => Some(project),
         _ => None,

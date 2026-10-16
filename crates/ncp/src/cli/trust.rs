@@ -35,12 +35,12 @@ pub fn command(context: &Context<'_>, args: &TrustArgs) -> Result<(), Failure> {
                 crate::text::code(&folder.display().to_string())
             )));
         }
-        ProjectFile::Unusable { file, reason } => {
-            return Err(Failure::usage(format!(
+        ProjectFile::Unusable { file, reasons } => {
+            let failure = Failure::usage(format!(
                 "ncp does not use {}",
                 crate::text::code(&file.display().to_string())
-            ))
-            .cause(reason));
+            ));
+            return Err(reasons.into_iter().fold(failure, Failure::cause));
         }
     };
     let change = match (args.show, args.untrust, args.ignore) {

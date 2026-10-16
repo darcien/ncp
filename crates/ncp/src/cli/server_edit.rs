@@ -64,6 +64,8 @@ struct Target {
     base: Option<String>,
     /// Only for the default global file, `ncp` makes the missing folders.
     makes_folders: bool,
+    /// `--config-file` names the file.
+    named: bool,
 }
 
 impl Target {
@@ -215,11 +217,17 @@ fn two_files() -> Failure {
     Failure::usage("`--global` and `--config-file` name two files").hint("Give one of them")
 }
 
-fn remove_hint(name: &str, scope: Scope) -> Hint {
+// The command must change the same file, so a named file keeps its
+// `--config-file`.
+fn remove_hint(name: &str, target: &Target) -> Hint {
     let word = render::shell_word(name);
-    let command = match scope {
-        Scope::Global => format!("ncp server remove {word} --global"),
-        Scope::Project => format!("ncp server remove {word}"),
+    let command = match (target.scope, target.named) {
+        (Scope::Global, true) => format!(
+            "ncp --config-file {} server remove {word}",
+            render::shell_word(&target.file.display().to_string())
+        ),
+        (Scope::Global, false) => format!("ncp server remove {word} --global"),
+        (Scope::Project, _) => format!("ncp server remove {word}"),
     };
     Hint::run_text("remove the entry", &command)
 }
@@ -250,12 +258,17 @@ async fn add_target(
             trusted_for_write(context, project).await?;
             Ok(project_target(project))
         }
-        ProjectFile::Unusable { file, reason } => Err(Failure::usage(format!(
-            "ncp does not use {}. ncp does not change it.",
-            path_text(file)
-        ))
-        .cause(reason.as_str())
-        .hint(global_hint())),
+        ProjectFile::Unusable { file, reasons } => Err(reasons
+            .iter()
+            .cloned()
+            .fold(
+                Failure::usage(format!(
+                    "ncp does not use {}. ncp does not change it.",
+                    path_text(file)
+                )),
+                Failure::cause,
+            )
+            .hint(global_hint())),
         ProjectFile::Absent(_) => {
             let folder = std::env::current_dir()
                 .and_then(fs::canonicalize)
@@ -274,6 +287,7 @@ async fn add_target(
                 scope: Scope::Project,
                 base: None,
                 makes_folders: false,
+                named: false,
             })
         }
     }
@@ -285,6 +299,7 @@ fn global_target(context: &Context<'_>) -> Result<Target, Failure> {
         base: read(&file)?,
         scope: Scope::Global,
         makes_folders: !context.named_config,
+        named: context.named_config,
         file,
     })
 }
@@ -295,6 +310,7 @@ fn project_target(project: &Project) -> Target {
         scope: Scope::Project,
         base: Some(project.text.clone()),
         makes_folders: false,
+        named: false,
     }
 }
 
@@ -433,15 +449,14 @@ async fn lock(context: &Context<'_>) -> Result<private_file::Lock, Failure> {
     let wait = crate::store::run_blocking(LOCK_LIMIT + Duration::from_secs(1), move || {
         Ok(private_file::lock(&path, LOCK_LIMIT))
     });
+    let failed = |error: &dyn std::error::Error| {
+        Failure::protocol(format!("ncp cannot lock {}", code(&shown))).caused_by(error)
+    };
     match secrets::interruptible(context, wait).await {
         Ok(Ok(lock)) => Ok(lock),
         Err(StoreError::Interrupted) => Err(session::interrupted(None)),
-        Ok(Err(error)) => {
-            Err(Failure::protocol(format!("ncp cannot lock {}", code(&shown))).caused_by(&error))
-        }
-        Err(error) => {
-            Err(Failure::protocol(format!("ncp cannot lock {}", code(&shown))).caused_by(&error))
-        }
+        Ok(Err(error)) => Err(failed(&error)),
+        Err(error) => Err(failed(&error)),
     }
 }
 
@@ -486,7 +501,10 @@ fn unchanged(target: &Target, real: &Path, base: Option<&String>) -> Result<(), 
             "The file {} changed after ncp read it, so ncp did not change it",
             path_text(&target.file)
         ))
-        .hint("To apply your change to the new file, run the command again"))
+        .hint(format!(
+            "Another process changed {}. To apply your change to the new file, run the command again.",
+            path_text(&target.file)
+        )))
     }
 }
 
@@ -499,10 +517,13 @@ fn edit_failure(target: &Target, error: &EditError) -> Failure {
         .caused_by(error),
         EditError::Exists(name) => Failure::usage(format!("ncp cannot change {file}"))
             .caused_by(error)
-            .hint(remove_hint(name, target.scope)),
-        EditError::Duplicate(_) => Failure::usage(format!("ncp cannot change {file}"))
+            .hint(remove_hint(name, target)),
+        EditError::Duplicate(key) => Failure::usage(format!("ncp cannot change {file}"))
             .caused_by(error)
-            .hint("Remove the copies of the key first"),
+            .hint(format!(
+                "Remove the copies of the key {} from the file. Then run the command again.",
+                code(key)
+            )),
         EditError::Config(_) | EditError::NotFound(_) => {
             Failure::usage(format!("ncp cannot change {file}")).caused_by(error)
         }
@@ -730,7 +751,10 @@ pub async fn remove(context: &Context<'_>, name: &str, global: bool) -> Result<(
         }
         (Place::OnlyInProject, Some(project)) => {
             let hint = match project.trust {
-                Trust::Ignored => Hint::run_text("trust the file", "ncp trust"),
+                Trust::Ignored => Hint::text(format!(
+                    "To trust the file, run `ncp trust`. Then run `ncp server remove {}`.",
+                    render::shell_word(name)
+                )),
                 Trust::Trusted | Trust::Untrusted { .. } => Hint::run_text(
                     "remove the entry of the project file",
                     &format!("ncp server remove {}", render::shell_word(name)),

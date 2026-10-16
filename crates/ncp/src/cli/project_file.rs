@@ -27,12 +27,12 @@ pub enum ProjectFile {
     NotSearched,
     /// No project file. The folder where the search stopped.
     Absent(PathBuf),
-    /// A file that `ncp` does not use, with the reason. `ncp` does not
-    /// search higher, as git does when it finds a repository of another
-    /// user.
+    /// A file that `ncp` does not use, with the reason and its causes
+    /// (design rule 7). `ncp` does not search higher, as git does when it
+    /// finds a repository of another user.
     Unusable {
         file: PathBuf,
-        reason: String,
+        reasons: Vec<String>,
     },
     Read(Project),
 }
@@ -66,11 +66,13 @@ pub fn find(paths: &Paths, env: &Env, search: bool) -> ProjectFile {
         Search::Stopped(folder) => ProjectFile::Absent(folder),
         Search::Found(root) => {
             let file = root.join(project::FILE_NAME);
-            let read = read_owned(&file).and_then(|text| {
-                config::unexpanded_entries(&text)
-                    .map(|entries| (entries, text))
-                    .map_err(|error| chain_text(&error))
-            });
+            let read = read_owned(&file)
+                .map_err(|reason| vec![reason])
+                .and_then(|text| {
+                    config::unexpanded_entries(&text)
+                        .map(|entries| (entries, text))
+                        .map_err(|error| crate::text::chain(&error))
+                });
             match read {
                 Ok((entries, text)) => {
                     let digest = project::digest(text.as_bytes());
@@ -82,7 +84,7 @@ pub fn find(paths: &Paths, env: &Env, search: bool) -> ProjectFile {
                         entries,
                     })
                 }
-                Err(reason) => ProjectFile::Unusable { file, reason },
+                Err(reasons) => ProjectFile::Unusable { file, reasons },
             }
         }
     }

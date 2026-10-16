@@ -287,7 +287,7 @@ and P stand for values that `ncp` supplies.
 | E24, E36, E41, E45 | `ncp auth login S --credential-store file` | To store the tokens in the credential file, run `ncp auth login S --credential-store file` | No: stores in the file |
 | E16 (B51) | `ncp secret set N --server S` | If the value of `N` changed, run `ncp secret set N --server S` to store the new value | No: stores |
 | E70 | `ncp secret set N --server S` | If the URL is correct, run `ncp secret set N --server S` to store the value | No: stores |
-| E85 | `ncp secret set N --server S` | To store a value for the server `S` only, run `ncp secret set N --server S` | No: stores |
+| E85 | `ncp secret set N --server S` | To replace the stored value for each entry with this origin, run `ncp secret set N --server S` | No: stores |
 | E71, E78 | `... --credential-store file` | To store the value in the credential file, run `ncp secret set N --server S --credential-store file` | No: stores |
 | E84 | `give --credential-store file` | To store the value in the credential file, run the command again with `--credential-store file` | No |
 | E75 | `ncp secret set N --server <SERVER>` | To store the value for one server, run `ncp secret set N --server <SERVER>` | No |
@@ -1194,7 +1194,7 @@ because AGENTS.md makes uv the first reference for command-line behavior.
 |---|---|---|
 | A script or an agent reads `error.hint`. | It gets nothing. | No release exists. The field `command` gives a command that reads state as data (rule 10). |
 | An agent needs a command that changes state, for example `ncp trust`, `ncp secret set` or `ncp server remove`. | Today the agent gets it as a bare command. After the change, it must read the command from the sentence. | Rule 10 is the safe default. A change to this policy needs a separate proposal. |
-| A secret shows in a data line, a cause or a hint. | A leak (S3). | Private fields and `map_text` in step 2. Rule 21. New tests read the whole stderr. |
+| A secret shows in a data line, a cause or a hint. | A leak (S3). | Private fields and `map_text` in step 2. Rule 21. New tests read the whole stderr. `map_text` does not change `pages` and `destination`, as before this design. |
 | The redaction of today does not hide a `${NAME}` value of a header or of `env` in a body that a server echoes. | A leak in the text of a cause. | The same is true today in the message. A wider redaction needs a separate proposal, because it changes how `ncp` handles secrets. |
 | A message does not name its server after `ncp` no longer writes the prefix. | The user cannot see which server failed. | The style check (rule 12) fails the test. |
 | An rmcp or reqwest update changes a cause text. | A test of library text fails. | Tests examine the text of `ncp` and only a short part of library text, for example `HTTP 404`. |

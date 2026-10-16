@@ -420,7 +420,18 @@ fn arguments_failure(error: &tool_args::ArgumentError, of: Arguments) -> Failure
             "Give each argument as `key=value`",
         ),
     };
-    let failure = Failure::usage(message).caused_by(error);
+    let failure = Failure::usage(message);
+    // The text of most argument errors names the forms of a tool call,
+    // which a prompt does not take.
+    let failure = match (of, error) {
+        (
+            Arguments::Prompt,
+            tool_args::ArgumentError::NotPair(_)
+            | tool_args::ArgumentError::NotAlone(_)
+            | tool_args::ArgumentError::NotObject(_),
+        ) => failure.cause("Each argument of a prompt must be a `key=value` pair"),
+        _ => failure.caused_by(error),
+    };
     match error {
         tool_args::ArgumentError::JsonPair(_) => failure.hint(fix),
         _ => failure,

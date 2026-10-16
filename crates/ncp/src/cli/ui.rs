@@ -101,7 +101,7 @@ impl Ui {
     /// The message must never hold a secret value.
     pub fn debug(self, server: Option<&str>, message: &str) {
         if self.verbosity >= Verbosity::Verbose {
-            self.note(&note("debug", self.format, server, message));
+            self.note(&debug_line(self.format, server, message));
         }
     }
 
@@ -367,7 +367,8 @@ fn is_raw_control(c: char) -> bool {
 /// A debug line. Text: `debug: server NAME: message`. JSON:
 /// `{"debug": {"server": "...", "message": "..."}}`.
 #[must_use]
-pub fn note(kind: &str, format: Format, server: Option<&str>, message: &str) -> String {
+pub fn debug_line(format: Format, server: Option<&str>, message: &str) -> String {
+    let kind = "debug";
     match format {
         Format::Text => match server {
             Some(server) => format!("{kind}: server {server}: {}\n", indented(message)),
@@ -728,14 +729,22 @@ mod tests {
 
     #[test]
     fn standalone_hints_have_text_and_json_forms() {
-        assert_eq!(note("hint", Format::Text, None, "x"), "hint: x\n");
+        let hint = Hint::run("see the servers", "ncp server list").after("No server is here");
         assert_eq!(
-            note("hint", Format::Text, None, "a\r\nerror: b"),
-            "hint: a\n  error: b\n"
+            hint_text(Format::Text, None, &hint),
+            "hint: No server is here. To see the servers, run `ncp server list`.\n"
+        );
+        assert_eq!(
+            hint_text(Format::Text, None, &Hint::text("a\nerror: b")),
+            "hint: a\\nerror: b\n"
         );
         let value: Value =
-            serde_json::from_str(&note("hint", Format::Json, Some("s"), "x")).unwrap();
-        assert_eq!(value, json!({"hint": {"message": "x", "server": "s"}}));
+            serde_json::from_str(&hint_text(Format::Json, Some("s"), &hint)).unwrap();
+        assert_eq!(
+            value,
+            json!({"hint": {"server": "s", "command": "ncp server list",
+                "message": "No server is here. To see the servers, run `ncp server list`."}})
+        );
     }
 
     #[test]

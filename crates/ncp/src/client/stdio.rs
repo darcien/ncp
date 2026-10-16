@@ -108,7 +108,9 @@ pub fn spawn(
     let stdin = child.stdin().take();
     match (stdout, stdin) {
         (Some(stdout), Some(stdin)) => Ok((Process { child, log_task }, stdout, stdin)),
-        _ => Err(std::io::Error::other("server process has no stdio pipes")),
+        _ => Err(std::io::Error::other(
+            "The server process has no stdio pipes",
+        )),
     }
 }
 

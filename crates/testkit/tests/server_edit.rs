@@ -207,7 +207,10 @@ fn a_duplicate_key_of_the_name_is_an_error() {
             .contains("more than one time"),
         "{error}"
     );
-    assert_eq!(run.hints(), ["Remove the copies of the key first"]);
+    assert_eq!(
+        run.hints(),
+        ["Remove the copies of the key `web` from the file. Then run the command again."]
+    );
 }
 
 #[test]
@@ -394,14 +397,9 @@ fn a_project_file_that_ncp_does_not_use_is_not_changed() {
     home.cwd = dir.clone();
     let run = home.run(&["server", "add", "web", "https://w.example.com/mcp"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert!(
-        run.error()["causes"][0]
-            .as_str()
-            .unwrap()
-            .starts_with("The file is not valid JSONC"),
-        "{}",
-        run.describe()
-    );
+    let causes = run.error()["causes"].clone();
+    assert_eq!(causes[0], "The file is not valid JSONC", "{causes}");
+    assert_eq!(causes.as_array().unwrap().len(), 2, "{causes}");
     assert_eq!(
         run.hints(),
         ["To change the global file, run the command again with `--global`"]
@@ -1008,5 +1006,25 @@ fn add_with_a_url_that_is_not_valid_names_the_reason() {
         run.hints()[0].contains("credential store"),
         "{}",
         run.describe()
+    );
+}
+
+#[test]
+fn the_remove_hint_of_a_named_file_keeps_the_config_file_option() {
+    let home = Home::new("a-named-exists");
+    let path = home.root.join("named.json");
+    std::fs::write(
+        &path,
+        json!({"mcpServers": {"web": {"command": "x"}}}).to_string(),
+    )
+    .unwrap();
+    let file = path.to_str().unwrap();
+    let run = home.run(&["--config-file", file, "server", "add", "web", WEB]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(
+        run.hints(),
+        [format!(
+            "To remove the entry, run `ncp --config-file {file} server remove web`"
+        )]
     );
 }

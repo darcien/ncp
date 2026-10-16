@@ -418,8 +418,11 @@ impl Failure {
         self.with_diagnostic(|diagnostic| diagnostic.context(message.into()))
     }
 
-    /// Applies `f` to each text of the failure. Each redaction uses it, so
-    /// that no text can go out with no redaction.
+    /// Applies `f` to the message, the data lines, the causes and the
+    /// hints. Each redaction uses it. The rare parts (`pages`,
+    /// `destination`) stay as they are, as before this design: a page
+    /// comes from the server, and a destination is an origin of the
+    /// configuration with no `${NAME}` value.
     #[must_use]
     pub fn map_text(self, f: impl Fn(String) -> String) -> Self {
         self.with_diagnostic(|diagnostic| diagnostic.map_text(&f))

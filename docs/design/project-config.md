@@ -282,9 +282,9 @@ Accepted risks:
      project file, as `mise use` in paranoid mode checks the trust before
      it writes. For an untrusted file, `server add` asks the question of
      rule 5 with a TTY (a Yes trusts, then adds; a No writes the ignored
-     record and gives exit 2), and gives exit 2 with the hint `ncp trust
-     --show` with no TTY. For an ignored file, it gives exit 2 with the
-     hint `--global`. After the write, `ncp` trusts the new bytes: the
+     record and gives exit 2), and gives exit 2 with a hint that gives `ncp
+     trust --show` with no TTY. For an ignored file, it gives exit 2 with
+     a hint that gives `--global`. After the write, `ncp` trusts the new bytes: the
      user saw the old bytes and gave the new entry.
    - **Replaced global entry:** `server add --global NAME` warns when a
      trusted project entry has NAME (closes the gap of decision B).
