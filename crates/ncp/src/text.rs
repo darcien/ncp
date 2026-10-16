@@ -57,6 +57,16 @@ pub fn chain_text(error: &dyn std::error::Error) -> String {
     chain(error).join(": ")
 }
 
+/// The text with a capital first letter.
+#[must_use]
+pub fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

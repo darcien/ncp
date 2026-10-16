@@ -402,8 +402,19 @@ pub(super) fn store_failure_of(
     message: String,
     hints: impl IntoIterator<Item = Hint>,
 ) -> Failure {
+    store_failure_about(None, error, message, hints)
+}
+
+/// `store_failure_of` for the work of one server. The message names the
+/// server, and so does an interrupt.
+pub(super) fn store_failure_about(
+    server: Option<&str>,
+    error: &StoreError,
+    message: String,
+    hints: impl IntoIterator<Item = Hint>,
+) -> Failure {
     match error {
-        StoreError::Interrupted => session::interrupted(None),
+        StoreError::Interrupted => session::interrupted(server),
         _ => hints
             .into_iter()
             .fold(store_failure(error).context(message), Failure::hint),
@@ -1095,7 +1106,7 @@ pub(super) async fn store_for_add(
     if let Some((other, _)) = stored.iter().find(|(_, old)| *old != value) {
         return Err(Failure::usage(format!(
             "{} already has another value of {} for {}. Other entries with this origin use it.",
-            capitalized(place_text(*other)),
+            crate::text::capitalized(place_text(*other)),
             code(name.as_str()),
             destination_text(&destination)
         ))
@@ -1397,7 +1408,7 @@ fn one_unlisted(name: &SecretName, place: CredentialPlace, error: &StoreError) -
     );
     let hint = Hint::text(format!(
         "{} can have an item of {} for another destination. {}.",
-        capitalized(place_text(place)),
+        crate::text::capitalized(place_text(place)),
         code(name.as_str()),
         one_server_hint(name).message()
     ));
@@ -1408,14 +1419,6 @@ fn one_unlisted(name: &SecretName, place: CredentialPlace, error: &StoreError) -
 fn unlisted_failure(place: CredentialPlace, error: &StoreError) -> Failure {
     let message = format!("ncp cannot list the items in {}", place_text(place));
     store_failure_of(error, message, [])
-}
-
-fn capitalized(text: &str) -> String {
-    let mut chars = text.chars();
-    chars
-        .next()
-        .map(|first| first.to_uppercase().chain(chars).collect())
-        .unwrap_or_default()
 }
 
 // An invalid entry, or an entry of an untrusted project file, can name the

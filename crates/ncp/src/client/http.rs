@@ -108,11 +108,7 @@ pub fn noted(builder: reqwest::ClientBuilder, notes: &ConnectNotes) -> reqwest::
 
 /// A redirect of the MCP connection. The location shows with its secrets
 /// hidden.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error(
-    "The server answered {status} with a redirect to {}. ncp follows no redirect.",
-    code(.location)
-)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Redirected {
     pub status: u16,
     pub location: String,
@@ -424,11 +420,6 @@ mod tests {
             HttpError::CertFile {
                 path: "/roots.pem".into(),
                 reason: CertReason("The file has no PEM certificate".into()),
-            }
-            .to_string(),
-            Redirected {
-                status: 308,
-                location: "https://h/".into(),
             }
             .to_string(),
         ];

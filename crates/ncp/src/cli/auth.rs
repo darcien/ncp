@@ -251,7 +251,7 @@ async fn place_store(
                     super::render::shell_word(server)
                 ),
             );
-            secrets::store_failure_of(&error, message, [file]).about(server)
+            secrets::store_failure_about(Some(server), &error, message, [file])
         }),
         CredentialPlace::File => Ok(secrets::file(context)),
     }
@@ -580,7 +580,7 @@ pub(super) async fn stored_login(
                 "ncp cannot read the OAuth client of the server {}",
                 code(name)
             );
-            secrets::store_failure_of(&error, message, []).about(name)
+            secrets::store_failure_about(Some(name), &error, message, [])
         })?
         .and_then(|secret| ClientItem::from_secret(&secret).ok());
     if let Some(ClientItem {
@@ -696,7 +696,7 @@ async fn add_required_scopes(
         }
         result.map_err(|error| {
             let message = format!("ncp cannot store the tokens of the server {}", code(name));
-            secrets::store_failure_of(&error, message, []).about(name)
+            secrets::store_failure_about(Some(name), &error, message, [])
         })?;
         context.ui.debug(
             Some(server.name.as_str()),
@@ -787,7 +787,7 @@ impl TokenPlaces {
             );
             match error {
                 crate::store::StoreError::Interrupted => session::interrupted(Some(name)),
-                _ => secrets::store_failure_of(error, message, []).about(name),
+                _ => secrets::store_failure_about(Some(name), error, message, []),
             }
         };
         if let Some(native) = self.native.clone() {
@@ -795,10 +795,10 @@ impl TokenPlaces {
             match secrets::call(context, &native, move |store| store.load(&wanted)).await {
                 Ok(Some(secret)) => return Ok(Some((native, secret))),
                 Ok(None) => {}
+                Err(crate::store::StoreError::Interrupted) => {
+                    return Err(session::interrupted(Some(name)));
+                }
                 Err(error) if secrets::store_is_down(&error) => {
-                    if let crate::store::StoreError::Interrupted = error {
-                        return Err(session::interrupted(Some(name)));
-                    }
                     self.native = None;
                     self.down = Some(error);
                 }
@@ -976,7 +976,7 @@ async fn client_request(
             "ncp cannot read the OAuth client of the server {}",
             code(name)
         );
-        secrets::store_failure_of(&error, message, []).about(name)
+        secrets::store_failure_about(Some(name), &error, message, [])
     })?
     .map(|secret| ClientItem::from_secret(&secret))
     .transpose()
@@ -998,7 +998,7 @@ async fn client_request(
                     "ncp cannot store the OAuth client of the server {}",
                     code(name)
                 );
-                secrets::store_failure_of(&error, message, []).about(name)
+                secrets::store_failure_about(Some(name), &error, message, [])
             })?;
         context.ui.debug(
             Some(name),
@@ -1024,16 +1024,16 @@ fn registration_page(metadata: &AuthorizationMetadata) -> Option<String> {
         .map(String::from)
 }
 
-// "Register a client at `I`." and, when it is safe (B63), the page that
-// tells how.
+// "register a client at `I`." and, when it is safe (B63), the page that
+// tells how. The caller gives the first word its case.
 fn register_there(metadata: &AuthorizationMetadata) -> String {
     let issuer = code(&issuer_of(metadata));
     match registration_page(metadata) {
         Some(page) => format!(
-            "Register a client at {issuer}. The page {} tells how.",
+            "register a client at {issuer}. The page {} tells how.",
             code(&page)
         ),
-        None => format!("Register a client at {issuer}."),
+        None => format!("register a client at {issuer}."),
     }
 }
 
@@ -1049,7 +1049,7 @@ fn no_registration(name: &str, metadata: &AuthorizationMetadata) -> Failure {
     .about(name)
     .hint(format!(
         "{} Then set `clientId`, `clientSecret` and `issuer` in the `oauth` object of the server {}.",
-        register_there(metadata),
+        crate::text::capitalized(&register_there(metadata)),
         code(name)
     ))
 }
@@ -1084,7 +1084,7 @@ fn check_issuer(
         )
     } else {
         format!(
-            "If the server moved on purpose, register a client there. {} Then change {keys} in {object}.",
+            "If the server moved on purpose, {} Then change {keys} in {object}.",
             register_there(metadata)
         )
     };
@@ -1488,7 +1488,8 @@ async fn remove_everywhere(
             }
         }
         Err(crate::store::StoreError::Unavailable(_)) => {}
-        Err(error) => context.ui.warn(&Warning::from(secrets::store_failure_of(
+        Err(error) => context.ui.warn(&Warning::from(secrets::store_failure_about(
+            Some(name),
             &error,
             format!(
                 "ncp cannot open the native store to delete the tokens of the server {}",
@@ -1516,7 +1517,7 @@ fn delete_failure(name: &str, place: CredentialPlace, error: &crate::store::Stor
     );
     match error {
         crate::store::StoreError::Interrupted => session::interrupted(Some(name)),
-        _ => secrets::store_failure_of(error, message, []).about(name),
+        _ => secrets::store_failure_about(Some(name), error, message, []),
     }
 }
 

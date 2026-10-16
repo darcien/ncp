@@ -357,9 +357,23 @@ impl Config {
     /// tool.
     #[must_use]
     pub fn with_project(self, project: Self) -> Self {
+        // A global entry that a project entry replaces does not run, so its
+        // warnings would name a file that is not the file of the entry.
+        let replaced = |warning: &Warning| {
+            warning
+                .server
+                .as_ref()
+                .is_some_and(|server| project.entries.contains_key(server))
+        };
+        let warnings = self
+            .warnings
+            .into_iter()
+            .filter(|warning| !replaced(warning))
+            .chain(project.warnings)
+            .collect();
         Self {
             entries: self.entries.into_iter().chain(project.entries).collect(),
-            warnings: self.warnings.into_iter().chain(project.warnings).collect(),
+            warnings,
             variables: self
                 .variables
                 .into_iter()
@@ -984,6 +998,13 @@ fn wrong_type(field: &str, expected: &'static str) -> EntryError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_global_entry_that_a_project_entry_replaces_gives_no_warning() {
+        let global = load(r#"{"mcpServers": {"s": {"command": "a", "bogus": 1}}}"#);
+        let project = load(r#"{"mcpServers": {"s": {"command": "b"}}}"#);
+        assert_eq!(global.with_project(project).warnings(), []);
+    }
 
     #[test]
     fn error_texts_follow_the_message_rules() {

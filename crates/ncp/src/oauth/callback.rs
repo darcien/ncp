@@ -84,13 +84,13 @@ pub enum CallbackError {
     NotUrl,
     #[error("The URL does not start with {}", code(.0))]
     WrongTarget(String),
-    #[error(
-        "The authorization server refused the login with the error {}",
-        describe(.error, .description.as_deref())
-    )]
+    /// The description is free text of the authorization server, so it
+    /// is a separate cause.
+    #[error("The authorization server refused the login with the error {}", code(.error))]
     Refused {
         error: String,
-        description: Option<String>,
+        #[source]
+        description: Option<ServerText>,
     },
     #[error("The redirect URL has no `{0}` parameter")]
     Missing(&'static str),
@@ -103,12 +103,10 @@ pub enum CallbackError {
     WrongIssuer(String),
 }
 
-fn describe(error: &str, description: Option<&str>) -> String {
-    match description {
-        Some(description) => format!("{} and the text {}", code(error), code(description)),
-        None => code(error),
-    }
-}
+/// Free text of the authorization server.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct ServerText(pub String);
 
 /// Reads a redirect URL: from the listener, or pasted by the user.
 ///
@@ -150,7 +148,7 @@ pub fn parse(
         check_issuer(find("iss"), expected)?;
         return Err(CallbackError::Refused {
             error,
-            description: find("error_description"),
+            description: find("error_description").map(ServerText),
         });
     }
     Ok(Callback {
@@ -262,9 +260,11 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(
-            error.to_string(),
-            "The authorization server refused the login with the error `access_denied` and the \
-             text `no consent`"
+            crate::text::chain(&error),
+            [
+                "The authorization server refused the login with the error `access_denied`",
+                "no consent"
+            ]
         );
     }
 
