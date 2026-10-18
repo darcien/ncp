@@ -859,6 +859,47 @@ fn client_secret_is_stored_for_the_origin_of_the_issuer() {
 }
 
 #[test]
+fn a_bad_reference_and_an_expanded_scheme_do_not_show_their_text() {
+    let home = Home::new("bad-reference").set("MCP_URL", "sk-live-scheme://h.test/mcp");
+    home.configure(&json!({
+        "typo": {"type": "http", "url": "https://example.com/mcp",
+            "headers": {"Authorization": "Bearer ${sk-live-abc123}"}},
+        "scheme": {"type": "http", "url": "${MCP_URL}"}
+    }));
+    let run = home.run(&["server", "list"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let invalid = &run.stdout()["invalid"];
+    assert_eq!(invalid[0]["error"], "The field `url` is not valid");
+    assert_eq!(
+        invalid[0]["causes"],
+        json!(["The URL scheme is not `https` or `http`"])
+    );
+    assert_eq!(
+        invalid[1]["causes"],
+        json!(["The reference is not a variable name"])
+    );
+    for args in [&["server", "list"][..], &["tool", "list", "typo"][..]] {
+        for format in ["json", "text"] {
+            let args: Vec<&str> = ["--output-format", format]
+                .into_iter()
+                .chain(args.iter().copied())
+                .collect();
+            let run = home.run(&args);
+            let all = format!("{}{}", run.stdout_text(), run.stderr_text());
+            assert!(!all.contains("sk-live"), "{all}");
+        }
+    }
+    let run = home.run(&["tool", "list", "typo"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(
+        run.hints()
+            .contains(&"ncp supports only `${NAME}` and `${env:NAME}`".to_string()),
+        "{}",
+        run.describe()
+    );
+}
+
+#[test]
 fn server_list_reads_no_store() {
     let home = Home::new("list-no-store").with_fake_keychain();
     home.configure(&env_server());

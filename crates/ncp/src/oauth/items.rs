@@ -108,10 +108,24 @@ pub struct ItemError {
     pub reason: ItemReason,
 }
 
-/// The text of the JSON parser.
+/// The kind of the problem of an item. It has no text of the JSON parser,
+/// because the parser quotes a string value, and an item holds secrets
+/// (design B82).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
-pub struct ItemReason(pub String);
+pub struct ItemReason(&'static str);
+
+impl ItemReason {
+    #[must_use]
+    pub fn of(error: &serde_json::Error) -> Self {
+        Self(match error.classify() {
+            serde_json::error::Category::Syntax => "The item is not valid JSON",
+            serde_json::error::Category::Eof => "The item ends before the end of its JSON",
+            serde_json::error::Category::Data => "The JSON does not have the fields of the item",
+            serde_json::error::Category::Io => "ncp cannot read the JSON of the item",
+        })
+    }
+}
 
 impl ClientItem {
     /// The item as a secret: compact JSON, because the macOS Keychain
@@ -130,7 +144,7 @@ impl ClientItem {
     pub fn from_secret(secret: &Secret) -> Result<Self, ItemError> {
         serde_json::from_str(secret.expose()).map_err(|error| ItemError {
             item: "client",
-            reason: ItemReason(error.to_string()),
+            reason: ItemReason::of(&error),
         })
     }
 
@@ -152,7 +166,7 @@ pub fn to_secret(item: &'static str, value: &impl Serialize) -> Result<Secret, I
         .map(Secret::new)
         .map_err(|error| ItemError {
             item,
-            reason: ItemReason(error.to_string()),
+            reason: ItemReason::of(&error),
         })
 }
 
@@ -253,7 +267,7 @@ mod tests {
     fn error_texts_follow_the_message_rules() {
         let error = ItemError {
             item: "tokens",
-            reason: ItemReason("x".into()),
+            reason: ItemReason("x"),
         };
         crate::style::assert_style(&[error.to_string()]);
     }

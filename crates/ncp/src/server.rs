@@ -85,8 +85,10 @@ pub struct ServerUrl(Url);
 pub enum UrlError {
     #[error("The URL cannot be parsed")]
     Invalid(#[from] url::ParseError),
-    #[error("The URL scheme {} is not `https` or `http`", crate::text::code(.0))]
-    Scheme(String),
+    /// The scheme does not show: it can come from a `${NAME}` value, and the
+    /// target shows the URL as the file writes it (design B82).
+    #[error("The URL scheme is not `https` or `http`")]
+    Scheme,
     #[error("The URL has no host")]
     NoHost,
     #[error("ncp permits `http` only for a loopback host")]
@@ -109,7 +111,7 @@ impl ServerUrl {
             "https" => Ok(Self(url)),
             "http" if is_loopback(&host) => Ok(Self(url)),
             "http" => Err(UrlError::PlainHttp),
-            other => Err(UrlError::Scheme(other.to_string())),
+            _ => Err(UrlError::Scheme),
         }
     }
 
@@ -260,7 +262,7 @@ mod tests {
             NameError::TooLong.to_string(),
             NameError::BadCharacter("a b".into()).to_string(),
             UrlError::Invalid(url::ParseError::EmptyHost).to_string(),
-            UrlError::Scheme("ftp".into()).to_string(),
+            UrlError::Scheme.to_string(),
             UrlError::NoHost.to_string(),
             UrlError::PlainHttp.to_string(),
             UrlError::Credentials.to_string(),
@@ -358,7 +360,7 @@ mod tests {
     fn rejects_other_schemes_and_text_that_is_not_a_url() {
         assert_eq!(
             ServerUrl::parse("ws://localhost/mcp"),
-            Err(UrlError::Scheme("ws".into()))
+            Err(UrlError::Scheme)
         );
         assert!(matches!(
             ServerUrl::parse("example.com"),

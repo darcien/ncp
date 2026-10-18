@@ -8,6 +8,7 @@ use super::{
 };
 use crate::{
     config::EntryError,
+    expand::ExpandError,
     server::UrlError,
     store::{StoreError, StoreFix},
 };
@@ -26,6 +27,10 @@ pub fn entry_hints(error: &EntryError) -> Vec<Hint> {
         EntryError::SecretWithoutIssuer { .. } => {
             "Set `oauth.issuer` to the issuer of the authorization server where you registered the client"
         }
+        EntryError::Variable {
+            error: ExpandError::BadReference(_),
+            ..
+        } => "ncp supports only `${NAME}` and `${env:NAME}`",
         // The text of these errors names the field and the problem, and
         // the fix is clear from it.
         EntryError::Name(_)
@@ -34,7 +39,7 @@ pub fn entry_hints(error: &EntryError) -> Vec<Hint> {
         | EntryError::UnknownType(_)
         | EntryError::Missing(_)
         | EntryError::WrongType { .. }
-        | EntryError::Url(UrlError::Invalid(_) | UrlError::Scheme(_) | UrlError::NoHost)
+        | EntryError::Url(UrlError::Invalid(_) | UrlError::Scheme | UrlError::NoHost)
         | EntryError::Variable { .. }
         | EntryError::WithoutClientId(_)
         | EntryError::IssuersDisagree
@@ -88,5 +93,17 @@ mod tests {
         let hints = entry_hints(&EntryError::Url(UrlError::PlainHttp));
         assert_eq!(hints, [Hint::text("Use an `https` URL")]);
         assert_eq!(entry_hints(&EntryError::NoTransport), []);
+    }
+
+    #[test]
+    fn a_bad_reference_gives_the_forms_that_ncp_supports() {
+        let error = EntryError::Variable {
+            field: "headers.Authorization".into(),
+            error: ExpandError::BadReference(crate::expand::BadReference::Prefix),
+        };
+        assert_eq!(
+            entry_hints(&error),
+            [Hint::text("ncp supports only `${NAME}` and `${env:NAME}`")]
+        );
     }
 }

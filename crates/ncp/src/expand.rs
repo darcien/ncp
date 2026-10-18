@@ -16,8 +16,43 @@ pub enum ExpandError {
     Unset(String),
     #[error("A `${{` has no closing `}}`")]
     Unterminated,
-    #[error("The name {} is not a variable name", crate::text::code(.0))]
-    BadName(String),
+    #[error("{0}")]
+    BadReference(BadReference),
+}
+
+/// The problem of a `${...}` that is not a valid reference. The error
+/// does not show the text in the braces: text that is not a valid
+/// reference is literal text of the value, and a literal value of a
+/// header or of `env` never shows (design B82). The problem comes from
+/// the syntax only, so that the user of a file from another tool knows
+/// what to change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum BadReference {
+    #[error("The reference is empty")]
+    Empty,
+    /// `${VAR:-default}` of Claude Code and of a shell.
+    #[error("The reference has a default value (`:-`)")]
+    Default,
+    /// For example `${input:id}` of VS Code.
+    #[error("The reference has a prefix that is not `env:`")]
+    Prefix,
+    #[error("The reference is not a variable name")]
+    NotAName,
+}
+
+impl BadReference {
+    fn of(reference: &str) -> Self {
+        let name = reference.strip_prefix("env:").unwrap_or(reference);
+        if name.is_empty() {
+            Self::Empty
+        } else if name.contains(":-") {
+            Self::Default
+        } else if name.contains(':') {
+            Self::Prefix
+        } else {
+            Self::NotAName
+        }
+    }
 }
 
 /// Replaces each `${VAR}` and `${env:VAR}` in `text` with its value from
@@ -71,7 +106,7 @@ fn parts(text: &str) -> Result<Vec<Part<'_>>, ExpandError> {
         let (reference, next) = after.split_once('}').ok_or(ExpandError::Unterminated)?;
         let name = reference.strip_prefix("env:").unwrap_or(reference);
         if !is_variable_name(name) {
-            return Err(ExpandError::BadName(reference.to_string()));
+            return Err(ExpandError::BadReference(BadReference::of(reference)));
         }
         found.push(Part::Text(before));
         found.push(Part::Variable(name));
@@ -142,7 +177,10 @@ mod tests {
         let texts = [
             ExpandError::Unset("A".into()).to_string(),
             ExpandError::Unterminated.to_string(),
-            ExpandError::BadName("1a".into()).to_string(),
+            ExpandError::BadReference(BadReference::Empty).to_string(),
+            ExpandError::BadReference(BadReference::Default).to_string(),
+            ExpandError::BadReference(BadReference::Prefix).to_string(),
+            ExpandError::BadReference(BadReference::NotAName).to_string(),
         ];
         crate::style::assert_style(&texts);
     }
@@ -224,22 +262,19 @@ mod tests {
 
     #[test]
     fn rejects_other_variable_forms_inside_braces() {
-        assert_eq!(
-            expand("${HOME:-x}", &env()),
-            Err(ExpandError::BadName("HOME:-x".into()))
-        );
-        assert_eq!(
-            expand("${env:}", &env()),
-            Err(ExpandError::BadName("env:".into()))
-        );
-        assert_eq!(
-            expand("${input:token}", &env()),
-            Err(ExpandError::BadName("input:token".into()))
-        );
-        assert_eq!(
-            expand("${}", &env()),
-            Err(ExpandError::BadName(String::new()))
-        );
+        let bad = |problem| Err(ExpandError::BadReference(problem));
+        assert_eq!(expand("${HOME:-x}", &env()), bad(BadReference::Default));
+        assert_eq!(expand("${env:HOME:-x}", &env()), bad(BadReference::Default));
+        assert_eq!(expand("${env:}", &env()), bad(BadReference::Empty));
+        assert_eq!(expand("${}", &env()), bad(BadReference::Empty));
+        assert_eq!(expand("${input:token}", &env()), bad(BadReference::Prefix));
+        assert_eq!(expand("${1a}", &env()), bad(BadReference::NotAName));
+    }
+
+    #[test]
+    fn a_bad_reference_does_not_show_its_text() {
+        let error = expand("Bearer ${sk-live-abc123}", &env()).unwrap_err();
+        assert!(!error.to_string().contains("sk-live"), "{error}");
     }
 
     #[test]

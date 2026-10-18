@@ -168,7 +168,7 @@ fn token_values(credentials: &StoredCredentials) -> Vec<String> {
 pub fn parse_item(secret: &Secret) -> Result<TokensItem, items::ItemError> {
     let error = |error: serde_json::Error| items::ItemError {
         item: "tokens",
-        reason: items::ItemReason(error.to_string()),
+        reason: items::ItemReason::of(&error),
     };
     let json: Value = serde_json::from_str(secret.expose()).map_err(error)?;
     let scope_fields = items::SCOPE_FIELDS
@@ -657,6 +657,20 @@ mod tests {
         let fresh = TokenStore::new(server(), backing).with_known(read.clone());
         fresh.load().await.unwrap();
         assert_eq!(read.hide("saved-at c1"), "**** c1");
+    }
+
+    #[test]
+    fn an_item_error_does_not_show_a_value_of_the_item() {
+        let secret = Secret::new(r#"{"client_id":"c","token_response":"tok-s3cret"}"#.into());
+        let Err(error) = parse_item(&secret) else {
+            unreachable!()
+        };
+        let text = crate::text::chain_text(&error);
+        assert!(!text.contains("tok-s3cret"), "{text}");
+        assert!(
+            text.contains("The JSON does not have the fields of the item"),
+            "{text}"
+        );
     }
 
     #[tokio::test]
