@@ -211,7 +211,9 @@ reason for each rule.
     each other place, also in its encoded forms. After this change, the
     same function runs on the message, on each data line, on each cause and
     on each hint, at the same places. No part names a stored URL or issuer
-    (B70). The redaction does not get wider.
+    (B70). This change did not make the redaction wider. Later, B81
+    (cli.md, 2026-10-18) made it hide each known secret value of the
+    server, in a fixed list of forms, to meet S3 and I6.
 
 22. **Quiet.** `-q` hides warnings with their causes and hints, standalone
     hints, and progress. An error always shows with its causes and its
@@ -1182,7 +1184,7 @@ because AGENTS.md makes uv the first reference for command-line behavior.
 | 18 Indent | The same cause indent (research section 3). Lines of the author are at the indent of the author. A new line in a hint goes to column 0. | A line from a server cannot start at column 0 (B60). A hint is `ncp` text, and rule 14 quotes a value with a new line, so a hint needs no second line. |
 | 19 Empty line before a hint | The same (research section 4, and `uv-tool-commands` `upgrade.rs` for a standalone hint) | – |
 | 20 Warnings | `_once` warnings show one time in a run | Only an elicitation repeats a warning: it can run 8 rounds (B63) and give the same warning in each round. A set in the elicitor of one request needs no shared state in `Ui`. |
-| 21 Redaction | – | Requirement S3. Causes now hold the text of reqwest and rmcp, which can hold the server URL. A wider redaction changes how `ncp` handles secrets, so it needs a separate proposal. |
+| 21 Redaction | – | Requirement S3. Causes now hold the text of reqwest and rmcp, which can hold the server URL. A wider redaction changes how `ncp` handles secrets, so it needed a separate proposal: B81. |
 | 22 Quiet | `-q` keeps the causes and hints of an error (research section 5). `-qq` shows nothing, also no error. | B74 already keeps them. An agent needs the code, the server and the hints of the error. The exit code alone does not tell which server or which fix. |
 | 23 No wrap | Wraps messages and causes, not hints | A wrap breaks a long command that a person copies. Without a wrap, `grep` finds a whole message on one line. A wrap on a terminal needs the terminal width, from `COLUMNS` or from a new dependency. A wrap on a terminal is optional later work. |
 | 24 Same parts in JSON | No JSON errors | Requirement I1 and cli.md section 4. A separate `data` keeps server text out of `message` (rule 15). |
@@ -1195,7 +1197,7 @@ because AGENTS.md makes uv the first reference for command-line behavior.
 | A script or an agent reads `error.hint`. | It gets nothing. | No release exists. The field `command` gives a command that reads state as data (rule 10). |
 | An agent needs a command that changes state, for example `ncp trust`, `ncp secret set` or `ncp server remove`. | Today the agent gets it as a bare command. After the change, it must read the command from the sentence. | Rule 10 is the safe default. A change to this policy needs a separate proposal. |
 | A secret shows in a data line, a cause or a hint. | A leak (S3). | Private fields and `map_text` in step 2. Rule 21. New tests read the whole stderr. `map_text` does not change `pages` and `destination`, as before this design. |
-| The redaction of today does not hide a `${NAME}` value of a header or of `env` in a body that a server echoes. | A leak in the text of a cause. | The same is true today in the message. A wider redaction needs a separate proposal, because it changes how `ncp` handles secrets. |
+| A server echoes a known secret value in a body, in a JSON-RPC message, or in a form that the redaction does not know. | A leak in the text of a cause or a trace (S3). | B81 hides each known value of the server in a fixed list of forms, and states the forms that still show. |
 | A message does not name its server after `ncp` no longer writes the prefix. | The user cannot see which server failed. | The style check (rule 12) fails the test. |
 | An rmcp or reqwest update changes a cause text. | A test of library text fails. | Tests examine the text of `ncp` and only a short part of library text, for example `HTTP 404`. |
 | B78 reads `HTTP 404` from the Display text of the error. | The check fails when the Display text no longer holds the chain. | `is_not_found` reads the whole source chain (step 6). The test with a local `404` server stays. |

@@ -504,6 +504,27 @@ orders the work. Research: `docs/research/uv-output-messages.md`.
    documents of one area. Done on 2026-10-16, with an adversarial review
    after each step.
 
+## Milestone 21: hide each known secret
+
+Design: decisions B81 and B82 in `docs/design/cli.md`, accepted by the user
+on 2026-10-18 after an adversarial review of three agents. No requirement
+changes: the work makes the code meet S3 and I6. Do the items in order.
+Each item is one or more small commits.
+
+1. Known values (B81): one list of the known secret values of a server.
+   Each message, data line, cause and hint of an error or a warning, and
+   each `-vv` trace line, hides each value of the list. Today only the
+   `${NAME}` values of `url` are hidden, and the JSON-RPC traces are not
+   changed.
+2. Forms (B81): make the forms of each value from the encoders of the
+   `url` crate, form encoding and `serde_json`, in place of the list of
+   today. Tests show each form of B81 and each form that still shows.
+3. Bad references and other values in errors (B82): the cause of a bad
+   `${...}` comes from its syntax, and no error shows the text inside the
+   braces, the URL scheme, or the text of the JSON parser for a store
+   item.
+4. An adversarial review of items 1 to 3, with fixes.
+
 ## Last milestone: distribution (gate)
 
 The workflow needs action pins from github.com. The
