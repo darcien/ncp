@@ -116,15 +116,19 @@ pub struct ItemError {
 pub struct ItemReason(&'static str);
 
 impl ItemReason {
+    /// The problem of an item that `ncp` reads.
     #[must_use]
     pub fn of(error: &serde_json::Error) -> Self {
         Self(match error.classify() {
             serde_json::error::Category::Syntax => "The item is not valid JSON",
-            serde_json::error::Category::Eof => "The item ends before the end of its JSON",
+            serde_json::error::Category::Eof => "The JSON of the item is not complete",
             serde_json::error::Category::Data => "The JSON does not have the fields of the item",
             serde_json::error::Category::Io => "ncp cannot read the JSON of the item",
         })
     }
+
+    /// The problem of an item that `ncp` writes.
+    const WRITE: Self = Self("ncp cannot write the item as JSON");
 }
 
 impl ClientItem {
@@ -164,9 +168,9 @@ impl ClientItem {
 pub fn to_secret(item: &'static str, value: &impl Serialize) -> Result<Secret, ItemError> {
     serde_json::to_string(value)
         .map(Secret::new)
-        .map_err(|error| ItemError {
+        .map_err(|_| ItemError {
             item,
-            reason: ItemReason::of(&error),
+            reason: ItemReason::WRITE,
         })
 }
 
@@ -269,7 +273,14 @@ mod tests {
             item: "tokens",
             reason: ItemReason("x"),
         };
-        crate::style::assert_style(&[error.to_string()]);
+        let parse = |text: &str| ItemReason::of(&serde_json::from_str::<Value>(text).unwrap_err());
+        let reasons = [parse("{"), parse("x"), ItemReason::WRITE];
+        let data = serde_json::from_str::<ClientItem>("{}").unwrap_err();
+        let texts: Vec<String> = std::iter::once(error.to_string())
+            .chain(reasons.iter().map(ToString::to_string))
+            .chain([ItemReason::of(&data).to_string()])
+            .collect();
+        crate::style::assert_style(&texts);
     }
 
     #[test]

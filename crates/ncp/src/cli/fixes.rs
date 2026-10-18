@@ -30,7 +30,8 @@ pub fn entry_hints(error: &EntryError) -> Vec<Hint> {
         EntryError::Variable {
             error: ExpandError::BadReference(_),
             ..
-        } => "ncp supports only `${NAME}` and `${env:NAME}`",
+        }
+        | EntryError::BadClientSecret => "ncp supports only `${NAME}` and `${env:NAME}`",
         // The text of these errors names the field and the problem, and
         // the fix is clear from it.
         EntryError::Name(_)
@@ -42,8 +43,7 @@ pub fn entry_hints(error: &EntryError) -> Vec<Hint> {
         | EntryError::Url(UrlError::Invalid(_) | UrlError::Scheme | UrlError::NoHost)
         | EntryError::Variable { .. }
         | EntryError::WithoutClientId(_)
-        | EntryError::IssuersDisagree
-        | EntryError::BadClientSecret => return Vec::new(),
+        | EntryError::IssuersDisagree => return Vec::new(),
     };
     vec![Hint::text(hint)]
 }

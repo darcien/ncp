@@ -12,7 +12,7 @@ use std::{
 use serde_json::{Value, json};
 
 use super::outcome::{Diagnostic, Failure, Hint, Warning};
-use crate::client::stdio::ServerLog;
+use crate::{client::stdio::ServerLog, redact::Known};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
@@ -62,9 +62,35 @@ impl Verbosity {
 pub struct Ui {
     pub format: Format,
     pub verbosity: Verbosity,
+    /// The secret values that `ncp` knows in this run. Each error,
+    /// warning, hint and debug line hides them, so that no output place can
+    /// forget it (design B81). The list lives for the whole process, and a
+    /// reference keeps `Ui` a copy for each closure and thread.
+    known: &'static Known,
 }
 
 impl Ui {
+    #[must_use]
+    pub fn new(format: Format, verbosity: Verbosity) -> Self {
+        Self {
+            format,
+            verbosity,
+            known: Box::leak(Box::default()),
+        }
+    }
+
+    /// The list that gets each secret value when `ncp` reads it.
+    #[must_use]
+    pub fn known(self) -> &'static Known {
+        self.known
+    }
+
+    /// The text with each known secret value hidden.
+    #[must_use]
+    pub fn hide(self, text: &str) -> String {
+        self.known.hide(text)
+    }
+
     /// # Errors
     ///
     /// Returns a failure when `ncp` cannot write to stdout.
@@ -86,7 +112,8 @@ impl Ui {
 
     pub fn warn(self, warning: &Warning) {
         if self.verbosity > Verbosity::Quiet {
-            self.note(&warning_text(self.format, warning));
+            let warning = warning.clone().map_text(|text| self.hide(&text));
+            self.note(&warning_text(self.format, &warning));
         }
     }
 
@@ -94,14 +121,16 @@ impl Ui {
     /// no prefix.
     pub fn hint(self, server: Option<&str>, hint: &Hint) {
         if self.verbosity > Verbosity::Quiet {
-            self.note(&hint_text(self.format, server, hint));
+            let hint = hint.clone().map_text(&|text: String| self.hide(&text));
+            self.note(&hint_text(self.format, server, &hint));
         }
     }
 
-    /// The message must never hold a secret value.
+    /// The message can hold text of a server, for example the issuer of
+    /// its metadata, so it hides the known values too.
     pub fn debug(self, server: Option<&str>, message: &str) {
         if self.verbosity >= Verbosity::Verbose {
-            self.note(&debug_line(self.format, server, message));
+            self.note(&debug_line(self.format, server, &self.hide(message)));
         }
     }
 
@@ -110,7 +139,8 @@ impl Ui {
     }
 
     pub fn error(self, failure: &Failure) {
-        self.note(&error_text(self.format, failure));
+        let failure = failure.clone().map_text(|text| self.hide(&text));
+        self.note(&error_text(self.format, &failure));
     }
 
     fn note(self, text: &str) {

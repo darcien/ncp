@@ -27,7 +27,6 @@ use crate::{
     project::{self, Project, Trust},
     protocol_version::{ProtocolVersion, VersionCache},
     protocol_version_file,
-    redact::Known,
     text::{code, path_code},
 };
 
@@ -454,7 +453,6 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
                 observer: &prepared.observer,
                 notes: &prepared.notes,
                 challenge: challenge.as_deref(),
-                known: &prepared.known,
             };
             let Some(authorized) = stored_login(context, &login).await? else {
                 return Err(prepared.connect_failure(context, server, &error));
@@ -499,7 +497,7 @@ async fn stored_login(
     )
     .await
     .map_err(|failure| {
-        let failure = failure.map_text(|text| hide_secrets(login.server, login.known, &text));
+        let failure = failure.map_text(|text| file_url(login.server, &text));
         with_tls_hint(context.env, &login.notes.get(), failure)
     })
 }
@@ -533,7 +531,6 @@ pub async fn open_with_login(
         observer: &prepared.observer,
         notes: &prepared.notes,
         challenge,
-        known: &prepared.known,
     };
     let Some(authorized) = stored_login(context, &login).await? else {
         return Err(needs_login());
@@ -581,8 +578,6 @@ struct Prepared {
     /// The names of the values that came from a store.
     stored: Vec<SecretName>,
     observer: client::observe::Observer,
-    /// The secret values of the server that output hides.
-    known: Known,
     http: Option<reqwest::Client>,
     /// What the HTTP client saw that a transport error does not say.
     notes: client::http::ConnectNotes,
@@ -613,10 +608,9 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
         stored,
         secrets,
     } = super::secrets::resolve(context, server).await?;
-    let known = known_of(server);
-    known.add(secrets);
-    let observer =
-        diagnostics::observer(ui, name, context.timings.clone(), shown_url(server, &known));
+    know_url_values(ui, server);
+    ui.known().add(secrets);
+    let observer = diagnostics::observer(ui, name, context.timings.clone(), shown_url(server, ui));
     // Only an http server needs the HTTP client. Thus a bad SSL_CERT_FILE
     // does not stop a stdio server.
     let notes = client::http::ConnectNotes::default();
@@ -641,8 +635,7 @@ async fn prepare(context: &Context<'_>, server: &Server) -> Result<Prepared, Fai
         observer,
         elicitor: context
             .interactive
-            .then(|| super::ask::elicitor(context, name, known.clone())),
-        known,
+            .then(|| super::ask::elicitor(context, name)),
         http,
         notes,
         server_log: ui.server_log(name),
@@ -658,7 +651,7 @@ impl Prepared {
         error: &ConnectError,
     ) -> Failure {
         let failure = connect_failure(context.env, server, error, &self.notes.get())
-            .map_text(|text| hide_secrets(server, &self.known, &text));
+            .map_text(|text| file_url(server, &text));
         if error.needs_authorization() {
             with_secret_hints(failure, server, &self.stored)
         } else {
@@ -681,7 +674,6 @@ impl Prepared {
             authorized: None,
             progress: &self.progress,
             elicitor: self.elicitor.as_ref(),
-            known: &self.known,
         }
     }
 
@@ -713,7 +705,7 @@ fn cached_version_text(cached: Option<&ProtocolVersion>) -> String {
 }
 
 fn route_text(env: &Env, server: &Server, remote: &config::RemoteServer) -> String {
-    let shown = hide_secrets(server, &known_of(server), remote.url.as_str());
+    let shown = file_url(server, remote.url.as_str());
     match url::Url::parse(remote.url.as_str()) {
         Ok(target) => format!("route to {shown}: {}", crate::proxy::route(env, &target)),
         Err(_) => format!("route to {shown}: unknown"),
@@ -916,13 +908,10 @@ fn through_proxy(env: &Env, url: &crate::server::ServerUrl, failure: Failure) ->
 /// A text that is not a URL, for example a body or an error of a trace,
 /// gets only the hidden known values. rmcp puts the server URL into OAuth
 /// bodies and errors, also percent-encoded.
-pub fn shown_url(
-    server: &Server,
-    known: &Known,
-) -> impl Fn(&str) -> String + Send + Sync + 'static {
-    let (server, known) = (server.clone(), known.clone());
+pub fn shown_url(server: &Server, ui: Ui) -> impl Fn(&str) -> String + Send + Sync + 'static {
+    let server = server.clone();
     move |text| {
-        let hidden = hide_secrets(&server, &known, text);
+        let hidden = ui.hide(&file_url(&server, text));
         // "error: ..." is a valid URL with the scheme "error", so only a
         // web URL counts.
         let is_url = (text.starts_with("http://") || text.starts_with("https://"))
@@ -935,44 +924,33 @@ pub fn shown_url(
     }
 }
 
-/// The secret values that `ncp` knows for the server before it reads a
-/// store: the `${NAME}` values of the URL.
-#[must_use]
-pub fn known_of(server: &Server) -> Known {
-    let known = Known::default();
+/// Adds the `${NAME}` values of the server URL to the known secrets. They
+/// are known before `ncp` reads a store.
+pub fn know_url_values(ui: Ui, server: &Server) {
     if let Transport::Http(remote) | Transport::Sse(remote) = &server.transport {
-        known.add(remote.url_values.iter().cloned());
+        ui.known().add(remote.url_values.iter().cloned());
     }
-    known
 }
 
 /// The message with the expanded URL replaced by the URL as the file writes
-/// it, with its secret query values and user information hidden, and with
-/// each known secret value hidden (design B81). HTTP errors hold the URL,
-/// and a server can echo a value of a header or of `env`.
-pub fn hide_secrets(server: &Server, known: &Known, message: &str) -> String {
+/// it, with its secret query values and user information hidden. HTTP
+/// errors hold the URL. The output hides the other known values (`Ui`).
+pub fn file_url(server: &Server, message: &str) -> String {
     match (&server.transport, &server.target) {
         (Transport::Http(remote) | Transport::Sse(remote), Target::Remote { url }) => {
             let shown = crate::redact::url(url);
-            // Replace the whole URL first, so that the URL as the file
-            // writes it shows. Then hide each value in other places, for
-            // example in a URL that rmcp makes from it.
-            let parts: Vec<&str> = message.split(remote.url.as_str()).collect();
-            parts
-                .iter()
-                .map(|part| match url::Url::parse(remote.url.as_str()) {
-                    // reqwest names the URL in its parsed form.
-                    Ok(parsed) => part
-                        .split(parsed.as_str())
-                        .map(|piece| known.hide(piece))
-                        .collect::<Vec<_>>()
-                        .join(&shown),
-                    Err(_) => known.hide(part),
+            // reqwest names the URL in its parsed form.
+            let parsed = url::Url::parse(remote.url.as_str())
+                .map(|parsed| parsed.to_string())
+                .unwrap_or_default();
+            [remote.url.as_str(), parsed.as_str()]
+                .into_iter()
+                .filter(|expanded| !expanded.is_empty())
+                .fold(message.to_string(), |text, expanded| {
+                    text.replace(expanded, &shown)
                 })
-                .collect::<Vec<_>>()
-                .join(&shown)
         }
-        _ => known.hide(message),
+        _ => message.to_string(),
     }
 }
 
@@ -1090,9 +1068,6 @@ fn page_failure(server: &str, method: &str, data: &rmcp::ErrorData) -> Option<Fa
     })
 }
 
-/// The failure of a request. The caller hides the known secret values of
-/// the connection, as `with_connection` does for each failure of a
-/// command.
 pub fn request_failure(server: &Server, method: &str, error: &RequestError) -> Failure {
     if let Some(text) = error.token_store_error() {
         return token_store_failure(server, &text);
@@ -1138,7 +1113,7 @@ pub fn request_failure(server: &Server, method: &str, error: &RequestError) -> F
         }
         _ => request_failed(name, method).caused_by(error),
     };
-    failure.about(name)
+    failure.about(name).map_text(|text| file_url(server, &text))
 }
 
 fn request_failed(server: &str, method: &str) -> Failure {
@@ -1178,7 +1153,7 @@ mod tests {
     }
 
     #[test]
-    fn redaction_hides_a_url_value_in_each_part_of_a_failure() {
+    fn each_part_of_a_failure_shows_the_url_as_the_file_writes_it() {
         let env = Env::from([("K".to_string(), "s3cr3t".to_string())]);
         let config = config::parse(
             r#"{"mcpServers": {"web": {"type": "http", "url": "https://h/mcp?key=${K}"}}}"#,
@@ -1191,7 +1166,7 @@ mod tests {
             .data(format!("d {url}"))
             .cause(format!("error sending request for url ({url})"))
             .hint(format!("h {url}"))
-            .map_text(|text| hide_secrets(server, &known_of(server), &text));
+            .map_text(|text| file_url(server, &text));
         let shown = format!("{failure:?}");
         assert!(!shown.contains("s3cr3t"), "{shown}");
         assert_eq!(failure.diagnostic().causes().len(), 1);
@@ -1244,10 +1219,10 @@ mod tests {
         let failure = select(
             &loaded,
             "gh",
-            Ui {
-                format: super::super::ui::Format::Json,
-                verbosity: super::super::ui::Verbosity::Normal,
-            },
+            Ui::new(
+                super::super::ui::Format::Json,
+                super::super::ui::Verbosity::Normal,
+            ),
         )
         .unwrap_err();
         assert!(failure.message().contains("does not exist"), "{failure:?}");

@@ -24,7 +24,6 @@ use super::{
 use crate::{
     client::{Continuation, Elicitor},
     elicit::{self, Action, Request},
-    redact::Known,
     text::code,
 };
 
@@ -75,9 +74,6 @@ struct Asker {
     /// the same warning in each round, so each warning shows one time
     /// (design rule 20).
     warned: Arc<Mutex<Vec<Warning>>>,
-    /// The secret values of the server, which a warning hides: a question
-    /// of the server can echo one.
-    known: Known,
 }
 
 // Text of the server in a block, with escapes. Each line after the first gets
@@ -92,7 +88,7 @@ fn single(text: &str) -> String {
 }
 
 impl Asker {
-    fn new(context: &Context<'_>, server: &str, known: Known) -> Self {
+    fn new(context: &Context<'_>, server: &str) -> Self {
         Self {
             ui: context.ui,
             server: server.to_string(),
@@ -100,14 +96,11 @@ impl Asker {
             cancel: context.cancel.clone(),
             limit: context.request_limit,
             warned: Arc::default(),
-            known,
         }
     }
 
     fn warn(&self, warning: Warning) {
-        let warning = warning
-            .about(self.server.as_str())
-            .map_text(|text| self.known.hide(&text));
+        let warning = warning.about(self.server.as_str());
         let new = self.warned.lock().map_or(true, |mut warned| {
             let new = !warned.contains(&warning);
             if new {
@@ -342,8 +335,8 @@ impl Asker {
 /// request of its own. No answer (the end of stdin, the time limit or
 /// Ctrl-C) is a cancel.
 #[must_use]
-pub fn elicitor(context: &Context<'_>, server: &str, known: Known) -> Elicitor {
-    let asker = Asker::new(context, server, known);
+pub fn elicitor(context: &Context<'_>, server: &str) -> Elicitor {
+    let asker = Asker::new(context, server);
     std::sync::Arc::new(move |params| {
         let asker = asker.clone();
         Box::pin(async move {
@@ -404,7 +397,7 @@ impl<T> Rounds for crate::client::Answer<T> {
 ///
 /// Returns exit 130 at Ctrl-C.
 pub async fn confirm(context: &Context<'_>, question: &str) -> Result<Option<bool>, Failure> {
-    let asker = Asker::new(context, "", Known::default());
+    let asker = Asker::new(context, "");
     asker.say(question);
     match asker.line().await {
         Ok(line) => Ok(Some(matches!(
@@ -445,10 +438,10 @@ fn unanswered(stop: Stop, context: &Context<'_>, server: &str) -> Failure {
 /// question gets no answer in the time limit.
 pub async fn with_rounds<R: Rounds>(
     context: &Context<'_>,
-    (server, known): (&str, &Known),
+    server: &str,
     run: impl AsyncFn(Option<&Continuation>) -> Result<R, Failure>,
 ) -> Result<R, Failure> {
-    let asker = Asker::new(context, server, known.clone());
+    let asker = Asker::new(context, server);
     let mut continuation = None;
     let mut round = 1;
     loop {

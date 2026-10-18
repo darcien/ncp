@@ -108,6 +108,7 @@ impl TokenStore {
     /// so that rmcp does not read the store again.
     #[must_use]
     pub fn with_item(self, item: TokensItem) -> Self {
+        self.known.add(token_values(&item.tokens));
         Self {
             copy: Mutex::new(Cached::Read(Box::new(Some(item.tokens)))),
             scope_fields: Mutex::new(item.scope_fields),

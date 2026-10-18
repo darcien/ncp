@@ -61,8 +61,9 @@ pub fn is_credential_header(name: &str) -> bool {
 /// echo the token alone.
 #[must_use]
 pub fn credentials(value: &str) -> Vec<String> {
+    let value = value.trim();
     let after_scheme = value
-        .split_once(' ')
+        .split_once(char::is_whitespace)
         .map(|(_, credentials)| credentials.trim().to_string());
     std::iter::once(value.to_string())
         .chain(after_scheme)
@@ -154,14 +155,42 @@ impl Known {
         forms.dedup();
     }
 
-    /// The text with each form of each known value hidden.
+    /// The text with each form of each known value hidden. All matches of
+    /// all forms come from the original text and join where they overlap,
+    /// so that two values that overlap leave no part of either.
     #[must_use]
     pub fn hide(&self, text: &str) -> String {
         let forms = self.0.read().unwrap_or_else(PoisonError::into_inner);
-        forms
+        let mut spans: Vec<(usize, usize)> =
+            forms.iter().flat_map(|form| matches(text, form)).collect();
+        spans.sort_unstable();
+        let joined = spans
+            .into_iter()
+            .fold(Vec::new(), |mut joined: Vec<(usize, usize)>, span| {
+                match joined.last_mut() {
+                    Some(last) if span.0 < last.1 => last.1 = last.1.max(span.1),
+                    _ => joined.push(span),
+                }
+                joined
+            });
+        let (shown, end) = joined
             .iter()
-            .fold(text.to_string(), |text, form| text.replace(form, HIDDEN))
+            .fold((String::new(), 0), |(shown, at), &(start, end)| {
+                let before = text.get(at..start).unwrap_or_default();
+                (shown + before + HIDDEN, end)
+            });
+        shown + text.get(end..).unwrap_or_default()
     }
+}
+
+// Each place of `form` in `text`, also where two places overlap.
+fn matches(text: &str, form: &str) -> Vec<(usize, usize)> {
+    std::iter::successors(text.find(form), |&start| {
+        let next = start + text.get(start..)?.chars().next()?.len_utf8();
+        text.get(next..)?.find(form).map(|found| next + found)
+    })
+    .map(|start| (start, start + form.len()))
+    .collect()
 }
 
 impl std::fmt::Debug for Known {
@@ -197,7 +226,7 @@ fn forms_of(value: &str) -> Vec<String> {
         value.to_lowercase(),
         // A server that reads a query as a form makes a `+` a space.
         value.replace('+', " "),
-        percent.to_lowercase(),
+        lowercase_hex(&percent),
         percent,
         // PHP `json_encode` writes `/` as `\/`.
         json.replace('/', "\\/"),
@@ -209,7 +238,27 @@ fn forms_of(value: &str) -> Vec<String> {
         let encoded = url::form_urlencoded::byte_serialize(form.as_bytes()).collect();
         [form, encoded]
     })
+    // An encoder never makes a value shorter. A shorter form comes from a
+    // change of the value, for example the removal of `.` and `..` from a
+    // path, and an empty form would hide each place in each text.
+    .filter(|form| form.len() >= value.len())
     .collect()
+}
+
+// The percent-encoding with lowercase hex digits. The other characters
+// keep their case.
+fn lowercase_hex(percent: &str) -> String {
+    percent
+        .split('%')
+        .enumerate()
+        .map(
+            |(index, part)| match (index, part.get(..2), part.get(2..)) {
+                (0, ..) => part.to_string(),
+                (_, Some(hex), Some(rest)) => format!("%{}{rest}", hex.to_ascii_lowercase()),
+                _ => format!("%{part}"),
+            },
+        )
+        .collect()
 }
 
 // The value as the `url` crate writes it in a path, a query and a
@@ -259,13 +308,23 @@ pub fn json_strings(value: &Value, hide: &dyn Fn(&str) -> String) -> Value {
         Value::Object(fields) => Value::Object(
             fields
                 .iter()
-                .map(|(name, field)| (name.clone(), json_strings(field, hide)))
+                .map(|(name, field)| (hide(name), json_strings(field, hide)))
                 .collect(),
         ),
         Value::Array(items) => {
             Value::Array(items.iter().map(|item| json_strings(item, hide)).collect())
         }
-        other => other.clone(),
+        // A number or `true` can be a known value too. Its hidden form is
+        // the string `****`.
+        other => {
+            let text = other.to_string();
+            let shown = hide(&text);
+            if shown == text {
+                other.clone()
+            } else {
+                Value::String(shown)
+            }
+        }
     }
 }
 
@@ -418,6 +477,37 @@ mod tests {
     }
 
     #[test]
+    fn a_value_that_a_path_changes_gives_no_empty_or_shorter_form() {
+        let text = "HTTP 401 abc /x?y=1 z";
+        for value in ["/", ".", "..", "\\", "\t", "a/../b"] {
+            let shown = values(text, &[value.to_string()]);
+            assert!(!shown.contains("****H"), "{value:?}: {shown}");
+        }
+        assert_eq!(values("a b x", &["a/../b".to_string()]), "a b x");
+    }
+
+    #[test]
+    fn lowercase_hex_keeps_the_case_of_the_other_characters() {
+        assert_eq!(values("q=AbC%2f", &["AbC/".to_string()]), "q=****");
+    }
+
+    #[test]
+    fn values_that_overlap_leave_no_part_of_either() {
+        let secrets = ["tokenXYZ".to_string(), "XYZsecret".to_string()];
+        assert_eq!(values("a tokenXYZsecret b", &secrets), "a **** b");
+        assert_eq!(values("aaa", &["aa".to_string()]), "****");
+    }
+
+    #[test]
+    fn json_strings_hides_keys_and_scalars_that_are_known() {
+        let message = json!({"k1": 1, "pin": 424_242, "on": true});
+        let shown = json_strings(&message, &|text| {
+            values(text, &["k1".into(), "424242".into()])
+        });
+        assert_eq!(shown, json!({"****": 1, "pin": "****", "on": true}));
+    }
+
+    #[test]
     fn values_do_not_hide_forms_outside_the_list() {
         // Base64 of `k3y-value`, an HTML entity and a part of the value.
         let secrets = ["k3y-value".to_string()];
@@ -439,6 +529,7 @@ mod tests {
     #[test]
     fn a_credential_header_gives_its_value_and_its_credentials() {
         assert_eq!(credentials("Bearer t0k"), ["Bearer t0k", "t0k"]);
+        assert_eq!(credentials("  Bearer\tt0k "), ["Bearer\tt0k", "t0k"]);
         assert_eq!(credentials("t0k"), ["t0k"]);
     }
 

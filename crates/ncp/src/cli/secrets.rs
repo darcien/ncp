@@ -163,7 +163,6 @@ pub(super) async fn client_secret(
     context: &Context<'_>,
     server: &Server,
     client: &PreRegisteredClient,
-    known: &crate::redact::Known,
 ) -> Result<Option<Secret>, Failure> {
     let ClientKind::Confidential { secret, issuer } = &client.kind else {
         return Ok(None);
@@ -174,7 +173,7 @@ pub(super) async fn client_secret(
     secret
         .expand(&values)
         .map(|value| {
-            known.add([value.clone()]);
+            context.ui.known().add([value.clone()]);
             Some(Secret::new(value))
         })
         .map_err(|error| {

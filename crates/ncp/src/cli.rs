@@ -91,23 +91,20 @@ pub fn main_with(platform: Platform) -> ExitCode {
         }
         _ => {}
     }
-    let ui = Ui {
-        format: Format::detect(),
-        verbosity: Verbosity::Normal,
-    };
+    let ui = Ui::new(Format::detect(), Verbosity::Normal);
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) => return parse_failure(ui, &error),
     };
     let env = process_env();
-    let ui = Ui {
-        format: match cli.options.output_format {
+    let ui = Ui::new(
+        match cli.options.output_format {
             Some(OutputFormat::Text) => Format::Text,
             Some(OutputFormat::Json) => Format::Json,
             None => ui.format,
         },
-        verbosity: Verbosity::from_flags(cli.options.quiet, cli.options.verbose),
-    };
+        Verbosity::from_flags(cli.options.quiet, cli.options.verbose),
+    );
     let timings = cli.options.timings.then(|| Arc::new(Timings::new(started)));
     let runtime = match runtime() {
         Ok(runtime) => runtime,

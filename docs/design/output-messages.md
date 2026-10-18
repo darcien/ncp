@@ -204,7 +204,7 @@ reason for each rule.
     elicitation of one request shows each full warning (server, message,
     causes and hints) only one time.
 
-21. **Redaction.** Today `hide_expanded_url` (session.rs) hides secrets in
+21. **Redaction.** Before this change, one function of session.rs hid secrets in
     the message of an error about an http server. It writes the server URL
     as the configuration file has it, with its user information and its
     OAuth query values hidden. It also hides each `${NAME}` value of the server URL in
@@ -212,8 +212,8 @@ reason for each rule.
     same function runs on the message, on each data line, on each cause and
     on each hint, at the same places. No part names a stored URL or issuer
     (B70). This change did not make the redaction wider. Later, B81
-    (cli.md, 2026-10-18) made it hide each known secret value of the
-    server, in a fixed list of forms, to meet S3 and I6.
+    (cli.md, 2026-10-18) made the output hide each known secret value of
+    the run, in a fixed list of forms, to meet S3 and I6.
 
 22. **Quiet.** `-q` hides warnings with their causes and hints, standalone
     hints, and progress. An error always shows with its causes and its

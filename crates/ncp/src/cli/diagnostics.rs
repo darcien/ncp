@@ -18,6 +18,7 @@ pub fn trace_line(
     server: &str,
     event: &Event<'_>,
     shown_url: &dyn Fn(&str) -> String,
+    hide: &dyn Fn(&str) -> String,
 ) -> Option<String> {
     match event {
         Event::Message { direction, message } => {
@@ -25,8 +26,9 @@ pub fn trace_line(
                 Direction::Sent => "sent",
                 Direction::Received => "received",
             };
-            // A server can echo a secret in a message (design B81).
-            let message = &crate::redact::json_strings(message, shown_url);
+            // A server can echo a secret in a message (design B81). Other
+            // text of the message does not change (B42).
+            let message = &crate::redact::json_strings(message, hide);
             Some(match format {
                 Format::Text => format!("trace: server {server}: {direction} {message}\n"),
                 Format::Json => {
@@ -147,7 +149,8 @@ pub fn observer(
     }
     let server = server.to_string();
     Observer::new(move |event| {
-        if trace && let Some(line) = trace_line(ui.format, &server, event, &shown_url) {
+        let hide = |text: &str| ui.hide(text);
+        if trace && let Some(line) = trace_line(ui.format, &server, event, &shown_url, &hide) {
             ui.diagnostic(&line);
         }
         if let Some(timings) = &timings {
@@ -172,6 +175,10 @@ mod tests {
         }
     }
 
+    fn same(text: &str) -> String {
+        text.to_string()
+    }
+
     #[test]
     fn message_traces_carry_the_direction_and_the_message() {
         let message = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"});
@@ -180,10 +187,10 @@ mod tests {
             message: &message,
         };
         assert_eq!(
-            trace_line(Format::Text, "gh", &event, &hidden).unwrap(),
+            trace_line(Format::Text, "gh", &event, &hidden, &same).unwrap(),
             "trace: server gh: sent {\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"tools/list\"}\n"
         );
-        let line = trace_line(Format::Json, "gh", &event, &hidden).unwrap();
+        let line = trace_line(Format::Json, "gh", &event, &hidden, &same).unwrap();
         let value: Value = serde_json::from_str(&line).unwrap();
         assert_eq!(value, json!({"trace": {"server": "gh", "sent": message}}));
     }
@@ -199,13 +206,13 @@ mod tests {
             request_body: None,
             response_body: None,
         };
-        let line = trace_line(Format::Text, "gh", &Event::Http(&exchange), &hidden).unwrap();
+        let line = trace_line(Format::Text, "gh", &Event::Http(&exchange), &hidden, &same).unwrap();
         assert_eq!(
             line,
             "trace: server gh: POST https://****@h.test/cb?code=****&q=1 \
              [authorization: ****]: JSON response in 3.1 ms\n"
         );
-        let line = trace_line(Format::Json, "gh", &Event::Http(&exchange), &hidden).unwrap();
+        let line = trace_line(Format::Json, "gh", &Event::Http(&exchange), &hidden, &same).unwrap();
         let value: Value = serde_json::from_str(&line).unwrap();
         assert_eq!(
             value["trace"]["http"]["url"],
@@ -225,7 +232,7 @@ mod tests {
             request_body: None,
             response_body: None,
         };
-        let line = trace_line(Format::Text, "gh", &Event::Http(&exchange), &hidden).unwrap();
+        let line = trace_line(Format::Text, "gh", &Event::Http(&exchange), &hidden, &same).unwrap();
         assert!(!line.contains("k3y"), "{line}");
     }
 
@@ -234,6 +241,6 @@ mod tests {
         let event = Event::Connect {
             elapsed: Duration::from_millis(1),
         };
-        assert!(trace_line(Format::Text, "gh", &event, &hidden).is_none());
+        assert!(trace_line(Format::Text, "gh", &event, &hidden, &same).is_none());
     }
 }

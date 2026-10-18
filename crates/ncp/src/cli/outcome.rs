@@ -125,10 +125,16 @@ impl Hint {
         self.command.as_deref()
     }
 
-    fn map_text(self, f: &impl Fn(String) -> String) -> Self {
+    /// A command that `f` changes is not a command to run any more, so the
+    /// hint keeps only its sentence (design B81).
+    #[must_use]
+    pub fn map_text(self, f: &impl Fn(String) -> String) -> Self {
+        let command = self
+            .command
+            .filter(|command| f(command.clone()) == *command);
         Self {
             message: f(self.message),
-            command: self.command.map(f),
+            command,
         }
     }
 }
@@ -442,14 +448,25 @@ impl Failure {
         self.with_diagnostic(|diagnostic| diagnostic.context(message.into()))
     }
 
-    /// Applies `f` to the message, the data lines, the causes and the
-    /// hints. Each redaction uses it. The rare parts (`pages`,
-    /// `destination`) stay as they are, as before this design: a page
-    /// comes from the server, and a destination is an origin of the
-    /// configuration with no `${NAME}` value.
+    /// Applies `f` to the message, the data lines, the causes, the hints
+    /// and the pages. Each redaction uses it. A destination stays as it
+    /// is: it is an origin of the configuration with no `${NAME}` value.
     #[must_use]
     pub fn map_text(self, f: impl Fn(String) -> String) -> Self {
-        self.with_diagnostic(|diagnostic| diagnostic.map_text(&f))
+        let pages: Box<[Page]> = self
+            .pages()
+            .iter()
+            .map(|page| Page {
+                message: f(page.message.clone()),
+                url: f(page.url.clone()),
+            })
+            .collect();
+        let failure = self.with_diagnostic(|diagnostic| diagnostic.map_text(&f));
+        if pages.is_empty() {
+            failure
+        } else {
+            failure.with_pages(pages)
+        }
     }
 
     #[must_use]
@@ -599,18 +616,27 @@ mod tests {
     }
 
     #[test]
-    fn map_text_reaches_each_text() {
+    fn map_text_reaches_each_text_and_drops_a_changed_command() {
         let failure = Failure::protocol("a k")
             .data("k")
             .cause("k 2")
             .hint(Hint::run("see", "ncp k"))
+            .hint(Hint::run("list", "ncp server list"))
+            .with_pages([Page {
+                message: "open k".into(),
+                url: "https://h/?k".into(),
+            }])
             .map_text(|text| text.replace('k', "*"));
         let diagnostic = failure.diagnostic();
         assert_eq!(diagnostic.message(), "a *");
         assert_eq!(diagnostic.data(), ["*"]);
         assert_eq!(diagnostic.causes(), ["* 2"]);
         assert_eq!(diagnostic.hints()[0].message(), "To see, run `ncp *`");
-        assert_eq!(diagnostic.hints()[0].command(), Some("ncp *"));
+        // A changed command is not the command to run.
+        assert_eq!(diagnostic.hints()[0].command(), None);
+        assert_eq!(diagnostic.hints()[1].command(), Some("ncp server list"));
+        assert_eq!(failure.pages()[0].message, "open *");
+        assert_eq!(failure.pages()[0].url, "https://h/?*");
     }
 
     #[test]
