@@ -3491,6 +3491,62 @@ fn each_part_of_an_error_hides_a_value_of_the_server_url() {
 }
 
 #[test]
+fn errors_and_traces_hide_a_header_value_that_the_server_echoes() {
+    // The server echoes the `${KEY}` value of a custom header and the
+    // token of a literal `Authorization` header in its error body.
+    let body = "bad key k3y-from-env for Bearer lit3ral-t0ken";
+    let (url, _) = raw_server(format!(
+        "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    ));
+    let home = Home::new("redact-echo").set("KEY", "k3y-from-env");
+    home.configure(&json!({"web": {"type": "http", "url": url, "headers": {
+        "X-Api-Key": "${KEY}", "Authorization": "Bearer lit3ral-t0ken"}}}));
+    for args in [
+        &["tool", "list", "web"][..],
+        &["-vv", "tool", "list", "web"][..],
+        &["--output-format", "text", "-vv", "tool", "list", "web"][..],
+    ] {
+        let run = home.run(args);
+        assert_eq!(run.code(), 3, "{}", run.describe());
+        let stderr = run.stderr_text();
+        assert!(stderr.contains("bad key ****"), "{stderr}");
+        assert!(!stderr.contains("k3y-from-env"), "{stderr}");
+        assert!(!stderr.contains("lit3ral-t0ken"), "{stderr}");
+    }
+}
+
+#[test]
+fn trace_hides_an_env_value_in_a_message_and_the_result_keeps_it() {
+    let home = Home::new("redact-message").set("TOK", "t0ken-v4lue");
+    let mut entry = stdio("modern");
+    entry["env"] = json!({"FIXTURE_TOKEN": "${TOK}"});
+    home.configure(&json!({"fx": entry}));
+    for format in ["json", "text"] {
+        let run = home.run(&[
+            "--output-format",
+            format,
+            "-vv",
+            "tool",
+            "call",
+            "fx",
+            "echo",
+            "text=t0ken-v4lue",
+        ]);
+        assert_eq!(run.code(), 0, "{}", run.describe());
+        let stderr = run.stderr_text();
+        assert!(stderr.contains("trace"), "{stderr}");
+        assert!(!stderr.contains("t0ken-v4lue"), "{stderr}");
+        // The result is the output of the server, not a diagnostic.
+        assert!(
+            run.stdout_text().contains("t0ken-v4lue"),
+            "{}",
+            run.describe()
+        );
+    }
+}
+
+#[test]
 fn failed_login_hides_a_value_in_the_url_path() {
     // Each request gets 401 with no metadata, so discovery fails and names
     // the URLs that it made from the server URL.

@@ -7,7 +7,11 @@
 //! `****`, always with the same length. An empty value shows as empty. Thus the
 //! user can see if a value exists or is empty, but never its length.
 
-use std::fmt::Write as _;
+use std::{
+    cmp::Reverse,
+    fmt::Write as _,
+    sync::{Arc, PoisonError, RwLock},
+};
 
 use serde_json::Value;
 
@@ -50,6 +54,19 @@ pub fn is_credential_header(name: &str) -> bool {
     SECRET_HEADERS
         .iter()
         .any(|known| known.eq_ignore_ascii_case(name))
+}
+
+/// A credential header value, and its credentials after the scheme
+/// (RFC 9110 §11.4), for example the token of `Bearer TOKEN`. A server can
+/// echo the token alone.
+#[must_use]
+pub fn credentials(value: &str) -> Vec<String> {
+    let after_scheme = value
+        .split_once(' ')
+        .map(|(_, credentials)| credentials.trim().to_string());
+    std::iter::once(value.to_string())
+        .chain(after_scheme)
+        .collect()
 }
 
 /// The header value as it shows. `sensitive` is true for a value that came
@@ -112,36 +129,108 @@ fn hide_query(query: &str) -> String {
         .join("&")
 }
 
-/// Hides each value, also in its percent-encoded forms. A URL that a
-/// library makes from the server URL can hold a value of `${NAME}` in
-/// another place or encoding.
+/// The known secret values of one server in one run, in the forms that
+/// output hides (design B81).
+///
+/// The list grows during the run, and each clone sees each new value:
+/// rmcp reads and refreshes the OAuth tokens inside the connection, after
+/// the trace of the connection starts. The list never gets smaller, so a
+/// text that was hidden once stays hidden.
+#[derive(Clone, Default)]
+pub struct Known(Arc<RwLock<Vec<String>>>);
+
+impl Known {
+    pub fn add(&self, values: impl IntoIterator<Item = String>) {
+        let mut forms = self.0.write().unwrap_or_else(PoisonError::into_inner);
+        forms.extend(
+            values
+                .into_iter()
+                .filter(|value| !value.is_empty())
+                .flat_map(|value| forms_of(&value)),
+        );
+        // The longest first, so that a value inside another one cannot
+        // leave a part of it.
+        forms.sort_by(|a, b| (Reverse(a.len()), a).cmp(&(Reverse(b.len()), b)));
+        forms.dedup();
+    }
+
+    /// The text with each form of each known value hidden.
+    #[must_use]
+    pub fn hide(&self, text: &str) -> String {
+        let forms = self.0.read().unwrap_or_else(PoisonError::into_inner);
+        forms
+            .iter()
+            .fold(text.to_string(), |text, form| text.replace(form, HIDDEN))
+    }
+}
+
+impl std::fmt::Debug for Known {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Known(<hidden>)")
+    }
+}
+
+/// Hides each value, also in its encoded forms. A URL that a library makes
+/// from the server URL can hold a value of `${NAME}` in another place or
+/// encoding.
 #[must_use]
 pub fn values(text: &str, secrets: &[String]) -> String {
-    let mut forms: Vec<String> = secrets
-        .iter()
-        .filter(|value| !value.is_empty())
-        .flat_map(|value| {
-            let percent = percent_encoded(value);
-            let form: String = url::form_urlencoded::byte_serialize(value.as_bytes()).collect();
-            // A URL parser lowercases a host, and a form encodes a URL
-            // that holds a percent-encoded value again.
-            let twice: String = url::form_urlencoded::byte_serialize(percent.as_bytes()).collect();
-            [
-                value.clone(),
-                value.to_lowercase(),
-                form,
-                percent.clone(),
-                percent.to_lowercase(),
-                twice,
-            ]
-        })
-        .collect();
-    // The longest first, so that a value inside another one cannot leave a
-    // part of it.
-    forms.sort_by_key(|form| std::cmp::Reverse(form.len()));
-    forms
-        .iter()
-        .fold(text.to_string(), |text, form| text.replace(form, HIDDEN))
+    let known = Known::default();
+    known.add(secrets.iter().cloned());
+    known.hide(text)
+}
+
+// The forms of one value that output hides.
+fn forms_of(value: &str) -> Vec<String> {
+    let percent = percent_encoded(value);
+    let form: String = url::form_urlencoded::byte_serialize(value.as_bytes()).collect();
+    // A URL parser lowercases a host, and a form encodes a URL that holds
+    // a percent-encoded value again.
+    let twice: String = url::form_urlencoded::byte_serialize(percent.as_bytes()).collect();
+    vec![
+        value.to_string(),
+        value.to_lowercase(),
+        form,
+        percent.clone(),
+        percent.to_lowercase(),
+        twice,
+    ]
+}
+
+/// The tokens and client secrets in an OAuth message, at any depth. Output
+/// hides them where a server echoes them.
+#[must_use]
+pub fn oauth_values(value: &Value) -> Vec<String> {
+    match value {
+        Value::Object(fields) => fields
+            .iter()
+            .flat_map(|(name, field)| match field {
+                Value::String(text) if is_oauth_secret(name) => vec![text.clone()],
+                other => oauth_values(other),
+            })
+            .collect(),
+        Value::Array(items) => items.iter().flat_map(oauth_values).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The JSON value with each string hidden by `hide`. The JSON stays valid,
+/// so a trace of a JSON-RPC message stays a JSON object.
+#[must_use]
+pub fn json_strings(value: &Value, hide: &dyn Fn(&str) -> String) -> Value {
+    match value {
+        Value::String(text) => Value::String(hide(text)),
+        Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .map(|(name, field)| (name.clone(), json_strings(field, hide)))
+                .collect(),
+        ),
+        Value::Array(items) => {
+            Value::Array(items.iter().map(|item| json_strings(item, hide)).collect())
+        }
+        other => other.clone(),
+    }
 }
 
 // Each byte that is not an unreserved URL character (RFC 3986 §2.3) as
@@ -267,6 +356,44 @@ mod tests {
         assert_eq!(
             values("resource=https%3A%2F%2Fh%2Fa%2520b", &path),
             "resource=https%3A%2F%2Fh%2F****"
+        );
+    }
+
+    #[test]
+    fn known_values_reach_each_clone_and_debug_shows_none() {
+        let known = Known::default();
+        let copy = known.clone();
+        assert_eq!(copy.hide("a k1 b"), "a k1 b");
+        known.add(["k1".to_string(), String::new()]);
+        assert_eq!(copy.hide("a k1 b"), "a **** b");
+        assert_eq!(copy.hide(""), "");
+        assert_eq!(format!("{known:?}"), "Known(<hidden>)");
+    }
+
+    #[test]
+    fn a_credential_header_gives_its_value_and_its_credentials() {
+        assert_eq!(credentials("Bearer t0k"), ["Bearer t0k", "t0k"]);
+        assert_eq!(credentials("t0k"), ["t0k"]);
+    }
+
+    #[test]
+    fn oauth_values_are_the_tokens_and_secrets_at_any_depth() {
+        let message = json!({
+            "client_id": "id", "token_response": {"access_token": "a", "token_type": "Bearer",
+            "refresh_token": "r"}, "list": [{"client_secret": "s"}], "expires_in": 3600
+        });
+        let mut values = oauth_values(&message);
+        values.sort();
+        assert_eq!(values, ["a", "r", "s"]);
+    }
+
+    #[test]
+    fn json_strings_hides_each_string_and_keeps_the_shape() {
+        let message = json!({"id": 1, "result": {"text": "k1", "list": ["k1", true]}});
+        let shown = json_strings(&message, &|text| text.replace("k1", HIDDEN));
+        assert_eq!(
+            shown,
+            json!({"id": 1, "result": {"text": "****", "list": ["****", true]}})
         );
     }
 

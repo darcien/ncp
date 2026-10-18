@@ -101,6 +101,7 @@ impl Setup {
             authorized: None,
             progress: &client::ProgressSink::default(),
             elicitor: None,
+            known: &ncp::redact::Known::default(),
         })
         .await
     }

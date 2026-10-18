@@ -49,6 +49,7 @@ use crate::{
     config::{Server, Target, Transport, Values},
     expand::Env,
     protocol_version::{self, ProtocolVersion, Startup},
+    redact::Known,
     server::ServerName,
     text::code,
 };
@@ -90,6 +91,9 @@ pub struct Launch<'a> {
     /// A person at a TTY. With no elicitor, `ncp` tells the server that it
     /// cannot answer an elicitation.
     pub elicitor: Option<&'a Elicitor>,
+    /// The secret values of the server, which output about the connection
+    /// hides.
+    pub known: &'a Known,
 }
 
 /// The handshake step that failed.
@@ -424,6 +428,7 @@ pub struct Connection {
     process: Option<stdio::Process>,
     authorized: bool,
     refused: Arc<AtomicBool>,
+    known: Known,
 }
 
 /// Connects to the server and finds its protocol version.
@@ -618,6 +623,7 @@ async fn handshake(
         process,
         authorized: launch.authorized.is_some(),
         refused,
+        known: launch.known.clone(),
     })
 }
 
@@ -753,6 +759,13 @@ impl Connection {
     #[must_use]
     pub fn protocol_version(&self) -> &ProtocolVersion {
         &self.version
+    }
+
+    /// The secret values of the server. The list can grow during the
+    /// connection, for example at a refresh of the tokens.
+    #[must_use]
+    pub fn known(&self) -> &Known {
+        &self.known
     }
 
     #[must_use]

@@ -123,23 +123,47 @@ fn reference(name: &str) -> String {
 pub(super) struct Resolved {
     pub values: Values,
     pub stored: Vec<SecretName>,
+    /// The secret values that output hides (design B81).
+    pub secrets: Vec<String>,
 }
 
 pub(super) async fn resolve(context: &Context<'_>, server: &Server) -> Result<Resolved, Failure> {
     let destination = binding::value_destination(server);
-    let (values, stored) = values_of(context, server, server.value_names(), destination).await?;
+    let (names, stored) = values_of(context, server, server.value_names(), destination).await?;
     let values = server
-        .expand_values(&values)
+        .expand_values(&names)
         .map_err(|error| entry_failure(server, &error))?;
-    Ok(Resolved { values, stored })
+    Ok(Resolved {
+        secrets: secrets_of(server, &names, &values),
+        values,
+        stored,
+    })
+}
+
+// Each `${NAME}` value of the entry, and each value of a credential header,
+// also a literal one: RFC 9110 defines these headers as credentials. The
+// environment holds other values too, and they are not secrets (S10).
+fn secrets_of(server: &Server, names: &Env, values: &Values) -> Vec<String> {
+    let variables = server
+        .value_names()
+        .into_iter()
+        .filter_map(|name| names.get(name).cloned());
+    let headers = values
+        .headers
+        .iter()
+        .filter(|(name, _)| crate::redact::is_credential_header(name))
+        .flat_map(|(_, header)| crate::redact::credentials(&header.value));
+    variables.chain(headers).collect()
 }
 
 /// A stored value comes only from the item of the origin of
-/// `oauth.issuer`. No error shows the value.
+/// `oauth.issuer`. No error shows the value, and output hides it after
+/// the read (design B81).
 pub(super) async fn client_secret(
     context: &Context<'_>,
     server: &Server,
     client: &PreRegisteredClient,
+    known: &crate::redact::Known,
 ) -> Result<Option<Secret>, Failure> {
     let ClientKind::Confidential { secret, issuer } = &client.kind else {
         return Ok(None);
@@ -149,7 +173,10 @@ pub(super) async fn client_secret(
         values_of(context, server, names, binding::issuer_destination(issuer)).await?;
     secret
         .expand(&values)
-        .map(|value| Some(Secret::new(value)))
+        .map(|value| {
+            known.add([value.clone()]);
+            Some(Secret::new(value))
+        })
         .map_err(|error| {
             let error = EntryError::Variable {
                 field: "oauth.clientSecret".into(),
@@ -1615,6 +1642,26 @@ mod tests {
             origin => Destination::Origin(crate::server::Origin::parse(origin).unwrap()),
         };
         (SecretName::parse(name).unwrap(), destination)
+    }
+
+    #[test]
+    fn known_secrets_are_the_values_of_the_entry_and_its_credential_headers() {
+        let config = crate::config::parse(
+            r#"{"mcpServers": {"web": {"type": "http", "url": "https://h/mcp",
+                "headers": {"X-Api-Key": "${KEY}", "Authorization": "Bearer lit",
+                "X-Org": "acme"}}}}"#,
+            &Env::new(),
+        )
+        .unwrap();
+        let server = config.server("web").unwrap();
+        let names = Env::from([
+            ("KEY".to_string(), "k1".to_string()),
+            ("HTTP_PROXY".to_string(), "http://p:1".to_string()),
+        ]);
+        let values = server.expand_values(&names).unwrap();
+        let mut secrets = secrets_of(server, &names, &values);
+        secrets.sort();
+        assert_eq!(secrets, ["Bearer lit", "k1", "lit"]);
     }
 
     #[test]

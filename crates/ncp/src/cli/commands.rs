@@ -163,6 +163,7 @@ async fn with_connection<T>(
 ) -> Result<T, Failure> {
     let connection = session::open(context, server).await?;
     let result = asked(server, &connection, work(&connection).await);
+    let result = hidden(server, &connection, result);
     let authorized = connection.is_authorized();
     connection.close().await;
     let challenge = result
@@ -175,11 +176,24 @@ async fn with_connection<T>(
         Some(challenge) => {
             let connection = session::open_with_login(context, server, Some(&challenge)).await?;
             let result = asked(server, &connection, work(&connection).await);
+            let result = hidden(server, &connection, result);
             connection.close().await;
             result
         }
         None => result,
     }
+}
+
+// Each failure of a command hides the known secret values of the
+// connection (design B81): a server can echo one in an error.
+fn hidden<T>(
+    server: &Server,
+    connection: &Connection,
+    result: Result<T, Failure>,
+) -> Result<T, Failure> {
+    result.map_err(|failure| {
+        failure.map_text(|text| session::hide_secrets(server, connection.known(), &text))
+    })
 }
 
 // Exit 5 when the server asked a question that `ncp` refused (design
@@ -559,7 +573,7 @@ async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure>
         }
         let listed = tool.is_some();
         let response =
-            super::ask::with_rounds(context, name, async |continuation| {
+            super::ask::with_rounds(context, (name, connection.known()), async |continuation| {
                 match connection
                     .call_tool(tool_name, arguments.clone(), continuation, context.limits())
                     .await
@@ -705,7 +719,7 @@ async fn resource_read(context: &Context<'_>, word: &str, uri: &str) -> Result<(
     let server = select(context, &loaded, word, show_fix)?;
     let name = server.name.as_str();
     let answer = with_connection(context, server, async |connection| {
-        super::ask::with_rounds(context, name, async |continuation| {
+        super::ask::with_rounds(context, (name, connection.known()), async |continuation| {
             connection
                 .read_resource(uri, continuation, context.limits())
                 .await
@@ -847,7 +861,7 @@ async fn prompt_get(
     let server = select(context, &loaded, word, show_fix)?;
     let name = server.name.as_str();
     let answer = with_connection(context, server, async |connection| {
-        super::ask::with_rounds(context, name, async |continuation| {
+        super::ask::with_rounds(context, (name, connection.known()), async |continuation| {
             connection
                 .get_prompt(prompt, arguments.clone(), continuation, context.limits())
                 .await

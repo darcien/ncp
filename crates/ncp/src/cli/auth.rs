@@ -33,6 +33,7 @@ use crate::{
         scopes,
         store::{StoreText, TokenStore, parse_item, read_store_text},
     },
+    redact::Known,
     server::ServerName,
     store::CredentialStore,
     text::code,
@@ -82,6 +83,13 @@ pub(super) async fn command(context: &Context<'_>, command: AuthCommand) -> Resu
             .hint(session::wait_longer());
             let notes = crate::client::http::ConnectNotes::default();
             let loaded = session::load(context, Some(&server)).await?;
+            // The values come from the configuration of the login, because
+            // the file can change during a long wait for the browser.
+            let known = loaded
+                .config
+                .server(&server)
+                .map(session::known_of)
+                .unwrap_or_default();
             let name = limited(
                 context,
                 limit,
@@ -91,10 +99,13 @@ pub(super) async fn command(context: &Context<'_>, command: AuthCommand) -> Resu
                     (&loaded, &server),
                     no_browser,
                     (credential_store, &notes),
+                    &known,
                 )),
             )
             .await
-            .map_err(|failure| login_failure(context, (&loaded, &server), &notes, failure))?;
+            .map_err(|failure| {
+                login_failure(context, (&loaded, &server), (&notes, &known), failure)
+            })?;
             // The cleanup is outside the login limit: the store has the tokens,
             // and the cleanup has its own short limit.
             remove_old_tokens(context, &name, credential_store).await
@@ -104,18 +115,16 @@ pub(super) async fn command(context: &Context<'_>, command: AuthCommand) -> Resu
     }
 }
 
-// rmcp puts URLs that it makes from the server URL in its errors, so the
-// failure hides each `${NAME}` value of the URL. The values come from the
-// configuration of the login, because the file can change during a long
-// wait for the browser.
+// rmcp puts URLs that it makes from the server URL in its errors, and a
+// server can echo a secret, so the failure hides each known value.
 fn login_failure(
     context: &Context<'_>,
     (loaded, word): (&session::Loaded, &str),
-    notes: &crate::client::http::ConnectNotes,
+    (notes, known): (&crate::client::http::ConnectNotes, &Known),
     failure: Failure,
 ) -> Failure {
     let failure = match loaded.config.server(word).ok() {
-        Some(server) => failure.map_text(|text| session::hide_expanded_url(server, text)),
+        Some(server) => failure.map_text(|text| session::hide_secrets(server, known, &text)),
         None => failure,
     };
     session::with_tls_hint(context.env, &notes.get(), failure)
@@ -275,6 +284,7 @@ async fn login(
     (loaded, word): (&session::Loaded, &str),
     no_browser: bool,
     (place, notes): (CredentialPlace, &crate::client::http::ConnectNotes),
+    known: &Known,
 ) -> Result<ServerName, Failure> {
     let server = select(context, loaded, word).await?;
     let name = server.name.as_str();
@@ -284,7 +294,7 @@ async fn login(
         context.ui,
         name,
         context.timings.clone(),
-        session::shown_url(server),
+        session::shown_url(server, known),
     );
     let http = OAuthHttp::new(context.env, &observer, notes)
         .map_err(|error| session::http_failure(name, &error))?;
@@ -320,7 +330,8 @@ async fn login(
         TokenStore::new(server.name.clone(), store.clone())
             .fresh()
             .with_binding(binding)
-            .with_requested_scopes(&scopes),
+            .with_requested_scopes(&scopes)
+            .with_known(known.clone()),
     );
     let (listener, redirect) = listen().await?;
     let request = client_request(
@@ -330,7 +341,7 @@ async fn login(
         &mut manager,
         &store,
         &metadata,
-        (&redirect, &scopes),
+        (&redirect, &scopes, known),
     )
     .await?;
     let session = AuthorizationSession::new(manager, request)
@@ -519,6 +530,9 @@ pub(super) struct StoredLogin<'a> {
     pub notes: &'a crate::client::http::ConnectNotes,
     /// The `WWW-Authenticate` challenge of the `401` answer.
     pub challenge: Option<&'a str>,
+    /// The secret values of the server. The tokens and the client secret
+    /// join them when `ncp` reads them.
+    pub known: &'a Known,
 }
 
 /// Gives `None` when the tokens are for another issuer. `ncp` calls this
@@ -536,6 +550,7 @@ pub(super) async fn stored_login(
         observer,
         notes,
         challenge,
+        known,
     } = *login;
     let name = server.name.as_str();
     let (store, secret) = found;
@@ -555,7 +570,8 @@ pub(super) async fn stored_login(
         TokenStore::new(server.name.clone(), store.clone())
             .with_item(item)
             .with_refresh_lock(refresh_lock(context, &server.name))
-            .with_timer(credentials_timer(context)),
+            .with_timer(credentials_timer(context))
+            .with_known(known.clone()),
     );
     // The challenge can name the protected resource metadata (RFC 9728
     // §5.1). With metadata in place, rmcp does no discovery of its own.
@@ -587,7 +603,7 @@ pub(super) async fn stored_login(
     // rmcp configures only the client ID from the tokens. A refresh of a
     // confidential client needs its secret too (RFC 6749 §6).
     if let Some(client) = configured {
-        if let Some(secret) = secrets::client_secret(context, server, client).await? {
+        if let Some(secret) = secrets::client_secret(context, server, client, known).await? {
             let config = OAuthClientConfig::new(client_id, RedirectUri::new(0).to_string())
                 .with_client_secret(secret.expose());
             manager
@@ -621,6 +637,7 @@ pub(super) async fn stored_login(
     }) = client
         && stored_id == client_id
     {
+        known.add([client_secret.clone()]);
         let config = OAuthClientConfig::new(client_id, RedirectUri::new(0).to_string())
             .with_client_secret(client_secret);
         manager
@@ -639,7 +656,11 @@ pub(super) async fn stored_login(
 pub(super) fn binding_failure(server: &Server, mismatch: &items::BindingMismatch) -> Failure {
     let name = server.name.as_str();
     let reason = binding_reason(mismatch, &|current| {
-        code(&session::hide_expanded_url(server, current.to_string()))
+        code(&session::hide_secrets(
+            server,
+            &session::known_of(server),
+            current,
+        ))
     });
     // Requirement A13: the message says that the stop is on purpose.
     Failure::new(
@@ -985,7 +1006,7 @@ async fn client_request(
     manager: &mut AuthorizationManager,
     store: &Arc<dyn CredentialStore>,
     metadata: &AuthorizationMetadata,
-    (redirect, scopes): (&RedirectUri, &[String]),
+    (redirect, scopes, known): (&RedirectUri, &[String], &Known),
 ) -> Result<AuthorizationRequest, Failure> {
     let name = server.name.as_str();
     let issuer = issuer_of(metadata);
@@ -995,7 +1016,7 @@ async fn client_request(
     if let Some(client) = &remote.oauth_client {
         let request = request.with_preregistered_client(client.client_id.clone());
         return Ok(
-            match secrets::client_secret(context, server, client).await? {
+            match secrets::client_secret(context, server, client, known).await? {
                 Some(secret) => request.with_client_secret(secret.expose()),
                 None => request,
             },
@@ -1044,7 +1065,10 @@ async fn client_request(
     };
     let request = request.with_preregistered_client(client.client_id);
     Ok(match client.client_secret {
-        Some(secret) => request.with_client_secret(secret),
+        Some(secret) => {
+            known.add([secret.clone()]);
+            request.with_client_secret(secret)
+        }
         None => request,
     })
 }

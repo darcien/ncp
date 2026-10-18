@@ -19,6 +19,7 @@ use super::items;
 use crate::{
     credential::{CredentialKey, Secret},
     private_file,
+    redact::{self, Known},
     server::ServerName,
     store::{self, CredentialStore, StoreError, StoreFix, StoreKind},
 };
@@ -44,6 +45,9 @@ pub struct TokenStore {
     refresh_lock: Option<PathBuf>,
     /// Gets the time of each read and write of the store, for `--timings`.
     timer: Option<StoreTimer>,
+    /// Gets each token that the adapter reads or saves, so that output
+    /// hides it where a server echoes it (design B81).
+    known: Known,
 }
 
 /// Gets the time of one call to the credential store.
@@ -64,7 +68,18 @@ impl TokenStore {
             binding: None,
             refresh_lock: None,
             timer: None,
+            known: Known::default(),
         }
+    }
+
+    /// The list of known secrets that gets each token. It also gets the
+    /// tokens of an item that the caller gave already.
+    #[must_use]
+    pub fn with_known(mut self, known: Known) -> Self {
+        if let Cached::Read(tokens) = self.copy.get_mut() {
+            known.add(tokens.iter().flat_map(token_values));
+        }
+        Self { known, ..self }
     }
 
     #[must_use]
@@ -136,6 +151,13 @@ pub struct TokensItem {
     pub scope_fields: Map<String, Value>,
     /// `None` when the item has no binding or a binding that is not valid.
     pub binding: Option<items::TokenBinding>,
+}
+
+// The tokens and the client secret in the credentials of rmcp.
+fn token_values(credentials: &StoredCredentials) -> Vec<String> {
+    serde_json::to_value(credentials)
+        .map(|json| redact::oauth_values(&json))
+        .unwrap_or_default()
 }
 
 /// The tokens item in a stored secret.
@@ -324,11 +346,13 @@ impl RmcpStore for TokenStore {
             None => (None, Map::new()),
         };
         *self.scope_fields.lock().await = scope_fields;
+        self.known.add(tokens.iter().flat_map(token_values));
         *copy = Cached::Read(Box::new(tokens.clone()));
         Ok(tokens)
     }
 
     async fn save(&self, credentials: StoredCredentials) -> Result<(), AuthError> {
+        self.known.add(token_values(&credentials));
         let failed = |reason: String| AuthError::CredentialStoreError(reason);
         let mut json =
             serde_json::to_value(&credentials).map_err(|error| failed(error.to_string()))?;
@@ -595,6 +619,44 @@ mod tests {
             assert_eq!(read_store_text(&text), StoreText::Binding(mismatch));
         }
         assert_eq!(read_binding("keyring is locked"), None);
+    }
+
+    fn tokens_with(access: &str, refresh: &str) -> StoredCredentials {
+        serde_json::from_value(serde_json::json!({
+            "client_id": "c1",
+            "token_response": {"access_token": access, "token_type": "bearer",
+                "refresh_token": refresh},
+            "granted_scopes": [],
+            "token_received_at": 1
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn each_token_that_the_adapter_reads_or_saves_becomes_known() {
+        let backing = Arc::new(MemoryStore::default());
+        let given = Known::default();
+        let _adapter = TokenStore::new(server(), backing.clone())
+            .with_item(TokensItem {
+                tokens: tokens_with("given-at", "given-rt"),
+                scope_fields: Map::new(),
+                binding: None,
+            })
+            .with_known(given.clone());
+        assert_eq!(given.hide("given-at given-rt"), "**** ****");
+
+        let known = Known::default();
+        let adapter = TokenStore::new(server(), backing.clone()).with_known(known.clone());
+        adapter
+            .save(tokens_with("saved-at", "saved-rt"))
+            .await
+            .unwrap();
+        assert_eq!(known.hide("saved-at saved-rt"), "**** ****");
+
+        let read = Known::default();
+        let fresh = TokenStore::new(server(), backing).with_known(read.clone());
+        fresh.load().await.unwrap();
+        assert_eq!(read.hide("saved-at c1"), "**** c1");
     }
 
     #[tokio::test]

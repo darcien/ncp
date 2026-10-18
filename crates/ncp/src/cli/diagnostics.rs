@@ -25,6 +25,8 @@ pub fn trace_line(
                 Direction::Sent => "sent",
                 Direction::Received => "received",
             };
+            // A server can echo a secret in a message (design B81).
+            let message = &crate::redact::json_strings(message, shown_url);
             Some(match format {
                 Format::Text => format!("trace: server {server}: {direction} {message}\n"),
                 Format::Json => {

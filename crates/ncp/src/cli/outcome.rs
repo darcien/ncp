@@ -289,6 +289,12 @@ impl Warning {
     pub fn hint(self, hint: impl Into<Hint>) -> Self {
         Self(self.0.hint(hint.into()))
     }
+
+    /// Applies `f` to each text of the warning, as for a failure.
+    #[must_use]
+    pub fn map_text(self, f: impl Fn(String) -> String) -> Self {
+        Self(self.0.map_text(&f))
+    }
 }
 
 /// A failure shows as a warning when the command can go on without the
