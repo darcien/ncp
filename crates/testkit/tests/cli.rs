@@ -3517,6 +3517,30 @@ fn errors_and_traces_hide_a_header_value_that_the_server_echoes() {
 }
 
 #[test]
+fn errors_hide_a_url_value_in_the_form_that_the_url_parser_writes() {
+    // The URL parser encodes the space and keeps the `/`, and the server
+    // echoes the path in its body.
+    let body = "no route for /SEC%20RET/KEY/mcp";
+    let (url, _) = raw_server(format!(
+        "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    ));
+    let base = url.trim_end_matches("/mcp").to_string();
+    let home = Home::new("redact-mixed").set("APIKEY", "SEC RET/KEY");
+    home.configure(&json!({"web": {"type": "http", "url": format!("{base}/${{APIKEY}}/mcp")}}));
+    for args in [
+        &["tool", "list", "web"][..],
+        &["-vv", "tool", "list", "web"][..],
+    ] {
+        let run = home.run(args);
+        assert_eq!(run.code(), 3, "{}", run.describe());
+        let stderr = run.stderr_text();
+        assert!(stderr.contains("no route for /****/mcp"), "{stderr}");
+        assert!(!stderr.contains("SEC%20RET"), "{stderr}");
+    }
+}
+
+#[test]
 fn trace_hides_an_env_value_in_a_message_and_the_result_keeps_it() {
     let home = Home::new("redact-message").set("TOK", "t0ken-v4lue");
     let mut entry = stdio("modern");

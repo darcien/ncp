@@ -180,21 +180,57 @@ pub fn values(text: &str, secrets: &[String]) -> String {
     known.hide(text)
 }
 
-// The forms of one value that output hides.
+// The forms of one value that output hides (design B81). Each form comes
+// from an encoder that `ncp`, its libraries or a common server uses. A
+// form encoding of each form covers a URL that holds the value and goes
+// into a form again, for example the `resource` of OAuth.
 fn forms_of(value: &str) -> Vec<String> {
     let percent = percent_encoded(value);
-    let form: String = url::form_urlencoded::byte_serialize(value.as_bytes()).collect();
-    // A URL parser lowercases a host, and a form encodes a URL that holds
-    // a percent-encoded value again.
-    let twice: String = url::form_urlencoded::byte_serialize(percent.as_bytes()).collect();
-    vec![
+    let quoted = serde_json::to_string(value).unwrap_or_default();
+    let json = quoted
+        .strip_prefix('"')
+        .and_then(|text| text.strip_suffix('"'))
+        .unwrap_or(value);
+    let base = [
         value.to_string(),
+        // A URL parser lowercases a host.
         value.to_lowercase(),
-        form,
-        percent.clone(),
+        // A server that reads a query as a form makes a `+` a space.
+        value.replace('+', " "),
         percent.to_lowercase(),
-        twice,
+        percent,
+        // PHP `json_encode` writes `/` as `\/`.
+        json.replace('/', "\\/"),
+        json.to_string(),
     ]
+    .into_iter()
+    .chain(url_forms(value));
+    base.flat_map(|form| {
+        let encoded = url::form_urlencoded::byte_serialize(form.as_bytes()).collect();
+        [form, encoded]
+    })
+    .collect()
+}
+
+// The value as the `url` crate writes it in a path, a query and a
+// fragment. Each part keeps other characters, for example `/` in a path.
+// The setters encode `?` and `#`, which a parse of a whole URL would take
+// as the start of the next part.
+fn url_forms(value: &str) -> Vec<String> {
+    let Ok(mut url) = url::Url::parse("https://h.invalid/") else {
+        return Vec::new();
+    };
+    url.set_path(value);
+    url.set_query(Some(value));
+    url.set_fragment(Some(value));
+    [
+        url.path().trim_start_matches('/'),
+        url.query().unwrap_or_default(),
+        url.fragment().unwrap_or_default(),
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
 }
 
 /// The tokens and client secrets in an OAuth message, at any depth. Output
@@ -357,6 +393,36 @@ mod tests {
             values("resource=https%3A%2F%2Fh%2Fa%2520b", &path),
             "resource=https%3A%2F%2Fh%2F****"
         );
+    }
+
+    #[test]
+    fn values_hide_each_form_of_the_url_encoders_and_of_json() {
+        let hidden = |value: &str, text: &str| values(text, &[value.to_string()]);
+        // The `url` crate keeps `/` in a path and encodes the space.
+        assert_eq!(
+            hidden("SEC RET/KEY", "404 for /SEC%20RET/KEY"),
+            "404 for /****"
+        );
+        // The same path in the `resource` of an OAuth form.
+        assert_eq!(
+            hidden("SEC RET/KEY", "resource=h%2FSEC%2520RET%2FKEY"),
+            "resource=h%2F****"
+        );
+        assert_eq!(hidden("SEC'RET", "q?k=SEC%27RET"), "q?k=****");
+        assert_eq!(hidden("ü/x", "/%C3%BC/x"), "/****");
+        assert_eq!(hidden("a?b#c", "/a%3Fb%23c"), "/****");
+        // A server that reads the query as a form.
+        assert_eq!(hidden("ab+c/d==", "bad key ab c/d=="), "bad key ****");
+        assert_eq!(hidden("a/b\"c", r#"{"e":"a\/b\"c"}"#), r#"{"e":"****"}"#);
+        assert_eq!(hidden("a\nb", r#"{"e":"a\nb"}"#), r#"{"e":"****"}"#);
+    }
+
+    #[test]
+    fn values_do_not_hide_forms_outside_the_list() {
+        // Base64 of `k3y-value`, an HTML entity and a part of the value.
+        let secrets = ["k3y-value".to_string()];
+        let text = "azN5LXZhbHVl k3y&#45;value k3y-val";
+        assert_eq!(values(text, &secrets), text);
     }
 
     #[test]
