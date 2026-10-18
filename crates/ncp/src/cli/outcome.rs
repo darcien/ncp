@@ -449,8 +449,10 @@ impl Failure {
     }
 
     /// Applies `f` to the message, the data lines, the causes, the hints
-    /// and the pages. Each redaction uses it. A destination stays as it
-    /// is: it is an origin of the configuration with no `${NAME}` value.
+    /// and the message of each page. Each redaction uses it. The URL of a
+    /// page stays as it is: the user must open it, and the server put each
+    /// value in it (design B81). A destination stays as it is: it is an
+    /// origin of the configuration with no `${NAME}` value.
     #[must_use]
     pub fn map_text(self, f: impl Fn(String) -> String) -> Self {
         let pages: Box<[Page]> = self
@@ -458,7 +460,7 @@ impl Failure {
             .iter()
             .map(|page| Page {
                 message: f(page.message.clone()),
-                url: f(page.url.clone()),
+                url: page.url.clone(),
             })
             .collect();
         let failure = self.with_diagnostic(|diagnostic| diagnostic.map_text(&f));
@@ -636,7 +638,7 @@ mod tests {
         assert_eq!(diagnostic.hints()[0].command(), None);
         assert_eq!(diagnostic.hints()[1].command(), Some("ncp server list"));
         assert_eq!(failure.pages()[0].message, "open *");
-        assert_eq!(failure.pages()[0].url, "https://h/?*");
+        assert_eq!(failure.pages()[0].url, "https://h/?k");
     }
 
     #[test]

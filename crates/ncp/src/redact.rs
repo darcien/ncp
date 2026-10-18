@@ -130,8 +130,8 @@ fn hide_query(query: &str) -> String {
         .join("&")
 }
 
-/// The known secret values of one server in one run, in the forms that
-/// output hides (design B81).
+/// The known secret values of one run, in the forms that output hides
+/// (design B81).
 ///
 /// The list grows during the run, and each clone sees each new value:
 /// rmcp reads and refreshes the OAuth tokens inside the connection, after
@@ -156,8 +156,9 @@ impl Known {
     }
 
     /// The text with each form of each known value hidden. All matches of
-    /// all forms come from the original text and join where they overlap,
-    /// so that two values that overlap leave no part of either.
+    /// all forms come from the original text and join where they overlap
+    /// or touch, so that two values that overlap leave no part of either,
+    /// and a repeated value does not show how many times it repeats.
     #[must_use]
     pub fn hide(&self, text: &str) -> String {
         let forms = self.0.read().unwrap_or_else(PoisonError::into_inner);
@@ -168,7 +169,7 @@ impl Known {
             .into_iter()
             .fold(Vec::new(), |mut joined: Vec<(usize, usize)>, span| {
                 match joined.last_mut() {
-                    Some(last) if span.0 < last.1 => last.1 = last.1.max(span.1),
+                    Some(last) if span.0 <= last.1 => last.1 = last.1.max(span.1),
                     _ => joined.push(span),
                 }
                 joined
@@ -183,7 +184,9 @@ impl Known {
     }
 }
 
-// Each place of `form` in `text`, also where two places overlap.
+// Each place of `form` in `text`, also where two places overlap. The time
+// grows with the text times the form only for a text that repeats the form
+// at each character, which a real secret does not do.
 fn matches(text: &str, form: &str) -> Vec<(usize, usize)> {
     std::iter::successors(text.find(form), |&start| {
         let next = start + text.get(start..)?.chars().next()?.len_utf8();
@@ -496,6 +499,7 @@ mod tests {
         let secrets = ["tokenXYZ".to_string(), "XYZsecret".to_string()];
         assert_eq!(values("a tokenXYZsecret b", &secrets), "a **** b");
         assert_eq!(values("aaa", &["aa".to_string()]), "****");
+        assert_eq!(values("x k1k1 y", &["k1".to_string()]), "x **** y");
     }
 
     #[test]

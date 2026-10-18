@@ -506,6 +506,9 @@ orders the work. Research: `docs/research/uv-output-messages.md`.
 
 ## Milestone 21: hide each known secret
 
+Status: done on 2026-10-18, with two rounds of adversarial review. The
+open points are in the backlog.
+
 Design: decisions B81 and B82 in `docs/design/cli.md`, accepted by the user
 on 2026-10-18 after an adversarial review of three agents. No requirement
 changes: the work makes the code meet S3 and I6. Do the items in order.

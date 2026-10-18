@@ -1196,7 +1196,7 @@ because AGENTS.md makes uv the first reference for command-line behavior.
 |---|---|---|
 | A script or an agent reads `error.hint`. | It gets nothing. | No release exists. The field `command` gives a command that reads state as data (rule 10). |
 | An agent needs a command that changes state, for example `ncp trust`, `ncp secret set` or `ncp server remove`. | Today the agent gets it as a bare command. After the change, it must read the command from the sentence. | Rule 10 is the safe default. A change to this policy needs a separate proposal. |
-| A secret shows in a data line, a cause or a hint. | A leak (S3). | Private fields and `map_text` in step 2. Rule 21. New tests read the whole stderr. `map_text` does not change `pages` and `destination`, as before this design. |
+| A secret shows in a data line, a cause or a hint. | A leak (S3). | Private fields and `map_text` in step 2. Rule 21. New tests read the whole stderr. `map_text` does not change the URL of a page or `destination` (B81). |
 | A server echoes a known secret value in a body, in a JSON-RPC message, or in a form that the redaction does not know. | A leak in the text of a cause or a trace (S3). | B81 hides each known value of the server in a fixed list of forms, and states the forms that still show. |
 | A message does not name its server after `ncp` no longer writes the prefix. | The user cannot see which server failed. | The style check (rule 12) fails the test. |
 | An rmcp or reqwest update changes a cause text. | A test of library text fails. | Tests examine the text of `ncp` and only a short part of library text, for example `HTTP 404`. |
