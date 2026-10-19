@@ -56,12 +56,14 @@ machine, and the git hook runs them:
 | What | Where | Tracked |
 |---|---|---|
 | The terminal of each run | `.scratch/live/<date-time>.log` | No |
-| The result | A new report `docs/research/live-tests-YYYY-MM-DD.md` | Yes |
+| A defect, or a fact that changes a decision | A new report `docs/research/live-tests-YYYY-MM-DD.md` | Yes |
+
+A test that passes gives no report. The result applies only to one build.
 
 The record can contain your account name and the URLs of the login, so it
 stays in `.scratch/`. It also has the URL that you paste in the `oauth`
 test. The code in that URL works only one time, and only with the PKCE
-verifier of that login. Ask the agent to write the report from the record.
+verifier of that login.
 
 These tests replace the steps of `docs/research/macos-keychain.md`,
 `oauth-login-steps.md`, `macos-system-proxy.md`, and the OAuth step of

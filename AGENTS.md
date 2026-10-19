@@ -23,6 +23,8 @@ written in Rust on the official SDK `rmcp`.
   `falls_back_to_initialize_when_discover_times_out`.
 - Research and history are in `docs/research/`. Do not change old reports.
   Add a new report instead.
+- Write a test report only for a defect, or for a fact that changes a
+  decision. Do not commit a result that only passes.
 - Take prior art from the official MCP specification, SDKs and test parts,
   and from tools of established vendors (frontier AI labs and major editors).
 - For command-line behavior (names, flags, files, trust), use uv and mise
