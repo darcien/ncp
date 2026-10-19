@@ -12,6 +12,8 @@
 //! The adapter runs `ncp-cli`, the build of `ncp` in the test kit. It uses
 //! a temporary home with the file credential store and the fake browser.
 //! The fake browser follows the redirect of the authorization server.
+//! The client metadata document URL is the URL of the suite, so that no
+//! scenario fetches the document of `ncp` from the internet.
 //!
 //! By default the adapter acts as a person at a TTY who answers each
 //! question. With `NCP_CONFORMANCE_AGENT` set, it acts as an agent: no TTY
@@ -35,6 +37,10 @@ use ncp::{
 use serde_json::{Map, Value, json};
 
 const SERVER: &str = "conformance";
+
+/// The client ID that the scenario `auth/basic-cimd` expects. The scenario
+/// `auth/offline-access-scope` tries to fetch the document at this URL.
+const CLIENT_METADATA_URL: &str = "https://conformance-test.local/client-metadata.json";
 
 /// The logins that one scenario can need: the first one and two step-ups.
 const MAX_LOGINS: usize = 3;
@@ -69,6 +75,7 @@ impl Run {
             .env("XDG_CACHE_HOME", format!("{home}/cache"))
             .env("XDG_STATE_HOME", format!("{home}/state"))
             .env("NCP_TEST_BROWSER", "follow")
+            .env("NCP_TEST_CLIENT_METADATA_URL", CLIENT_METADATA_URL)
             .env("PATH", std::env::var("PATH").unwrap_or_default())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

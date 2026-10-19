@@ -3,9 +3,6 @@
 # The suite fails when an entry passes, so that this list stays current.
 # The reports are docs/research/conformance*.md.
 client:
-  # A Client ID Metadata Document needs a stable HTTPS URL. Its place is a
-  # release decision of the user, so CIMD is off.
-  - auth/basic-cimd:cimd-client-id-used
   # With no TTY, ncp declares no elicitation and does not ask. An
   # input_required result gives exit 5. A legacy server that asks anyway
   # (elicitation/create) gets the error -32602 (Invalid params), and the
