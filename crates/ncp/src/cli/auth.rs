@@ -65,6 +65,13 @@ pub fn open_browser(url: &str) -> std::io::Result<()> {
 
 const CLIENT_NAME: &str = "ncp";
 
+/// The URL of the Client ID Metadata Document of `ncp`, which is its client
+/// ID at a server that supports CIMD. The source of the document is
+/// `site/public/oauth/client-metadata.json`. A server does not follow a
+/// redirect, so a release that moves the document changes this URL. A new
+/// URL is a new client (CIMD draft-02 §8.3).
+pub const CLIENT_METADATA_URL: &str = "https://darcien.github.io/ncp/oauth/client-metadata.json";
+
 pub(super) async fn command(context: &Context<'_>, command: AuthCommand) -> Result<(), Failure> {
     match command {
         AuthCommand::Login {
@@ -601,31 +608,17 @@ pub(super) async fn stored_login(
             manager,
         )));
     }
-    let client_key = CredentialKey::OAuthClient(server.name.clone());
-    let started = std::time::Instant::now();
-    let client = secrets::call(context, &store, move |store| store.load(&client_key)).await;
-    if let Some(timer) = credentials_timer(context) {
-        timer(started.elapsed());
-    }
-    let client = client
-        .map_err(|error| {
-            let message = format!(
-                "ncp cannot read the OAuth client of the server {}",
-                code(name)
-            );
-            secrets::store_failure_about(Some(name), &error, message, [])
-        })?
-        .and_then(|secret| ClientItem::from_secret(&secret).ok());
-    if let Some(ClientItem {
-        client_id: stored_id,
-        client_secret: Some(client_secret),
-        ..
-    }) = client
-        && stored_id == client_id
-    {
-        context.ui.known().add([client_secret.clone()]);
+    // A CIMD client has no secret and no client item (design B83), so no
+    // command needs to open the item.
+    let secret = if client_id == context.client_metadata_url {
+        None
+    } else {
+        stored_client_secret(context, server, &store, &client_id).await?
+    };
+    if let Some(secret) = secret {
+        context.ui.known().add([secret.clone()]);
         let config = OAuthClientConfig::new(client_id, RedirectUri::new(0).to_string())
-            .with_client_secret(client_secret);
+            .with_client_secret(secret);
         manager
             .configure_client(config)
             .map_err(|error| auth_failure("OAuth setup", name, &error))?;
@@ -634,6 +627,34 @@ pub(super) async fn stored_login(
         crate::client::http::observed(http, observer),
         manager,
     )))
+}
+
+// The secret of the stored client item, when the item is for the client
+// of the tokens.
+async fn stored_client_secret(
+    context: &Context<'_>,
+    server: &Server,
+    store: &Arc<dyn CredentialStore>,
+    client_id: &str,
+) -> Result<Option<String>, Failure> {
+    let name = server.name.as_str();
+    let client_key = CredentialKey::OAuthClient(server.name.clone());
+    let started = std::time::Instant::now();
+    let client = secrets::call(context, store, move |store| store.load(&client_key)).await;
+    if let Some(timer) = credentials_timer(context) {
+        timer(started.elapsed());
+    }
+    Ok(client
+        .map_err(|error| {
+            let message = format!(
+                "ncp cannot read the OAuth client of the server {}",
+                code(name)
+            );
+            secrets::store_failure_about(Some(name), &error, message, [])
+        })?
+        .and_then(|secret| ClientItem::from_secret(&secret).ok())
+        .filter(|item| item.client_id == client_id)
+        .and_then(|item| item.client_secret))
 }
 
 /// The message names only the current value, because a stored URL or
@@ -977,10 +998,36 @@ async fn remove_old_tokens(
     Ok(())
 }
 
-// The order is from the spec (design B67): the configured
-// `oauth.clientId`, then the stored client of the same issuer, then a new
-// registration. A Client ID Metadata Document needs a stable HTTPS URL,
-// so it comes with the first release.
+/// The client of a login, in the order of the spec (design B67, B83).
+enum LoginClient<'a> {
+    /// `oauth.clientId` of the entry.
+    Configured(&'a PreRegisteredClient),
+    /// The URL of the Client ID Metadata Document of `ncp`.
+    MetadataDocument(&'a str),
+    /// The stored client of the same issuer, or a new registration.
+    Registered,
+}
+
+fn login_client<'a>(
+    remote: &'a RemoteServer,
+    metadata: &AuthorizationMetadata,
+    document_url: &'a str,
+) -> LoginClient<'a> {
+    match &remote.oauth_client {
+        Some(client) => LoginClient::Configured(client),
+        None if supports_metadata_document(metadata) => LoginClient::MetadataDocument(document_url),
+        None => LoginClient::Registered,
+    }
+}
+
+fn supports_metadata_document(metadata: &AuthorizationMetadata) -> bool {
+    metadata
+        .additional_fields
+        .get("client_id_metadata_document_supported")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 async fn client_request(
     context: &Context<'_>,
     server: &Server,
@@ -991,19 +1038,65 @@ async fn client_request(
     (redirect, scopes): (&RedirectUri, &[String]),
 ) -> Result<AuthorizationRequest, Failure> {
     let name = server.name.as_str();
-    let issuer = issuer_of(metadata);
     let request = AuthorizationRequest::new(redirect.to_string())
         .with_client_name(CLIENT_NAME)
         .with_scopes(scopes.to_vec());
-    if let Some(client) = &remote.oauth_client {
-        let request = request.with_preregistered_client(client.client_id.clone());
-        return Ok(
-            match secrets::client_secret(context, server, client).await? {
-                Some(secret) => request.with_client_secret(secret.expose()),
+    match login_client(remote, metadata, context.client_metadata_url) {
+        LoginClient::Configured(client) => {
+            context
+                .ui
+                .debug(Some(name), "the login uses `oauth.clientId` of the entry");
+            let request = request.with_preregistered_client(client.client_id.clone());
+            Ok(
+                match secrets::client_secret(context, server, client).await? {
+                    Some(secret) => request.with_client_secret(secret.expose()),
+                    None => request,
+                },
+            )
+        }
+        // rmcp uses the URL only when the metadata supports CIMD, and it
+        // refuses a URL that is not HTTPS.
+        LoginClient::MetadataDocument(url) => {
+            context.ui.debug(
+                Some(name),
+                &format!("the login uses the client metadata document {url}"),
+            );
+            Ok(request.with_client_metadata_url(url))
+        }
+        LoginClient::Registered => {
+            let client = registered_client(
+                context,
+                server,
+                manager,
+                store,
+                metadata,
+                (redirect, scopes),
+            )
+            .await?;
+            let request = request.with_preregistered_client(client.client_id);
+            Ok(match client.client_secret {
+                Some(secret) => {
+                    context.ui.known().add([secret.clone()]);
+                    request.with_client_secret(secret)
+                }
                 None => request,
-            },
-        );
+            })
+        }
     }
+}
+
+// The stored client of the same issuer, else a new registration that is
+// stored before the login continues (design B47).
+async fn registered_client(
+    context: &Context<'_>,
+    server: &Server,
+    manager: &mut AuthorizationManager,
+    store: &Arc<dyn CredentialStore>,
+    metadata: &AuthorizationMetadata,
+    (redirect, scopes): (&RedirectUri, &[String]),
+) -> Result<ClientItem, Failure> {
+    let name = server.name.as_str();
+    let issuer = issuer_of(metadata);
     let key = CredentialKey::OAuthClient(server.name.clone());
     let stored = secrets::call(context, store, {
         let key = key.clone();
@@ -1020,39 +1113,34 @@ async fn client_request(
     .map(|secret| ClientItem::from_secret(&secret))
     .transpose()
     .map_err(|error| tokens_failure(name, &error))?;
-    let client = if let Some(item) = stored.filter(|item| item.is_for(&issuer)) {
-        item
-    } else {
-        if metadata.registration_endpoint.is_none() {
-            return Err(no_registration(name, metadata));
-        }
-        let item = register(manager, name, &issuer, redirect, scopes).await?;
-        let secret = item
-            .to_secret()
-            .map_err(|error| tokens_failure(name, &error))?;
-        secrets::call(context, store, move |store| store.save(&key, &secret))
-            .await
-            .map_err(|error| {
-                let message = format!(
-                    "ncp cannot store the OAuth client of the server {}",
-                    code(name)
-                );
-                secrets::store_failure_about(Some(name), &error, message, [])
-            })?;
+    if let Some(item) = stored.filter(|item| item.is_for(&issuer)) {
         context.ui.debug(
             Some(name),
-            &format!("registered the client {} at {issuer}", item.client_id),
+            &format!("the login uses the stored client {}", item.client_id),
         );
-        item
-    };
-    let request = request.with_preregistered_client(client.client_id);
-    Ok(match client.client_secret {
-        Some(secret) => {
-            context.ui.known().add([secret.clone()]);
-            request.with_client_secret(secret)
-        }
-        None => request,
-    })
+        return Ok(item);
+    }
+    if metadata.registration_endpoint.is_none() {
+        return Err(no_registration(name, metadata));
+    }
+    let item = register(manager, name, &issuer, redirect, scopes).await?;
+    let secret = item
+        .to_secret()
+        .map_err(|error| tokens_failure(name, &error))?;
+    secrets::call(context, store, move |store| store.save(&key, &secret))
+        .await
+        .map_err(|error| {
+            let message = format!(
+                "ncp cannot store the OAuth client of the server {}",
+                code(name)
+            );
+            secrets::store_failure_about(Some(name), &error, message, [])
+        })?;
+    context.ui.debug(
+        Some(name),
+        &format!("registered the client {} at {issuer}", item.client_id),
+    );
+    Ok(item)
 }
 
 // The page that tells how to register a client (RFC 8414 §2
@@ -1664,6 +1752,34 @@ mod tests {
             assert!(!failure.message().contains("k3y"), "{}", failure.message());
             assert!(failure.message().contains("on purpose"));
         }
+    }
+
+    #[test]
+    fn published_metadata_document_matches_the_client_id_in_code() {
+        let document: Value = serde_json::from_str(include_str!(
+            "../../../../site/public/oauth/client-metadata.json"
+        ))
+        .unwrap();
+        assert_eq!(document["client_id"], CLIENT_METADATA_URL);
+        // A loopback redirect URI matches with any port (RFC 8252 §7.3).
+        let mut redirect = url::Url::parse(&RedirectUri::new(0).to_string()).unwrap();
+        redirect.set_port(None).unwrap();
+        assert_eq!(document["redirect_uris"], json!([redirect.as_str()]));
+    }
+
+    #[test]
+    fn metadata_document_support_needs_the_value_true() {
+        let with = |value: Value| {
+            let mut metadata = metadata("https://as.test");
+            metadata
+                .additional_fields
+                .insert("client_id_metadata_document_supported".into(), value);
+            supports_metadata_document(&metadata)
+        };
+        assert!(with(json!(true)));
+        assert!(!with(json!(false)));
+        assert!(!with(json!("true")));
+        assert!(!supports_metadata_document(&metadata("https://as.test")));
     }
 
     fn metadata(endpoint: &str) -> AuthorizationMetadata {

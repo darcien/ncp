@@ -14,6 +14,8 @@ local buildInputs = List(
   "rust-toolchain.toml",
   // It pins the tools and defines the tasks.
   "mise.toml",
+  // A test compares its client ID with the URL in the code.
+  "site/public/oauth/client-metadata.json",
 )
 local linuxInputs = (buildInputs) { "harness/linux/**" }
 // No crate reads a Markdown file.

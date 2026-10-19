@@ -72,6 +72,8 @@ pub struct Context<'a> {
     /// Runs before the rename of a changed configuration file. Tests give
     /// a hook that changes the file, as another tool can.
     pub before_rename: fn(&Path),
+    /// The client ID of a login with a Client ID Metadata Document.
+    pub client_metadata_url: &'static str,
 }
 
 impl Context<'_> {

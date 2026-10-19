@@ -47,15 +47,19 @@ use crate::{
 /// call that passed its limit can stay on its blocking thread.
 const SHUTDOWN_LIMIT: Duration = Duration::from_secs(2);
 
-/// The parts of `ncp` that reach outside the process with no network: the
-/// native store and the browser. Tests give fakes, so that a test never
-/// uses the real Keychain, the real Secret Service, or a real browser.
+/// The parts of `ncp` that tests replace: the native store, the browser,
+/// the TTY check, a hook before a rename, and the client metadata URL.
+/// Tests give fakes, so that a test never uses the real Keychain, the real
+/// Secret Service, or a real browser, and a test server can expect its own
+/// client ID.
 #[derive(Clone, Copy)]
 pub struct Platform {
     pub open_native: secrets::OpenNative,
     pub open_browser: auth::OpenBrowser,
     pub interactive: fn() -> bool,
     pub before_rename: fn(&std::path::Path),
+    /// The client ID of a login with a Client ID Metadata Document.
+    pub client_metadata_url: &'static str,
 }
 
 #[must_use]
@@ -65,6 +69,7 @@ pub fn main() -> ExitCode {
         open_browser: auth::open_browser,
         interactive: ask::interactive,
         before_rename: |_| {},
+        client_metadata_url: auth::CLIENT_METADATA_URL,
     })
 }
 
@@ -177,6 +182,7 @@ async fn run(
             interactive: (platform.interactive)(),
             named_config: cli.options.config_file.is_some(),
             before_rename: platform.before_rename,
+            client_metadata_url: platform.client_metadata_url,
             cache: match (cli.options.no_cache, cli.options.refresh) {
                 (true, _) => session::CacheUse::Off,
                 (false, true) => session::CacheUse::WriteOnly,

@@ -14,6 +14,8 @@
 //!   TTY.
 //! - With `NCP_TEST_CHANGE_BEFORE_RENAME=1`, the configuration file changes
 //!   immediately before `ncp` renames its new copy over it.
+//! - `NCP_TEST_CLIENT_METADATA_URL` replaces the URL of the Client ID
+//!   Metadata Document, so that a test server can expect its own URL.
 
 use std::{
     io::{BufRead, BufReader, Write},
@@ -90,11 +92,20 @@ fn change_before_rename(path: &std::path::Path) {
     }
 }
 
+// The process reads the value one time and keeps it to its end.
+fn client_metadata_url() -> &'static str {
+    match std::env::var("NCP_TEST_CLIENT_METADATA_URL") {
+        Ok(url) => url.leak(),
+        Err(_) => ncp::cli::auth::CLIENT_METADATA_URL,
+    }
+}
+
 fn main() -> std::process::ExitCode {
     ncp::cli::main_with(Platform {
         open_native: fake_native,
         open_browser: fake_browser,
         interactive: fake_tty,
         before_rename: change_before_rename,
+        client_metadata_url: client_metadata_url(),
     })
 }
