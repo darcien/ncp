@@ -544,9 +544,10 @@ mise `github:darcien/ncp`.
    when the document changes.
 2. Site and CIMD document: the source of the GitHub Pages site is
    `site/`. The document is `site/public/oauth/client-metadata.json`, with
-   the redirect URI `http://127.0.0.1/callback`. The workflow
-   `.github/workflows/pages.yml` publishes `site/public/` on each push to
-   `main` that changes `site/`. A later site, for example Astro with
+   the redirect URI `http://127.0.0.1/callback`. `site/public/index.html`
+   is a stub page for the `client_uri` of the document. The workflow
+   `.github/workflows/pages.yaml` publishes `site/public/` on each push to
+   `main` that changes `site/` or the workflow. A later site, for example Astro with
    `base: '/ncp'`, builds from `site/` and copies `site/public/` at the
    same paths, so the CIMD URL stays the same.
 3. Release workflow: `.github/workflows/release.yaml` runs on a tag
