@@ -57,6 +57,16 @@ pub enum Registration {
     Closed,
 }
 
+/// Client ID Metadata Documents (CIMD). With support, each HTTPS client ID
+/// is a public client with the redirect URI of the `ncp` document. The
+/// server fetches no document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetadataDocuments {
+    Unsupported,
+    /// The metadata sets `client_id_metadata_document_supported`.
+    Supported,
+}
+
 /// The behavior of the server. Tests can change it while the server runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthSettings {
@@ -84,6 +94,7 @@ pub struct AuthSettings {
     pub granted_extra: Vec<String>,
     /// The metadata field `service_documentation`.
     pub service_documentation: Option<String>,
+    pub metadata_documents: MetadataDocuments,
 }
 
 impl Default for AuthSettings {
@@ -101,6 +112,7 @@ impl Default for AuthSettings {
             challenge_scope: None,
             granted_extra: Vec::new(),
             service_documentation: None,
+            metadata_documents: MetadataDocuments::Unsupported,
         }
     }
 }
@@ -125,6 +137,8 @@ pub struct AuthRecord {
     pub token_client_id: Option<String>,
     /// The last token request sent its client with HTTP Basic.
     pub token_basic: bool,
+    /// The client secret of the last token request.
+    pub token_secret: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -168,6 +182,18 @@ impl State {
     fn next(&mut self) -> usize {
         self.counter += 1;
         self.counter
+    }
+
+    // A registered client, or a client of a metadata document (CIMD).
+    fn client(&self, client_id: &str) -> Option<Client> {
+        self.clients.get(client_id).cloned().or_else(|| {
+            (self.settings.metadata_documents == MetadataDocuments::Supported
+                && client_id.starts_with("https://"))
+            .then(|| Client {
+                secret: None,
+                redirect_uris: vec!["http://127.0.0.1/callback".into()],
+            })
+        })
     }
 }
 
@@ -408,6 +434,9 @@ fn metadata(state: &AuthState) -> Response {
     if let Some(page) = settings.service_documentation {
         body["service_documentation"] = json!(page);
     }
+    if settings.metadata_documents == MetadataDocuments::Supported {
+        body["client_id_metadata_document_supported"] = json!(true);
+    }
     json_response(http::StatusCode::OK, &body)
 }
 
@@ -446,7 +475,7 @@ fn authorize(state: &AuthState, query: &HashMap<String, String>) -> Response {
     let get = |name: &str| query.get(name).map(String::as_str).unwrap_or_default();
     let (client_id, redirect_uri, state_value) =
         (get("client_id"), get("redirect_uri"), get("state"));
-    let Some(client) = guard.clients.get(client_id).cloned() else {
+    let Some(client) = guard.client(client_id) else {
         return text(http::StatusCode::BAD_REQUEST, "unknown client_id");
     };
     if redirect_uri.is_empty()
@@ -580,8 +609,9 @@ fn token(state: &AuthState, headers: &http::HeaderMap, form: &HashMap<String, St
     let (client_id, secret) = client_credentials(headers, form);
     guard.record.token_client_id.clone_from(&client_id);
     guard.record.token_basic = headers.contains_key(http::header::AUTHORIZATION);
+    guard.record.token_secret.clone_from(&secret);
     let client_id = client_id.unwrap_or_default();
-    let Some(client) = guard.clients.get(&client_id).cloned() else {
+    let Some(client) = guard.client(&client_id) else {
         return oauth_error(http::StatusCode::UNAUTHORIZED, "invalid_client");
     };
     if client.secret.is_some() && client.secret != secret {

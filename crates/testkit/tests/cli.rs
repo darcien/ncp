@@ -17,7 +17,7 @@ mod common;
 use common::{Home, NCP, Run};
 use ncp_testkit::{
     Mode,
-    auth_server::{AuthSettings, Registration},
+    auth_server::{AuthSettings, MetadataDocuments, Registration},
     serve_http, serve_http_with,
 };
 use serde_json::{Value, json};
@@ -1662,6 +1662,132 @@ async fn login_uses_the_configured_client_id_and_registers_nothing() {
     let record = auth.record();
     assert_eq!(record.register_calls, 0);
     assert_eq!(record.token_client_id.as_deref(), Some("pre-1"));
+}
+
+fn credential_file(home: &Home) -> String {
+    std::fs::read_to_string(home.root.join("state/ncp/credentials.json")).unwrap()
+}
+
+fn debug_messages(run: &Run) -> Vec<String> {
+    notes(run, "debug")
+        .iter()
+        .filter_map(|note| note["message"].as_str().map(String::from))
+        .collect()
+}
+
+const VERBOSE_LOGIN_TO_FILE: [&str; 6] =
+    ["-v", "auth", "login", "web", "--credential-store", "file"];
+
+#[tokio::test(flavor = "multi_thread")]
+async fn uses_the_metadata_document_url_as_client_id_when_the_server_supports_it() {
+    let (auth, fixture) = oauth_fixture(AuthSettings {
+        metadata_documents: MetadataDocuments::Supported,
+        ..AuthSettings::default()
+    })
+    .await;
+    let home = oauth_home("login-cimd", &fixture.url);
+    let run = home.run(&VERBOSE_LOGIN_TO_FILE);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let record = auth.record();
+    assert_eq!(
+        (record.register_calls, record.code_grants),
+        (0, 1),
+        "{record:?}"
+    );
+    let url = ncp::cli::auth::CLIENT_METADATA_URL;
+    assert_eq!(record.token_client_id.as_deref(), Some(url));
+    assert_eq!(record.token_secret, None);
+    let file = credential_file(&home);
+    assert!(
+        file.contains("oauth/web/tokens") && !file.contains("oauth/web/client"),
+        "{file}"
+    );
+    assert!(
+        debug_messages(&run).contains(&format!(
+            "the login uses the client metadata document {url}"
+        )),
+        "{}",
+        run.describe()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn registers_dynamically_when_the_server_has_no_metadata_document_support() {
+    let (auth, fixture) = oauth_fixture(AuthSettings::default()).await;
+    let home = oauth_home("login-no-cimd", &fixture.url).set(
+        "NCP_TEST_CLIENT_METADATA_URL",
+        "https://client.test/ncp.json",
+    );
+    let run = home.run(&VERBOSE_LOGIN_TO_FILE);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let record = auth.record();
+    assert_eq!(record.register_calls, 1, "{record:?}");
+    let client_id = record.token_client_id.unwrap();
+    assert!(client_id.starts_with("client-"), "{client_id}");
+    assert!(credential_file(&home).contains("oauth/web/client"));
+    assert!(
+        debug_messages(&run)
+            .iter()
+            .any(|message| message.starts_with(&format!("registered the client {client_id}"))),
+        "{}",
+        run.describe()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn preregistered_client_id_comes_before_the_metadata_document() {
+    let (auth, fixture) = oauth_fixture(AuthSettings {
+        metadata_documents: MetadataDocuments::Supported,
+        ..AuthSettings::default()
+    })
+    .await;
+    auth.add_client("pre-1", None);
+    let home = oauth_home("login-pre-cimd", &fixture.url);
+    home.configure(&json!({"web": {"type": "http", "url": fixture.url,
+        "oauth": {"clientId": "pre-1"}}}));
+    let run = home.run(&VERBOSE_LOGIN_TO_FILE);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let record = auth.record();
+    assert_eq!(record.register_calls, 0);
+    assert_eq!(record.token_client_id.as_deref(), Some("pre-1"));
+    assert!(
+        debug_messages(&run).contains(&"the login uses `oauth.clientId` of the entry".into()),
+        "{}",
+        run.describe()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn refreshes_a_metadata_document_client_with_no_secret() {
+    // The first login registers a client with a secret. Its client item
+    // stays after the login with the metadata document.
+    let (auth, fixture) = oauth_fixture(AuthSettings {
+        registration: Registration::WithSecret,
+        expires_in: 5,
+        ..AuthSettings::default()
+    })
+    .await;
+    let url = "https://client.test/ncp/client-metadata.json";
+    let home = oauth_home("refresh-cimd", &fixture.url).set("NCP_TEST_CLIENT_METADATA_URL", url);
+    assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    assert!(auth.record().token_secret.is_some());
+    auth.settings(|settings| settings.metadata_documents = MetadataDocuments::Supported);
+    let run = home.run(&LOGIN_TO_FILE);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let record = auth.record();
+    assert_eq!(record.token_client_id.as_deref(), Some(url));
+    assert_eq!(
+        record.token_secret, None,
+        "the code exchange sends no secret"
+    );
+    assert!(credential_file(&home).contains("oauth/web/client"));
+    // rmcp refreshes a token that ends in less than 30 s.
+    let run = home.run(&["tool", "list", "web"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let record = auth.record();
+    assert!(record.refresh_grants >= 1, "{record:?}");
+    assert_eq!(record.token_client_id.as_deref(), Some(url));
+    assert_eq!((record.token_secret, record.token_basic), (None, false));
 }
 
 // A server with no Dynamic Client Registration and a client with a
