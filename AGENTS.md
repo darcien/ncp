@@ -67,6 +67,10 @@ Stop and ask the user before you:
 - Add a dependency that `deny.toml` does not accept.
 - Pass a milestone that the plan marks as a gate.
 
+The rules for network destinations and code apply to `ncp` and to the
+development on this machine. The settings of the CI platform control the
+network of the CI.
+
 ## Credential store in tests
 
 Automated tests do not use the macOS Keychain or the Secret Service of the

@@ -361,13 +361,12 @@ Client Registration, and the scope selection of the spec (decision C4).
   authorization server that breaks RFC 8252 and compares the port exactly
   does not work in the MVP. `callbackPort` is the planned answer.
 - A CIMD lists the redirect URI `http://127.0.0.1/callback`. The port does
-  not count for a loopback URI (RFC 8252 §7.3). The document is on the
+  not count for a loopback URI (RFC 8252 §7.3, RFC 9700 §2.1). The document is on the
   GitHub Pages site of the repository, at a fixed path. The URL comes with
   the first release (A7).
-- A CIMD URL must not move. A server does not follow a redirect (CIMD
-  draft-02 §5), and a new URL is a new client (§8.3). Before a change, the
-  old URL must keep the same document for as long as old versions or old
-  tokens can use it.
+- The CIMD URL is a constant in the code of each release. A server does
+  not follow a redirect (CIMD draft-02 §5), so after a move the next
+  release has the new URL. A new URL is a new client (§8.3).
 - Settings for one server go in an `oauth` object in its configuration
   entry. The MVP reads `clientId`, `clientSecret` and `issuer`, for a
   pre-registered client (B68). Names for later, from the most common shape in other tools:

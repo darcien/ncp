@@ -528,36 +528,35 @@ Each item is one or more small commits.
    item.
 4. An adversarial review of items 1 to 3, with fixes.
 
-## Last milestone: distribution (gate)
+## Last milestone: distribution
 
-The workflow needs action pins from github.com. The
-push, the tag and the CIMD URL need the user.
+Repository: `github.com/darcien/ncp`. Version: SemVer `0.y`. Channel:
+mise `github:darcien/ncp`.
 
-Parked by the user on 2026-10-12. Start only after the user does the tests
-of `mise run live` (`docs/live-tests.md`), and reviews the build decisions
-in section 9 of `docs/design/cli.md`.
-
-1. **Stop and ask** before the distribution channel (D2), CI, and any push or
-   upload. They add network destinations and accounts.
-2. The decisions of 2026-10-09 (`.scratch/backlog/release.md`):
-   - Source: a public GitHub repository.
-   - CI: a GitHub Actions release workflow on a tag `vX.Y.Z`. Its first
-     step checks that the tag is the version in `Cargo.toml`. It uses
-     `harness/release.sh`.
-   - Artifacts: `ncp-X.Y.Z-<target>.tar.gz` (one top folder with `ncp` and
-     the licenses), one `SHA256SUMS`, and a GitHub artifact attestation.
-   - Channel: mise `github:OWNER/ncp` only. No Homebrew tap.
-   - Version: SemVer `0.y`.
-   - CIMD URL: `https://OWNER.github.io/ncp/oauth/client-metadata.json` on
-     GitHub Pages. Set the URL in the code at this release. Never move the
-     URL unless the old one still serves `200`, because CIMD permits no
-     redirects. Before the URL goes in, ask the user about the CIMD risks
-     in the release backlog (exact redirect match against a random port,
-     an authorization server that limits redirect URIs to the origin of
-     the document, company networks that cannot reach `github.io`).
-3. Checks at the first release: `mise install` works on macOS and Linux;
-   the binary has no quarantine attribute; the tag push starts the
-   workflow.
-4. Later, not in the MVP: a release with no manual tag and no hand-written
-   changelog (for example release-plz), and a version rule that follows
-   the MCP spec version.
+1. CIMD login: when the authorization server metadata sets
+   `client_id_metadata_document_supported` and the entry has no
+   `oauth.clientId`, `auth login` uses the CIMD URL as the client ID, with
+   no secret and no registration. Else the order of B67 stays. The URL
+   is a constant in the code of each release:
+   `https://darcien.github.io/ncp/oauth/client-metadata.json`. Tests: the
+   test plan of `docs/research/oauth-open-decisions.md` section 1. The
+   conformance scenario `auth/basic-cimd` passes. `hk.pkl` runs the tests
+   when the document changes.
+2. Site and CIMD document: the source of the GitHub Pages site is
+   `site/`. The document is `site/public/oauth/client-metadata.json`, with
+   the redirect URI `http://127.0.0.1/callback`. The workflow
+   `.github/workflows/pages.yml` publishes `site/public/` on each push to
+   `main` that changes `site/`. A later site, for example Astro with
+   `base: '/ncp'`, builds from `site/` and copies `site/public/` at the
+   same paths, so the CIMD URL stays the same.
+3. Release workflow: `.github/workflows/release.yaml` runs on a tag
+   `vX.Y.Z`. It checks that the tag is the version in `Cargo.toml`, builds
+   the macOS targets on a macOS runner and the Linux targets on a Linux
+   runner, and publishes `ncp-X.Y.Z-<target>.tar.gz` (one top folder with
+   `ncp` and the licenses), `SHA256SUMS`, and a GitHub artifact
+   attestation. Split `harness/release.sh` into the steps that the
+   workflow needs.
+4. The user sets the Pages source to GitHub Actions and pushes. When the
+   CIMD URL serves the document, the user pushes the tag `v0.1.0`.
+5. Check: `mise use github:darcien/ncp` gives a binary that runs on macOS
+   and Linux. The user runs `mise run live oauth`.
