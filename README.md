@@ -16,17 +16,39 @@ Target MCP spec versions:
 - `2026-07-28`
 - `2025-11-25`
 
-## Build
+## Install
+
+With [mise](https://mise.jdx.dev):
 
 ```
-cargo build --release -p ncp
+mise use -g github:darcien/ncp
+```
+
+Or download the archive for your platform from
+[Releases](https://github.com/darcien/ncp/releases), and put `ncp` on your
+`PATH`.
+
+## Build from source
+
+```
+cargo install --locked --path crates/ncp
 ```
 
 ## Development
 
-The rules for contributors and agents are in `AGENTS.md`. The design is in
-`docs/design/cli.md`, and the requirements are in
-`docs/requirements.md`.
+Install the tools and the git hook:
+
+```
+mise install
+hk install --mise
+```
+
+Do the static checks and the tests:
+
+```
+mise run check
+mise run test
+```
 
 ## License
 
