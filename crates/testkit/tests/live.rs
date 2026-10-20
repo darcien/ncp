@@ -143,8 +143,9 @@ fn authorization_values(run: &Run) -> Vec<String> {
 /// server name in their key, so the name must not be one of the user.
 const LIVE_SERVER: &str = "ncp-live-cf";
 
-// The user approved this server on 2026-10-11, for the manual tests of
-// `server add`.
+// A real server with OAuth and client registration. No local fixture
+// can show the login page of a real authorization server. It is the
+// only third-party server of the live tests.
 #[test]
 #[ignore = "needs a browser and a Cloudflare account"]
 fn oauth_login_with_a_browser_keeps_the_tokens_in_the_native_store() {
@@ -309,9 +310,9 @@ fn routes(run: &Run) -> Vec<String> {
 const DISPOSABLE_HOST: &str = "NCP_DISPOSABLE_HOST";
 
 // `ncp` reads the manual HTTPS proxy of the system settings when the scheme
-// has no variable (design C5). The request goes through the tunnel of a local
-// proxy to a local HTTPS server. The other tests cover the order and the
-// label. This test covers the read of the system settings.
+// has no variable. The request goes through the tunnel of a local proxy to
+// a local HTTPS server. The other tests cover the order and the label. This
+// test covers the read of the system settings.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "changes the HTTPS proxy of the whole machine"]
 async fn system_proxy_carries_a_request_when_no_variable_is_set() {

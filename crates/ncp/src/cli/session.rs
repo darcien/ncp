@@ -474,7 +474,7 @@ pub async fn open(context: &Context<'_>, server: &Server) -> Result<Connection, 
 
 // The store read has its own limit of 60 s, so it comes first. The OAuth
 // steps after it (discovery, a refresh) have the limit of the connect and
-// Ctrl-C (design C7).
+// Ctrl-C, so that no step waits for ever.
 async fn stored_login(
     context: &Context<'_>,
     login: &super::auth::StoredLogin<'_>,
@@ -551,8 +551,8 @@ pub async fn open_with_login(
 /// The `WWW-Authenticate` challenge of the server, from a connect and a
 /// `tools/list` with no token. `auth login` uses it for discovery and for
 /// the scopes (MCP 2025-11-25, basic/authorization, "Authorization Server
-/// Discovery"). `None` when the server needs no login or gives no
-/// challenge.
+/// Discovery" and "Scope Selection Strategy"). `None` when the server
+/// needs no login or gives no challenge.
 ///
 /// # Errors
 ///
@@ -808,7 +808,8 @@ fn connect_failure(
             code(&super::render::target(server))
         )),
         _ if exit == Exit::Auth => failure.hint(login_hint(server)),
-        // B78.
+        // `server add` does not contact the server, so a wrong path shows
+        // first here.
         _ if error.is_not_found() => failure.hint(
             "The server has no MCP endpoint at the path of the URL. Many servers use `/mcp`. \
              Examine the path in the entry.",
@@ -823,7 +824,7 @@ fn connect_failure(
 }
 
 // The causes of a failed handshake. rmcp gives no `source()` for a
-// transport error, so the client unwraps it (design section 6.1).
+// transport error, so the client unwraps it.
 fn with_handshake_causes(
     failure: Failure,
     error: &rmcp::service::ClientInitializeError,
@@ -846,7 +847,8 @@ fn with_transport_causes(
 }
 
 // A failure of the HTTP client names the variable and the path of a bad
-// `SSL_CERT_FILE` in the message (requirement N4).
+// `SSL_CERT_FILE` in the message, so that the user knows which file to
+// correct.
 pub(super) fn http_failure(name: &str, error: &client::http::HttpError) -> Failure {
     let failure = Failure::protocol(format!("{error} for the server {}", code(name)))
         .about(name)
@@ -865,7 +867,8 @@ pub const UNKNOWN_ISSUER: &str =
     "The certificate of the server has an issuer that no trusted root names";
 
 /// The hint for a certificate of an unknown issuer when `SSL_CERT_FILE` has a
-/// value: the file replaces the system roots (design B50).
+/// value: the file replaces the system roots. A file with only the root of
+/// a company is a common error.
 #[must_use]
 pub fn with_tls_hint(env: &Env, notes: &client::http::Notes, failure: Failure) -> Failure {
     if notes.unknown_issuer && env.contains_key("SSL_CERT_FILE") {
@@ -879,7 +882,7 @@ pub fn with_tls_hint(env: &Env, notes: &client::http::Notes, failure: Failure) -
 }
 
 // A request to a loopback host through a proxy on another host cannot
-// reach the server, because no exception for loopback exists (design C5).
+// reach the server, because no exception for loopback exists.
 // The hint then names the route and the fix.
 fn through_proxy(env: &Env, url: &crate::server::ServerUrl, failure: Failure) -> Failure {
     let Ok(target) = url::Url::parse(url.as_str()) else {
@@ -958,7 +961,7 @@ pub fn file_url(server: &Server, message: &str) -> String {
 
 // The hints of a `401` or `403` after a request with a stored header
 // value. A new value comes first: after the user changes the key at one
-// origin, the key at another origin can be old (B51).
+// origin, the key at another origin can be old.
 fn with_secret_hints(failure: Failure, server: &Server, stored: &[SecretName]) -> Failure {
     if !matches!(server.transport, Transport::Http(_)) || stored.is_empty() {
         return failure;
@@ -1019,8 +1022,7 @@ pub fn interrupted(server: Option<&str>) -> Failure {
 // The store can fail at the save of a refresh. A read after the refresh
 // lock can also find tokens of another server. A file that fails is a
 // local error. A native store that fails, for example a locked keyring,
-// is an authorization error, because the file can keep the tokens
-// (design B51).
+// is an authorization error, because the file can keep the tokens.
 fn token_store_failure(server: &Server, text: &str) -> Failure {
     super::auth::token_text_failure(server, text, true)
 }

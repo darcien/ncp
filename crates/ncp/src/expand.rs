@@ -23,9 +23,8 @@ pub enum ExpandError {
 /// The problem of a `${...}` that is not a valid reference. The error
 /// does not show the text in the braces: text that is not a valid
 /// reference is literal text of the value, and a literal value of a
-/// header or of `env` never shows (design B82). The problem comes from
-/// the syntax only, so that the user of a file from another tool knows
-/// what to change.
+/// header or of `env` never shows. The problem comes from the syntax only,
+/// so that the user of a file from another tool knows what to change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum BadReference {
     #[error("The reference is empty")]

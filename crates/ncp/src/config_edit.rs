@@ -49,8 +49,7 @@ pub fn entry(text: &str, name: &str) -> Result<Option<Value>, EditError> {
 
 /// Adds the entry at the end of `mcpServers`, with the indent of the
 /// entries next to it. An empty text is a new file. `None` means that the
-/// file has the same entry already. Thus a retry after a failure passes
-/// (rule 3 of docs/design/server-add.md).
+/// file has the same entry already. Thus a retry after a failure passes.
 ///
 /// # Errors
 ///

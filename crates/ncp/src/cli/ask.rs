@@ -1,10 +1,11 @@
 //! Questions to a person at a TTY: the elicitation of a server.
 //!
 //! `ncp` asks only when stdin and stderr are a TTY. Else a server gets no
-//! elicitation capability, and an `input_required` result gives exit 5
-//! (design section 3). The questions go to stderr, so that stdout keeps
-//! only the result. Each answer has the limit of `--timeout`, so that a
-//! question that nobody answers does not keep `ncp` for ever.
+//! elicitation capability, and an `input_required` result gives exit 5,
+//! so that an agent never waits on a question. The questions go to stderr,
+//! so that stdout keeps only the result. Each answer has the limit of
+//! `--timeout`, so that a question that nobody answers does not keep `ncp`
+//! for ever.
 
 use std::{
     io::IsTerminal,
@@ -71,8 +72,7 @@ struct Asker {
     cancel: CancellationToken,
     limit: Duration,
     /// The warnings that showed. An elicitation can run 8 rounds and give
-    /// the same warning in each round, so each warning shows one time
-    /// (design rule 20).
+    /// the same warning in each round, so each warning shows one time.
     warned: Arc<Mutex<Vec<Warning>>>,
 }
 
@@ -306,7 +306,8 @@ impl Asker {
     }
 }
 
-/// True when a label of the host is Punycode (RFC 3492): such a name can
+/// True when a label of the host has the ACE prefix `xn--` (RFC 5890
+/// §2.3.2.5), which starts a Punycode label (RFC 3492): such a name can
 /// look like another name in Unicode.
 pub(super) fn has_punycode_label(host: &str) -> bool {
     host.split('.')
@@ -427,10 +428,10 @@ fn unanswered(stop: Stop, context: &Context<'_>, server: &str) -> Failure {
 
 /// The server can ask for input that a person at the TTY can give. Then
 /// `ncp` asks, and runs the request again with the answers (MCP
-/// 2026-07-28, multi-round requests). In other cases the `input_required` result goes
-/// back to the caller, which writes it with exit 5. These cases are: no
-/// TTY, a request that `ncp` cannot answer (sampling, roots), and the end
-/// of the last round.
+/// 2026-07-28, basic/patterns/mrtr, "Multi Round-Trip Requests"). In
+/// other cases the `input_required` result goes back to the caller, which
+/// writes it with exit 5. These cases are: no TTY, a request that `ncp`
+/// cannot answer (sampling, roots), and the end of the last round.
 ///
 /// # Errors
 ///

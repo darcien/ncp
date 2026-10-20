@@ -129,7 +129,7 @@ description = "Run the official MCP conformance suite against ncp for each proto
 run = "harness/conformance/run.sh"
 
 # The interop tests: an online install from the lock file, then an offline
-# run against the official everything server. See docs/design/interop.md.
+# run against the official everything server.
 [tasks."interop:install"]
 description = "Install the pinned MCP everything server from its lock file"
 dir = "harness/interop"

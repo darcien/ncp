@@ -4,8 +4,7 @@
 //! starts a program (macOS) or a D-Bus call (Linux). Thus this adapter
 //! keeps a copy in memory. The store gets one read for each run, and each
 //! write.
-//! A refresh writes the new tokens back to the place that they came from
-//! (design 2.4).
+//! A refresh writes the new tokens back to the place that they came from.
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -36,8 +35,8 @@ pub struct TokenStore {
     key: CredentialKey,
     store: Arc<dyn CredentialStore>,
     copy: Mutex<Cached>,
-    /// The scope fields of `ncp` in the item (design B52, B79). rmcp does
-    /// not know them, so a refresh writes them back from here.
+    /// The scope fields of `ncp` in the item. rmcp does not know them, so a
+    /// refresh writes them back from here.
     scope_fields: Mutex<Map<String, Value>>,
     /// The server that the tokens are for. A save writes it with the tokens.
     binding: Option<items::TokenBinding>,
@@ -46,7 +45,7 @@ pub struct TokenStore {
     /// Gets the time of each read and write of the store, for `--timings`.
     timer: Option<StoreTimer>,
     /// Gets each token that the adapter reads or saves, so that output
-    /// hides it where a server echoes it (design B81).
+    /// hides it where a server echoes it.
     known: Known,
 }
 
@@ -246,7 +245,7 @@ fn read_fix(word: &str) -> Option<StoreFix> {
 /// because rmcp keeps only a text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoreText<'a> {
-    /// The tokens are for another server or issuer (design B70).
+    /// The tokens are for another server or issuer.
     Binding(items::BindingMismatch),
     /// A store failed. A failure of the credential file is local. A failure
     /// of the native store is an authorization error, and the file is a fix.
@@ -283,8 +282,7 @@ pub fn read_store_text(text: &str) -> StoreText<'_> {
 }
 
 /// The mark of tokens of another server in the text of an rmcp error. The
-/// caller gives the stop of design B70 for it, not "the server needs a
-/// login".
+/// caller then gives the binding failure, not "the server needs a login".
 const BINDING_FAILED: &str = "binding: ";
 
 fn binding_error(mismatch: &items::BindingMismatch) -> AuthError {

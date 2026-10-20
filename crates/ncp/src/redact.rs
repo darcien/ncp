@@ -1,11 +1,11 @@
 //! Hidden values in diagnostic output.
 //!
 //! Verbose output must not show a secret, because logs and screens are often
-//! shared. It hides each value that `ncp` knows is a secret (design B43). It
-//! does not guess from a name, because a guess hides some secrets and not
-//! others, and the user cannot know which. As in uv, a hidden value shows as
-//! `****`, always with the same length. An empty value shows as empty. Thus the
-//! user can see if a value exists or is empty, but never its length.
+//! shared. It hides each value that `ncp` knows is a secret. It does not
+//! guess from a name, because a guess hides some secrets and not others, and
+//! the user cannot know which. As in uv, a hidden value shows as `****`,
+//! always with the same length. An empty value shows as empty. Thus the user
+//! can see if a value exists or is empty, but never its length.
 
 use std::{
     cmp::Reverse,
@@ -23,9 +23,9 @@ pub const HIDDEN: &str = "****";
 const SECRET_HEADERS: [&str; 2] = ["authorization", "proxy-authorization"];
 
 /// OAuth fields and form parameters that hold a token, a code or a client
-/// secret. The names are standard (RFC 6749, 7591, 7636, 8693), so the list is
-/// exact. A part such as `token` also hides `token_type` and the endpoints of
-/// the metadata.
+/// secret. The names are standard (RFC 6749, 7521, 7591, 7592, 7636, 8693
+/// and `OpenID` Connect Core 1.0), so the list is exact. A part such as
+/// `token` also hides `token_type` and the endpoints of the metadata.
 const OAUTH_SECRET_FIELDS: [&str; 12] = [
     "access_token",
     "refresh_token",
@@ -56,9 +56,9 @@ pub fn is_credential_header(name: &str) -> bool {
         .any(|known| known.eq_ignore_ascii_case(name))
 }
 
-/// A credential header value, and its credentials after the scheme
-/// (RFC 9110 §11.4), for example the token of `Bearer TOKEN`. A server can
-/// echo the token alone.
+/// A credential header value, and the part after its auth-scheme (RFC 9110
+/// §11.4), for example the token of `Bearer TOKEN`. A server can echo the
+/// token alone.
 #[must_use]
 pub fn credentials(value: &str) -> Vec<String> {
     let value = value.trim();
@@ -130,8 +130,7 @@ fn hide_query(query: &str) -> String {
         .join("&")
 }
 
-/// The known secret values of one run, in the forms that output hides
-/// (design B81).
+/// The known secret values of one run, in the forms that output hides.
 ///
 /// The list grows during the run, and each clone sees each new value:
 /// rmcp reads and refreshes the OAuth tokens inside the connection, after
@@ -212,10 +211,10 @@ pub fn values(text: &str, secrets: &[String]) -> String {
     known.hide(text)
 }
 
-// The forms of one value that output hides (design B81). Each form comes
-// from an encoder that `ncp`, its libraries or a common server uses. A
-// form encoding of each form covers a URL that holds the value and goes
-// into a form again, for example the `resource` of OAuth.
+// The forms of one value that output hides. Each form comes from an encoder
+// that `ncp`, its libraries or a common server uses. A form encoding of each
+// form covers a URL that holds the value and goes into a form again, for
+// example the `resource` of OAuth.
 fn forms_of(value: &str) -> Vec<String> {
     let percent = percent_encoded(value);
     let quoted = serde_json::to_string(value).unwrap_or_default();

@@ -143,7 +143,8 @@ pub fn parse(
     }
     if let Some(error) = find("error") {
         // rmcp checks `iss` only on a code. A mix-up attack can send an
-        // error with a false description (MCP 2026-07-28, authorization).
+        // error with a false description (MCP 2026-07-28, basic/authorization,
+        // "Authorization Response Validation").
         // Thus the text of an error response shows only after the check.
         check_issuer(find("iss"), expected)?;
         return Err(CallbackError::Refused {

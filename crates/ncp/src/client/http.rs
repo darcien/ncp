@@ -341,7 +341,8 @@ pub fn needs_authorization(error: &DynamicTransportError) -> bool {
 }
 
 /// The `WWW-Authenticate` challenge of a `401` or `403` answer. It names
-/// the protected resource metadata and the scopes (RFC 9728 §5.1).
+/// the protected resource metadata (RFC 9728 §5.1) and the scopes
+/// (RFC 6750 §3).
 #[must_use]
 pub fn challenge(error: &DynamicTransportError) -> Option<String> {
     match error

@@ -1,6 +1,7 @@
-//! The entry of `server add`, from its arguments. Pure functions for the
-//! rules of docs/design/server-add.md (section 4.1 and rule 12), and for
-//! the checks of the loader with no expansion.
+//! The entry of `server add`, from its arguments. Pure functions build the
+//! entry, check the flags, and apply the checks of the loader with no
+//! expansion: the environment at the add must not decide if the entry is
+//! valid.
 //!
 //! The user can give a secret in a `--header` or an `--env` flag by
 //! mistake. Thus an error names the position of a flag that is not
@@ -256,7 +257,8 @@ fn env(flags: &[String]) -> Result<Map<String, Value>, AddError> {
 }
 
 /// The names of `${NAME}` in `command`, `args`, `cwd` and `url`: only the
-/// environment gives their values (design section 2.4).
+/// environment gives their values, because a stored value must not go into
+/// the process list or a URL.
 #[must_use]
 pub fn environment_names(shape: &Unexpanded) -> BTreeSet<String> {
     let texts: Vec<&str> = match &shape.target {

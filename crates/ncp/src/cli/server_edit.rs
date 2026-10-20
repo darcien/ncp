@@ -1,6 +1,5 @@
 //! `server add` and `server remove`: the shell around `add_entry` and
-//! `config_edit`. The rules are in docs/design/server-add.md, and the
-//! target file and its trust in docs/design/project-config.md rule 9.
+//! `config_edit`.
 
 use std::{
     fs::{self, DirBuilder},
@@ -34,8 +33,9 @@ use crate::{
     text::{code, path_code},
 };
 
-/// The wait for the lock of the configuration files, as for the refresh
-/// lock (B55).
+/// The wait for the lock of the configuration files. Agents run commands
+/// in parallel, so a change waits for the change of another process. The
+/// limit is the same as the limit of the refresh lock.
 const LOCK_LIMIT: Duration = Duration::from_secs(45);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,13 +80,14 @@ impl Target {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Outcome {
-    /// The file has the same entry already (rule 3).
+    /// The file has the same entry already. This is not an error, so that a
+    /// retry after a failure passes.
     Unchanged,
     Changed,
     Created,
 }
 
-/// A step that is left after `server add` (design section 4.6).
+/// A step that is left after `server add`.
 enum Step {
     Command {
         command: String,
@@ -126,7 +127,9 @@ impl Step {
     }
 }
 
-/// `ncp server add`, in the order of design section 4.7.
+/// `ncp server add`. The usage checks come first, so that a piped value is
+/// not read and lost. Each question comes before the lock, so that no
+/// person waits inside it.
 ///
 /// # Errors
 ///
@@ -187,7 +190,7 @@ fn request(args: &AddArgs) -> Result<Request, Failure> {
         headers: args.headers.clone(),
         env: args.env.clone(),
         // The error does not show the word after --secret: a user can type
-        // the value there by mistake (design rule 12).
+        // the value there by mistake.
         secret: args
             .secret
             .as_deref()
@@ -243,7 +246,7 @@ fn global_hint() -> Hint {
 // `server add` writes to the project file. It writes to the global file
 // with `--global`, with `--config-file`, or in the home folder. With no
 // project file, it makes `.mcp.json` in the current folder, as `mise use`
-// does (project-config rule 9).
+// does.
 async fn add_target(
     context: &Context<'_>,
     loaded: &Loaded,
@@ -316,9 +319,8 @@ fn read(file: &Path) -> Result<Option<String>, Failure> {
 }
 
 // `ncp` writes only a trusted project file, as `mise use` checks the
-// trust before it writes (project-config rule 9). With a TTY, an
-// untrusted file gets the question: a Yes trusts it, and a No writes the
-// ignored record and stops.
+// trust before it writes. With a TTY, an untrusted file gets the question:
+// a Yes trusts it, and a No writes the ignored record and stops.
 async fn trusted_for_write(context: &Context<'_>, project: &Project) -> Result<(), Failure> {
     let file = path_code(&project.file);
     match project.trust {
@@ -369,7 +371,7 @@ fn untrusted(project: &Project) -> Failure {
         .hint(Hint::run("see the entries of the file", "ncp trust --show"))
 }
 
-// The steps under the lock (design 4.7 steps 6 to 9):
+// The steps under the lock:
 // - read the base
 // - make the edit
 // - replace the file atomically, after a last check
@@ -385,7 +387,7 @@ async fn change(
     let real = real_path(&target.file)?;
     // The base of a project file is the bytes that the user trusted. The
     // global file needs no trust, so its base is the bytes under the lock.
-    // Thus two adds of agents at the same time both pass (B77).
+    // Thus two adds of agents at the same time both pass.
     let base = match target.scope {
         Scope::Project => {
             unchanged(target, &real, target.base.as_ref())?;
@@ -522,8 +524,8 @@ fn edit_failure(target: &Target, error: &EditError) -> Failure {
 }
 
 // After a write, `ncp` trusts the new bytes of a project file: the user saw
-// the old bytes and gave the change (project-config rule 9). A record that
-// fails gives a warning, because the change is complete.
+// the old bytes and gave the change. A record that fails gives a warning,
+// because the change is complete.
 fn trust_written(context: &Context<'_>, target: &Target, text: &str) {
     if target.scope == Scope::Project
         && let Err(failure) = project_file::trust_written(&context.paths, &target.file, text)
@@ -640,7 +642,7 @@ fn next_steps(context: &Context<'_>, name: &str, entry: &Entry, rows: &[SecretRo
 }
 
 // A warning when the other file has the name: it says which entry takes
-// effect in this folder (project-config rule 9).
+// effect in this folder.
 fn warn_about_other_file(
     context: &Context<'_>,
     view: Option<&Loaded>,
@@ -674,7 +676,8 @@ fn warn_about_other_file(
     }
 }
 
-/// Where `server remove` removes the entry: the table of design section 6.
+/// Where `server remove` removes the entry. The trust state of the project
+/// file and the files that have the name decide it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Place {
     Global,
@@ -697,7 +700,7 @@ fn remove_place(project: Option<Trust>, in_global: bool, global_only: bool) -> P
 }
 
 /// `ncp server remove`: the entry that runs for the name, or the global
-/// entry with `--global` (docs/design/server-add.md section 6).
+/// entry with `--global`.
 ///
 /// # Errors
 ///

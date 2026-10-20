@@ -1,10 +1,10 @@
 //! The proxy route of an HTTP request, as reqwest takes it.
 //!
 //! reqwest reads the proxy variables, and the manual HTTP and HTTPS proxy
-//! of the macOS system settings, in the order of uv (design C5). This
-//! module finds the same route with the same matcher. Thus `-v` and the
-//! errors can show the route with its source. There is no exception for
-//! loopback hosts: `NO_PROXY` is the only exception list.
+//! of the macOS system settings, in the order of uv. This module finds the
+//! same route with the same matcher. Thus `-v` and the errors can show the
+//! route with its source. There is no exception for loopback hosts:
+//! `NO_PROXY` is the only exception list.
 
 use std::fmt;
 

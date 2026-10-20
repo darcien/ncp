@@ -1,7 +1,8 @@
 //! Tool arguments from the command line: `key=value` pairs, one JSON
 //! object, or `-` for a JSON object on stdin. A JSON value goes in the
 //! object, and the text of a file comes from the shell, for example
-//! `key="$(cat FILE)"` (design B57).
+//! `key="$(cat FILE)"`. Thus a value that starts with `@`, for example an
+//! npm scope, stays text and never reads a file.
 
 use crate::text::code;
 use std::collections::BTreeSet;

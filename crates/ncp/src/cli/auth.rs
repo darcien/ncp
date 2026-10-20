@@ -1,4 +1,4 @@
-//! The `auth` commands: OAuth login, logout and status (design section 5).
+//! The `auth` commands: OAuth login, logout and status.
 //!
 //! rmcp does the protocol steps. This module chooses the client, runs the
 //! redirect, and keeps the items in the place that the user chose.
@@ -128,7 +128,8 @@ fn login_failure(
 }
 
 /// Each step of rmcp has its own limit of 30 s, and discovery tries up to
-/// eight URLs. Thus one limit applies to all the steps (design C7).
+/// eight URLs. Thus one limit applies to all the steps, so that a login
+/// cannot hang.
 pub(super) async fn limited<T>(
     context: &Context<'_>,
     limit: Duration,
@@ -187,7 +188,8 @@ fn auth_failure(step: &str, server: &str, error: &AuthError) -> Failure {
 }
 
 // rmcp falls back to endpoints that it makes from the server URL. `ncp`
-// refuses that fallback: the spec has it only for 2025-03-26, and it
+// refuses that fallback: only MCP 2025-03-26 has it (basic/authorization,
+// "Fallbacks for Servers without Metadata Discovery"), and it
 // registers a client at a server that names no authorization server.
 async fn discover(
     manager: &AuthorizationManager,
@@ -212,9 +214,10 @@ async fn discover(
     Ok(resolution.metadata)
 }
 
-// The endpoints of the authorization server must use HTTPS, except on a
-// loopback host (MCP 2025-11-25, basic/authorization, "Communication
-// Security"). rmcp does not do this check.
+// The endpoints of the authorization server must use HTTPS (MCP
+// 2025-11-25, basic/authorization, "Communication Security"). `ncp`
+// also accepts `http` on a loopback host, because the local tests use
+// a loopback authorization server. rmcp does not do this check.
 fn check_https(server: &str, metadata: &AuthorizationMetadata) -> Result<(), Failure> {
     let endpoints = [
         Some(&metadata.authorization_endpoint),
@@ -478,9 +481,10 @@ fn token_failure(error: &AuthError, server: &Server, place: CredentialPlace) -> 
 }
 
 /// The failure for a store error that rmcp keeps as one text. The store
-/// text is one cause (design rule 7), then the hints of its fix. When the
-/// native store failed and `file_fix` is true, the credential file is
-/// the last fix (design B51).
+/// text is one cause, then the hints of its fix. When the native store
+/// failed and `file_fix` is true, the last hint is the credential file:
+/// the fixes of the native store come first, because the file is a plain
+/// file that the user must choose.
 pub(super) fn token_text_failure(server: &Server, text: &str, file_fix: bool) -> Failure {
     let name = server.name.as_str();
     match read_store_text(text) {
@@ -506,8 +510,9 @@ pub(super) fn token_text_failure(server: &Server, text: &str, file_fix: bool) ->
     }
 }
 
-/// The hint to keep the tokens of a login in the credential file. It stores,
-/// so it has no command (design rule 10).
+/// The hint to keep the tokens of a login in the credential file. It has
+/// no command, because the credential file is a plain file, and only the
+/// user can choose it.
 pub(super) fn file_login_hint(name: &str) -> Hint {
     Hint::run_text(
         "store the tokens in the credential file",
@@ -531,7 +536,7 @@ pub(super) struct StoredLogin<'a> {
 
 /// Gives `None` when the tokens are for another issuer. `ncp` calls this
 /// only after a `401` answer, so that a server with no login never opens
-/// the native store (design C1).
+/// the native store.
 pub(super) async fn stored_login(
     context: &Context<'_>,
     login: &StoredLogin<'_>,
@@ -608,8 +613,8 @@ pub(super) async fn stored_login(
             manager,
         )));
     }
-    // A CIMD client has no secret and no client item (design B83), so no
-    // command needs to open the item.
+    // A CIMD client has no secret and no client item, so no command needs
+    // to open the item.
     let secret = if client_id == context.client_metadata_url {
         None
     } else {
@@ -658,14 +663,14 @@ async fn stored_client_secret(
 }
 
 /// The message names only the current value, because a stored URL or
-/// issuer can hold an old `${NAME}` value that `ncp` cannot hide (design
-/// B70).
+/// issuer can hold an old `${NAME}` value that `ncp` cannot hide.
 pub(super) fn binding_failure(server: &Server, mismatch: &items::BindingMismatch) -> Failure {
     let name = server.name.as_str();
     let reason = binding_reason(mismatch, &|current| {
         code(&session::file_url(server, current))
     });
-    // Requirement A13: the message says that the stop is on purpose.
+    // The message says that the stop is on purpose: it is a safety check,
+    // not a defect.
     Failure::new(
         Exit::Auth,
         format!(
@@ -772,10 +777,10 @@ async fn add_required_scopes(
 /// The tokens item of a server, and the store that has it.
 pub(super) type FoundTokens = (Arc<dyn CredentialStore>, crate::credential::Secret);
 
-/// The search order is the native store, then the file, as for `${NAME}`
-/// (design 2.4). A native store that cannot answer, for example a locked
-/// keyring, does not stop the search. Its error is the result only when
-/// the file has no tokens, so that the error tells why.
+/// The search order is the native store, then the file, as for `${NAME}`.
+/// A native store that cannot answer, for example a locked keyring, does
+/// not stop the search. Its error is the result only when the file has no
+/// tokens, so that the error tells why.
 pub(super) async fn find_tokens(
     context: &Context<'_>,
     server: &Server,
@@ -804,8 +809,9 @@ impl TokenPlaces {
         }
     }
 
-    // A host with no native store has only the file, as for `secret list`
-    // (design B36).
+    // A host with no native store has only the file, as for `secret list`.
+    // A user who keeps all values in the file must not get a warning at
+    // each run.
     async fn open_for_status(context: &Context<'_>) -> Self {
         match Self::open(context).await {
             Self {
@@ -891,9 +897,10 @@ impl TokenPlaces {
 }
 
 // rmcp can parse the challenge too, but it adds the scopes of the
-// protected resource metadata, and the spec gives the challenge priority
-// (design B79). With no scope in the challenge, rmcp selects from the
-// protected resource metadata.
+// protected resource metadata. The spec gives the challenge priority
+// (MCP 2026-07-28, basic/authorization, "Scope Selection Strategy").
+// With no scope in the challenge, rmcp selects from the protected
+// resource metadata.
 fn initial_scopes(
     manager: &AuthorizationManager,
     challenge: Option<&str>,
@@ -906,8 +913,8 @@ fn initial_scopes(
     scopes::with_offline_access(selected, metadata.scopes_supported.as_deref())
 }
 
-// Tokens of another server or issuer give no scopes to this login (design
-// B79).
+// Tokens of another server or issuer give no scopes to this login, so
+// that one server cannot add scopes to the login of another server.
 async fn login_scopes(
     context: &Context<'_>,
     server: &Server,
@@ -998,7 +1005,9 @@ async fn remove_old_tokens(
     Ok(())
 }
 
-/// The client of a login, in the order of the spec (design B67, B83).
+/// The client of a login, in the priority order of the spec (MCP
+/// 2026-07-28, basic/authorization/client-registration, "Client
+/// Registration").
 enum LoginClient<'a> {
     /// `oauth.clientId` of the entry.
     Configured(&'a PreRegisteredClient),
@@ -1086,7 +1095,8 @@ async fn client_request(
 }
 
 // The stored client of the same issuer, else a new registration that is
-// stored before the login continues (design B47).
+// stored before the login continues. rmcp keeps a registered client only
+// in memory, and a later failure must not lose the registration.
 async fn registered_client(
     context: &Context<'_>,
     server: &Server,
@@ -1144,7 +1154,7 @@ async fn registered_client(
 }
 
 // The page that tells how to register a client (RFC 8414 §2
-// `service_documentation`), only when it is safe to show.
+// `service_documentation`), only for an `https` or a loopback `http` URL.
 fn registration_page(metadata: &AuthorizationMetadata) -> Option<String> {
     metadata
         .additional_fields
@@ -1154,8 +1164,8 @@ fn registration_page(metadata: &AuthorizationMetadata) -> Option<String> {
         .map(String::from)
 }
 
-// "register a client at `I`." and, when it is safe (B63), the page that
-// tells how. The caller gives the first word its case.
+// "register a client at `I`." and, for an `https` or a loopback `http` URL,
+// the page that tells how. The caller gives the first word its case.
 fn register_there(metadata: &AuthorizationMetadata) -> String {
     let issuer = code(&issuer_of(metadata));
     match registration_page(metadata) {
@@ -1527,9 +1537,9 @@ enum Found {
 
 /// The server name is the key of the tokens. Thus the tokens go only when
 /// their binding is the URL of the entry (`resource`). When the entry
-/// names an issuer, the issuer must also match (docs/design/server-add.md
-/// section 6). With no URL to compare, the tokens stay. The client item
-/// goes with them when it is for the issuer of the tokens.
+/// names an issuer, the issuer must also match. With no URL to compare,
+/// the tokens stay. The client item goes with them when it is for the
+/// issuer of the tokens.
 ///
 /// A store that cannot answer gives only a warning. The remove of the
 /// entry must not depend on the store, and the binding stops the use of

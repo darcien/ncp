@@ -1,4 +1,4 @@
 # Known failures of ncp in the official conformance suite. Each entry has
 # its reason. The suite fails when an entry passes, so that this list stays
-# current. The reports are docs/research/conformance*.md.
+# current.
 client: []

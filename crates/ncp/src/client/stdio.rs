@@ -4,7 +4,7 @@
 //! SIGINT to its foreground group, and a server in that group stops before
 //! `ncp` can send the cancel request. Thus `ncp` must stop the server itself,
 //! as the spec describes: close stdin, wait, SIGTERM, wait, SIGKILL
-//! (MCP 2026-07-28, basic/lifecycle, "Shutdown", stdio).
+//! (MCP 2026-07-28, basic/transports/stdio, "Shutdown").
 
 use std::{collections::BTreeMap, process::Stdio, sync::Arc, time::Duration};
 

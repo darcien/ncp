@@ -1,6 +1,5 @@
 //! Exit codes, failures, warnings and hints. Each class of result has one
-//! exit code and one `code` name in the JSON error object. The parts of a
-//! diagnostic and their rules are in `docs/design/output-messages.md`.
+//! exit code and one `code` name in the JSON error object.
 
 use std::process::ExitCode;
 
@@ -73,7 +72,7 @@ impl From<Exit> for ExitCode {
 
 /// One fix or one piece of advice. `command` is present only for an `ncp`
 /// command that reads state or starts a login: an agent can run it with no
-/// review (design rule 10).
+/// review.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hint {
     message: String,
@@ -98,7 +97,7 @@ impl Hint {
         Self::text(format!("To {goal}, run {}", code(command)))
     }
 
-    /// The hint with a sentence of fact before it (design rule 9).
+    /// The hint with a sentence of fact before it.
     #[must_use]
     pub fn after(self, fact: &str) -> Self {
         Self {
@@ -126,7 +125,7 @@ impl Hint {
     }
 
     /// A command that `f` changes is not a command to run any more, so the
-    /// hint keeps only its sentence (design B81).
+    /// hint keeps only its sentence.
     #[must_use]
     pub fn map_text(self, f: &impl Fn(String) -> String) -> Self {
         let command = self
@@ -451,8 +450,8 @@ impl Failure {
     /// Applies `f` to the message, the data lines, the causes, the hints
     /// and the message of each page. Each redaction uses it. The URL of a
     /// page stays as it is: the user must open it, and the server put each
-    /// value in it (design B81). A destination stays as it is: it is an
-    /// origin of the configuration with no `${NAME}` value.
+    /// value in it. A destination stays as it is: it is an origin of the
+    /// configuration with no `${NAME}` value.
     #[must_use]
     pub fn map_text(self, f: impl Fn(String) -> String) -> Self {
         let pages: Box<[Page]> = self

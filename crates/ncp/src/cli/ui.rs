@@ -1,7 +1,6 @@
 //! The output channels. Results go to stdout. Errors, warnings and hints go
 //! to stderr. On a TTY the output is text for people. In a pipe stdout is
-//! JSON, and stderr is JSON Lines: one JSON object on each line. The rules
-//! of the text of a diagnostic are in `docs/design/output-messages.md`.
+//! JSON, and stderr is JSON Lines: one JSON object on each line.
 
 use std::{
     borrow::Cow,
@@ -45,8 +44,8 @@ pub enum Verbosity {
 }
 
 impl Verbosity {
-    /// clap does not permit both. `-qq` is the same as `-q` for now, as
-    /// uv accepts it.
+    /// clap does not permit both. `-qq` is the same as `-q`, because uv
+    /// accepts it.
     #[must_use]
     pub fn from_flags(quiet: u8, count: u8) -> Self {
         match count {
@@ -62,10 +61,10 @@ impl Verbosity {
 pub struct Ui {
     pub format: Format,
     pub verbosity: Verbosity,
-    /// The secret values that `ncp` knows in this run. Each error,
-    /// warning, hint and debug line hides them, so that no output place can
-    /// forget it (design B81). The list lives for the whole process, and a
-    /// reference keeps `Ui` a copy for each closure and thread.
+    /// The secret values that `ncp` knows in this run. Each error, warning,
+    /// hint and debug line hides them, so that no output place can forget
+    /// it. The list lives for the whole process, and a reference keeps `Ui`
+    /// a copy for each closure and thread.
     known: &'static Known,
 }
 
@@ -102,7 +101,7 @@ impl Ui {
         match self.format {
             Format::Text => write_stdout(&printable(&text())),
             // JSON on a TTY comes only from `--output-format json`. A person
-            // reads it, so it is pretty (design section 4).
+            // reads it, so it is pretty.
             Format::Json if std::io::stdout().is_terminal() => {
                 write_stdout(&format!("{}\n", escape_raw_controls(pretty_json(&json()))))
             }
@@ -166,8 +165,8 @@ impl Ui {
         let last = std::sync::Mutex::new(None::<std::time::Instant>);
         crate::client::ProgressSink::new(move |progress| {
             // At most a few lines a second (MCP 2025-11-25,
-            // basic/utilities/progress: rate limiting), but always the last
-            // step.
+            // basic/utilities/progress, "Implementation Notes"), but always
+            // the last step.
             let now = std::time::Instant::now();
             let done = progress
                 .total
@@ -434,7 +433,7 @@ pub fn hint_text(format: Format, server: Option<&str>, hint: &Hint) -> String {
 }
 
 /// The error. Text: the `error:` line, the data lines, the `cause:` lines
-/// and the hints. JSON: the error object of the design, on one line.
+/// and the hints. JSON: the error object, on one line.
 #[must_use]
 pub fn error_text(format: Format, failure: &Failure) -> String {
     let diagnostic = failure.diagnostic();
@@ -477,7 +476,7 @@ const CAUSE_LABEL: &str = "  cause: ";
 const CAUSE_INDENT: &str = "         ";
 
 // Only a label or an empty line starts at column 0. Thus a line of a
-// server cannot look like a line of `ncp` (B60).
+// server cannot look like a line of `ncp`.
 fn diagnostic_text(label: &str, data_indent: &str, diagnostic: &Diagnostic) -> String {
     let head = format!("{label}: {}", indented(diagnostic.message()));
     let data = shown_data(diagnostic.data())
@@ -543,8 +542,7 @@ const SHOWN_LINES: usize = 20;
 const SHOWN_BYTES: usize = 2048;
 
 // A long body of a server hides the hints. Thus a text shows at most 20
-// lines and 2048 bytes, and a last line tells how much did not show
-// (design rule 16).
+// lines and 2048 bytes, and a last line tells how much did not show.
 fn shown(text: &str) -> String {
     let text = line_ends(text);
     if text.len() <= SHOWN_BYTES && text.lines().count() <= SHOWN_LINES {

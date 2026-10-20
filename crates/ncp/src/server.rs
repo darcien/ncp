@@ -9,8 +9,9 @@ const MAX_NAME_LEN: usize = 64;
 
 /// The name of a server in the configuration.
 ///
-/// The name is a word in commands and a part of credential keys. A tool name
-/// can contain `.` and `/` (SEP-986), so the name allows only ASCII letters,
+/// The name is a word in commands and a part of credential keys. A tool
+/// name can contain `.` (MCP 2025-11-25, server/tools, "Tool Names"), and
+/// that rule is only a SHOULD. Thus the name allows only ASCII letters,
 /// digits, `-` and `_`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -86,7 +87,7 @@ pub enum UrlError {
     #[error("The URL cannot be parsed")]
     Invalid(#[from] url::ParseError),
     /// The scheme does not show: it can come from a `${NAME}` value, and the
-    /// target shows the URL as the file writes it (design B82).
+    /// target shows the URL as the file writes it.
     #[error("The URL scheme is not `https` or `http`")]
     Scheme,
     #[error("The URL has no host")]
@@ -165,8 +166,8 @@ pub fn is_secure_url(url: &Url) -> bool {
     }
 }
 
-/// The origin of a URL: its scheme, host and port (RFC 6454), in the ASCII
-/// serialization of the WHATWG URL Standard. A stored value goes only to
+/// The origin of a URL: its scheme, host and port (RFC 6454 §4), in the
+/// ASCII serialization of RFC 6454 §6.2. A stored value goes only to
 /// the origin in its key. Thus each URL of one origin must give the same
 /// text: a lower-case host, `xn--` labels, IPv6 in brackets and no default
 /// port.

@@ -1,7 +1,7 @@
 //! A check for the unit tests of the error types.
 
-/// Fails when a Display text of `ncp` breaks the first letter rule or has a
-/// semicolon (`docs/design/output-messages.md`, rules 3 and 5).
+/// Fails when a Display text of `ncp` does not start with a capital letter,
+/// a backtick or `ncp`, or when it has a semicolon.
 pub fn assert_style(texts: &[String]) {
     for text in texts {
         let first = text.chars().next();

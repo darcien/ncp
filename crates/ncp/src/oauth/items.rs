@@ -1,6 +1,6 @@
 //! The stored OAuth items of a server.
 //!
-//! Each server has two items (design 2.4): the tokens
+//! Each server has two items: the tokens
 //! (`oauth/<server>/tokens`) and the client credentials
 //! (`oauth/<server>/client`). The tokens item is the JSON of rmcp
 //! `StoredCredentials`, because rmcp reads it back. The client item records
@@ -16,18 +16,17 @@ use serde_json::Value;
 use crate::credential::Secret;
 
 /// The field of the tokens item that keeps the scopes of a `403
-/// insufficient_scope` answer until the next login (design B52). rmcp
-/// ignores it.
+/// insufficient_scope` answer until the next login. rmcp ignores it.
 pub const REQUIRED_SCOPES: &str = "ncp_required_scopes";
 
 /// The field of the tokens item that keeps the scopes that the login
-/// requested, for the union of a step-up (design B79). rmcp ignores it.
+/// requested, for the union of a step-up. rmcp ignores it.
 pub const REQUESTED_SCOPES: &str = "ncp_requested_scopes";
 
 pub const SCOPE_FIELDS: [&str; 2] = [REQUIRED_SCOPES, REQUESTED_SCOPES];
 
-/// The field of the tokens item that keeps the binding of the tokens
-/// (design B70). rmcp ignores it.
+/// The field of the tokens item that keeps the binding of the tokens. rmcp
+/// ignores it.
 pub const BINDING: &str = "ncp_binding";
 
 /// The server that a token set is for: the canonical URL of the MCP server
@@ -109,8 +108,7 @@ pub struct ItemError {
 }
 
 /// The kind of the problem of an item. It has no text of the JSON parser,
-/// because the parser quotes a string value, and an item holds secrets
-/// (design B82).
+/// because the parser quotes a string value, and an item holds secrets.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
 pub struct ItemReason(&'static str);

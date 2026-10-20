@@ -90,8 +90,8 @@ async fn server_list(context: &Context<'_>) -> Result<(), Failure> {
 }
 
 // The rows of `server list`: the entries that run, then the entries of an
-// untrusted project file, with their state. Nothing else happens for them
-// (design rule 8).
+// untrusted project file, with their state. Nothing else happens for them,
+// because each action on a project entry waits for its trust.
 fn list_rows(loaded: &Loaded) -> Vec<render::Row> {
     let place = |name: &str| match loaded.project_of(name) {
         Some(project) => (project.file.clone(), Some(Trust::Trusted)),
@@ -182,8 +182,8 @@ async fn with_connection<T>(
     }
 }
 
-// Exit 5 when the server asked a question that `ncp` refused (design
-// B63): the result is not the answer to the request of the user.
+// Exit 5 when the server asked a question that `ncp` refused: the result
+// is not the answer to the request of the user.
 fn asked<T>(
     server: &Server,
     connection: &Connection,
@@ -388,7 +388,9 @@ fn tools_hint(server: &str) -> Hint {
     )
 }
 
-// The tool word, or the failure that names the fix (design B23).
+// The tool word, or the failure that names the fix. A word in a form of the
+// tool arguments (`key=value`, `{...}` or `-`) means that the tool name is
+// missing.
 fn tool_word<'a>(server: &str, tool: Option<&'a str>) -> Result<&'a str, Failure> {
     let missing = || Failure::usage("The command line has no tool name").hint(tools_hint(server));
     match tool {
@@ -409,8 +411,8 @@ enum Arguments {
     Prompt,
 }
 
-// A word that is not an argument. The fix of `key:=json` was in the text
-// before, so it is a hint now.
+// A word that is not an argument. The fix is a hint, because each fix
+// has one place: a hint line.
 fn arguments_failure(error: &tool_args::ArgumentError, of: Arguments) -> Failure {
     let (message, fix) = match of {
         Arguments::Tool => (
@@ -605,9 +607,11 @@ fn prepare_call(
 }
 
 // From `2026-07-28`, an HTTP client copies the parameters with
-// `x-mcp-header` into `Mcp-Param-*` headers (SEP-2243). rmcp knows these
-// parameters only from a listed tool, so the call needs the tool list
-// first. A tool that the list does not show stays callable.
+// `x-mcp-header` into `Mcp-Param-*` headers (MCP 2026-07-28,
+// basic/transports/streamable-http, "Custom Headers from Tool
+// Parameters"). rmcp knows these parameters only from a listed tool, so
+// the call needs the tool list first. A tool that the list does not show
+// stays callable.
 fn mirrors_parameters(server: &Server, connection: &Connection) -> bool {
     matches!(server.transport, crate::config::Transport::Http(_))
         && connection.protocol_version().uses_discover()
@@ -884,10 +888,13 @@ fn print_call_help() -> Result<(), Failure> {
     ui::write_stdout(&help)
 }
 
-// The spec says that a server answers an unknown tool or bad arguments with
-// "invalid params" (MCP 2025-11-25, server/tools, "Error Handling"). That is a
-// usage error. When `ncp` knows the tool from the list, `tool show` gives the
-// fix. In other cases the tool can be unknown, and `tool list` gives the fix.
+// The spec says that a server answers an unknown tool or a malformed
+// request with a protocol error, for example "invalid params" (MCP
+// 2025-11-25, server/tools, "Error Handling"). An older server also
+// answers bad arguments in this way (MCP 2025-06-18, server/tools,
+// "Error Handling"). That is a usage error. When `ncp` knows the tool
+// from the list, `tool show` gives the fix. In other cases the tool can
+// be unknown, and `tool list` gives the fix.
 fn call_failure(server: &Server, tool: &str, listed: bool, error: &RequestError) -> Failure {
     let name = server.name.as_str();
     match error {

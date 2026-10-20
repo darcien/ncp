@@ -285,9 +285,9 @@ pub fn error_text(object: &Value) -> String {
         .join("\n")
 }
 
-// The rules of docs/design/output-messages.md that a test can check on the
-// output: the first letter (3), no semicolon (5), no hint two times (9), the
-// server in the message (12), and no empty backticks (14).
+// The rules of the text of a diagnostic that a test can check on the output:
+// the first letter, no semicolon, no hint two times, the server in the
+// message, and no empty backticks.
 fn check_style(object: &Value, run: &str) {
     let message = object["message"].as_str().unwrap_or_default();
     let hints = hints(object);
@@ -295,32 +295,25 @@ fn check_style(object: &Value, run: &str) {
         let first = text.chars().next();
         assert!(
             first.is_some_and(|c| c.is_uppercase() || c == '`') || text.starts_with("ncp"),
-            "rule 3: {text:?} does not start with a capital letter, a backtick or ncp\n{run}"
+            "{text:?} does not start with a capital letter, a backtick or ncp\n{run}"
         );
         // A value in backticks, for example a command of the user, can
         // hold a semicolon.
         let own_text: String = text.split('`').step_by(2).collect();
         assert!(
             !own_text.contains(';'),
-            "rule 5: {text:?} has a semicolon\n{run}"
+            "{text:?} has a semicolon outside backticks\n{run}"
         );
-        assert!(
-            !text.contains("``"),
-            "rule 14: {text:?} has empty backticks\n{run}"
-        );
+        assert!(!text.contains("``"), "{text:?} has empty backticks\n{run}");
     }
     let mut unique = hints.clone();
     unique.sort();
     unique.dedup();
-    assert_eq!(
-        unique.len(),
-        hints.len(),
-        "rule 9: a hint shows two times\n{run}"
-    );
+    assert_eq!(unique.len(), hints.len(), "a hint shows two times\n{run}");
     if let Some(server) = object["server"].as_str() {
         assert!(
             message.contains(&format!("`{server}`")),
-            "rule 12: {message:?} does not name the server {server}\n{run}"
+            "{message:?} does not name the server {server} in backticks\n{run}"
         );
     }
 }

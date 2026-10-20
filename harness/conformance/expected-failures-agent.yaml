@@ -1,12 +1,10 @@
 # Known failures of ncp in the official conformance suite when the adapter
 # acts as an agent: no TTY and an empty stdin. Each entry has its reason.
 # The suite fails when an entry passes, so that this list stays current.
-# The reports are docs/research/conformance*.md.
 client:
   # With no TTY, ncp declares no elicitation and does not ask. An
   # input_required result gives exit 5. A legacy server that asks anyway
   # (elicitation/create) gets the error -32602 (Invalid params), and the
-  # command then exits with 5. Thus an agent never waits on a question
-  # (design B63).
+  # command then exits with 5. Thus an agent never waits on a question.
   - elicitation-sep1034-client-defaults
   - sep-2322-client-request-state

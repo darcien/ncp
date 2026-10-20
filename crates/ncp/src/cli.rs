@@ -277,7 +277,7 @@ fn parse_failure(ui: Ui, error: &clap::Error) -> ExitCode {
 }
 
 // The JSON error of a parse error. The text of clap is foreign text, so it
-// is a cause (design rule 25).
+// is a cause.
 fn usage_failure(error: &clap::Error, command: &[String]) -> Failure {
     let help = Hint::run("see the commands", "ncp --help");
     match error.kind() {

@@ -1,6 +1,6 @@
 //! The project file at the edge: the search on the disk, the one read with
 //! the owner check, and the trust records. The rules are in
-//! `crate::project` and in docs/design/project-config.md.
+//! `crate::project`.
 
 use crate::text::chain_text;
 use std::{
@@ -27,9 +27,9 @@ pub enum ProjectFile {
     NotSearched,
     /// No project file. The folder where the search stopped.
     Absent(PathBuf),
-    /// A file that `ncp` does not use, with the reason and its causes
-    /// (design rule 7). `ncp` does not search higher, as git does when it
-    /// finds a repository of another user.
+    /// A file that `ncp` does not use, with the reason and its causes.
+    /// `ncp` does not search higher, as git does when it finds a repository
+    /// of another user.
     Unusable {
         file: PathBuf,
         reasons: Vec<String>,
@@ -38,7 +38,7 @@ pub enum ProjectFile {
 }
 
 /// The failure for a project file that `ncp` does not use, with the
-/// consequence for the command as a second sentence (design rule 8).
+/// consequence for the command as a second sentence.
 #[must_use]
 pub fn unusable(file: &Path, reasons: &[String], consequence: Option<&str>) -> Failure {
     let head = format!("ncp does not use {}", crate::text::path_code(file));
@@ -172,7 +172,7 @@ pub fn change(paths: &Paths, project: &Project, change: Change) -> Result<Trust,
 
 /// Trusts the bytes that `ncp` wrote, and removes an ignored record of an
 /// old file at the path. The user saw the old bytes, or there were none,
-/// and gave the change (project-config rule 9).
+/// and gave the change.
 ///
 /// # Errors
 ///

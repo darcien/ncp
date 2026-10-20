@@ -1,4 +1,4 @@
-//! OAuth for HTTP servers (MCP authorization, design section 5).
+//! OAuth for HTTP servers (MCP authorization).
 //!
 //! rmcp does discovery, PKCE, the `resource` parameter, the `iss` check,
 //! the registration and the refresh. This module adds what rmcp does not

@@ -180,8 +180,8 @@ pub fn with_dynamic_names(shell: CompletionShell, script: &str) -> String {
 }
 
 // The view that runs: the global file and a trusted project file. An entry of
-// an untrusted project file gives no name (design rule 8), and the load writes
-// nothing to stderr.
+// an untrusted project file gives no name, because a completion waits for
+// the trust too. The load writes nothing to stderr.
 fn config(paths: &Paths, env: &Env) -> Option<crate::config::Config> {
     super::session::load_config(paths, env, true)
         .ok()

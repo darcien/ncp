@@ -6,7 +6,7 @@
 //! times out, `ncp` connects again on a new transport with `initialize`.
 //! `ncp` does not use the rmcp `Auto` mode. With that mode, a late answer
 //! of a slow server arrives on the same transport, and the handshake
-//! fails (see docs/research/early-tests.md).
+//! fails.
 //!
 //! Time limits: a client SHOULD set a timeout for each request (MCP
 //! 2025-11-25, basic/lifecycle, "Timeouts"). The whole connect has one

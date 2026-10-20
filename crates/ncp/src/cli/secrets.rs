@@ -123,7 +123,7 @@ fn reference(name: &str) -> String {
 pub(super) struct Resolved {
     pub values: Values,
     pub stored: Vec<SecretName>,
-    /// The secret values that output hides (design B81).
+    /// The secret values that output hides.
     pub secrets: Vec<String>,
 }
 
@@ -142,7 +142,8 @@ pub(super) async fn resolve(context: &Context<'_>, server: &Server) -> Result<Re
 
 // Each `${NAME}` value of the entry, and each value of a credential header,
 // also a literal one: RFC 9110 defines these headers as credentials. The
-// environment holds other values too, and they are not secrets (S10).
+// environment holds other values too, and they are not secrets, because
+// `ncp` never guesses from a value.
 fn secrets_of(server: &Server, names: &Env, values: &Values) -> Vec<String> {
     let variables = server
         .value_names()
@@ -158,7 +159,7 @@ fn secrets_of(server: &Server, names: &Env, values: &Values) -> Vec<String> {
 
 /// A stored value comes only from the item of the origin of
 /// `oauth.issuer`. No error shows the value, and output hides it after
-/// the read (design B81).
+/// the read.
 pub(super) async fn client_secret(
     context: &Context<'_>,
     server: &Server,
@@ -459,7 +460,8 @@ pub(super) fn store_failure(error: &StoreError) -> Failure {
         return session::interrupted(None);
     }
     let exit = Exit::from(error.kind());
-    // Rule 7 drops the error itself from the causes: the message holds it.
+    // The error itself does not show as a cause, because the message holds
+    // its text.
     let failure = Failure::new(exit, error.to_string()).caused_by(error);
     super::fixes::store_hints(error)
         .into_iter()
@@ -587,8 +589,9 @@ fn set_target<'a>(
 }
 
 // No entry names `${NAME}` in a field that can read the store. A name in
-// `command`, `args`, `cwd` or `url` comes only from the environment (B32),
-// and an unset one makes the entry invalid.
+// `command`, `args`, `cwd` or `url` comes only from the environment, so
+// that no stored value goes into the process list or a URL. An unset one
+// makes the entry invalid.
 fn no_use(name: &SecretName, only: Option<&str>, loaded: &session::Loaded) -> Failure {
     if let Some(failure) = untrusted_use(loaded, name, only) {
         return failure;
@@ -962,7 +965,8 @@ struct Stored {
     failed: Vec<(CredentialPlace, StoreError)>,
 }
 
-// A warning for each place that did not answer (B30).
+// A warning for each place that did not answer, so that one broken place
+// does not hide the other.
 fn warn_unlisted(context: &Context<'_>, failed: &[(CredentialPlace, StoreError)]) {
     for (place, error) in failed {
         context
@@ -1062,7 +1066,7 @@ fn secret_rows(
         .collect()
 }
 
-/// `server add --secret NAME` (docs/design/server-add.md rules 11 and 13).
+/// `server add --secret NAME`.
 /// Before the read, `ncp` finds the stores that have the item, so that a
 /// store that cannot answer stops before the user types. After the read,
 /// a different stored value is an error, because other entries of the

@@ -24,7 +24,7 @@ hyper-util = { version = "0.1", default-features = false, features = ["client-pr
 nix = { version = "0.31", default-features = false, features = ["fs", "resource", "user"] }
 jsonschema = { version = "0.58.6", default-features = false }
 process-wrap = { version = "10", default-features = false, features = ["tokio1", "process-group", "kill-on-drop"] }
-# system-proxy: the proxy of the macOS system settings, as uv (design C5).
+# system-proxy: the proxy of the macOS system settings, as uv.
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "system-proxy"] }
 rmcp = { version = "=3.5.1", default-features = false, features = ["auth", "client", "transport-async-rw", "transport-streamable-http-client-reqwest", "reqwest-tls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

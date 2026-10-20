@@ -1,4 +1,4 @@
-//! The scopes of a login request (design B79), from MCP 2026-07-28,
+//! The scopes of a login request, from MCP 2026-07-28,
 //! basic/authorization:
 //! - "Scope Selection Strategy" gives the initial selection.
 //! - "Step-Up Authorization Flow" adds the scopes of the last request and
@@ -28,7 +28,8 @@ pub fn challenged(challenge: &str, server_url: &str) -> Option<Vec<String>> {
 }
 
 /// Adds `offline_access` when the authorization server lists it, so that
-/// the server can give a refresh token (MCP 2026-07-28, "Refresh Tokens").
+/// the server can give a refresh token (MCP 2026-07-28,
+/// basic/authorization, "Refresh Tokens").
 /// A request with no scopes stays with no scopes.
 #[must_use]
 pub fn with_offline_access(scopes: Vec<String>, supported: Option<&[String]>) -> Vec<String> {

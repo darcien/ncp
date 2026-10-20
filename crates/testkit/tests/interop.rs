@@ -1,5 +1,6 @@
 //! Interop tests of `ncp` against the official MCP everything server
-//! (TypeScript SDK). See `docs/design/interop.md`.
+//! (TypeScript SDK). The other tests use rmcp fixtures, so they cannot find
+//! a wrong assumption that `ncp` and rmcp share.
 //!
 //! The tests need Node and the pinned server. Thus they have the `ignore`
 //! attribute. Run them with `mise run interop` after `mise run

@@ -32,7 +32,8 @@ pub(crate) const JSONC: jsonc_parser::ParseOptions = jsonc_parser::ParseOptions 
 };
 const STDIO_KEYS: [&str; 5] = ["type", "command", "args", "env", "cwd"];
 const REMOTE_KEYS: [&str; 4] = ["type", "url", "headers", "oauth"];
-/// The keys of the `oauth` object that the MVP reads (design C4, B68).
+/// The keys of the `oauth` object that `ncp` reads. `ncp` adds a key only
+/// when a real server or an official conformance scenario can test it.
 /// `authorizationServer` is the key of Claude Desktop for the issuer.
 const OAUTH_KEYS: [&str; 4] = ["clientId", "clientSecret", "issuer", "authorizationServer"];
 
@@ -158,7 +159,8 @@ pub enum Target {
 pub enum Transport {
     Stdio(StdioServer),
     Http(RemoteServer),
-    /// Read from the file, but not supported for connections in the MVP.
+    /// Read from the file, so that a file of another tool stays valid. `ncp`
+    /// cannot connect with this deprecated transport.
     Sse(RemoteServer),
 }
 
@@ -850,8 +852,8 @@ fn remote(
     })
 }
 
-// The pre-registered client of the `oauth` object (design B68). A client
-// ID and an issuer are not secrets, so they have no `${NAME}`.
+// The pre-registered client of the `oauth` object. A client ID and an
+// issuer are not secrets, so they have no `${NAME}`.
 fn oauth_client(
     object: &Map<String, Value>,
     url: &ServerUrl,

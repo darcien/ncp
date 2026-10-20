@@ -2,7 +2,7 @@
 //!
 //! The spec lets a client keep the protocol version across restarts of the
 //! same server configuration (MCP 2026-07-28, basic/versioning, "Backward
-//! compatibility with initialization-based versions"). The cache keys each
+//! Compatibility with Initialization-Based Versions"). The cache keys each
 //! version by the server name and its transport target, so a changed target
 //! probes again.
 //!

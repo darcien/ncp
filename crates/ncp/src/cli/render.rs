@@ -48,8 +48,9 @@ pub fn target_text(target: &Target) -> String {
     }
 }
 
-/// What a person checks before a trust, beside the target: the parts of
-/// rule 5 of docs/design/project-config.md.
+/// What a person checks before a trust, beside the target: `cwd`, the
+/// names of the `env` variables, and each `${NAME}` with the host that gets
+/// its value. No value shows, because a value can be a literal secret.
 pub struct Shown {
     pub cwd: Option<String>,
     pub env: Vec<String>,
@@ -130,7 +131,7 @@ impl Row {
 }
 
 /// The JSON of the rows: the servers, and the invalid entries with their
-/// errors (design section 4).
+/// errors.
 #[must_use]
 pub fn rows_json(rows: &[Row]) -> (Vec<Value>, Vec<Value>) {
     let (servers, invalid): (Vec<&Row>, Vec<&Row>) =
@@ -408,7 +409,7 @@ fn hint_marks(tool: &Tool) -> Vec<&'static str> {
 // Each annotation hint with its value, and the default of the spec when the
 // server sets none: an absent hint must not look safe. The destructive and
 // idempotent hints have a meaning only when `readOnlyHint` is false (MCP
-// 2025-11-25, server/tools, `ToolAnnotations`).
+// 2025-11-25, schema, `ToolAnnotations`).
 fn annotation_lines(tool: &Tool) -> String {
     let annotations = tool.annotations.clone().unwrap_or_default();
     let read_only = annotations.read_only_hint;

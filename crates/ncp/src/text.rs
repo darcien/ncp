@@ -1,7 +1,7 @@
 //! Values in the text of a message.
 
-/// A value in backticks (rule 14 of `docs/design/output-messages.md`). A
-/// value with a backtick or a control character shows in double quotes,
+/// A value in backticks, so that an agent can find each value. A value
+/// with a backtick or a control character shows in double quotes,
 /// with the escapes of Rust `Debug`. Thus the backticks of a line stay in
 /// pairs, and the value cannot start a new line.
 #[must_use]
@@ -22,8 +22,7 @@ pub fn source_texts(error: &dyn std::error::Error) -> impl Iterator<Item = Strin
 }
 
 /// Transport and library errors put the inner text into the outer text. A
-/// cause shows only when the last text that shows does not hold it (rule 7 of
-/// `docs/design/output-messages.md`).
+/// cause shows only when the last text that shows does not hold it.
 pub fn kept_causes(
     message: &str,
     causes: Vec<String>,
@@ -41,7 +40,7 @@ pub fn kept_causes(
 }
 
 /// The text of an error, then the texts of its source chain that do not
-/// repeat (rule 7 of `docs/design/output-messages.md`).
+/// repeat.
 #[must_use]
 pub fn chain(error: &dyn std::error::Error) -> Vec<String> {
     let mut texts = source_texts(error);
@@ -57,7 +56,7 @@ pub fn chain_text(error: &dyn std::error::Error) -> String {
     chain(error).join(": ")
 }
 
-/// A path in backticks (rule 14 of `docs/design/output-messages.md`).
+/// A path in backticks.
 #[must_use]
 pub fn path_code(path: &std::path::Path) -> String {
     code(&path.display().to_string())

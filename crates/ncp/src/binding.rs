@@ -48,7 +48,8 @@ pub fn value_destination(server: &Server) -> Result<Destination, OriginError> {
 
 /// The destination of a client secret: the origin of `oauth.issuer`. The
 /// issuer is literal text in the file, and `ncp` checks the issuer of the
-/// metadata against it before each send (design B68).
+/// metadata against it before each send. Thus the secret goes only to the
+/// authorization server where the user registered the client.
 ///
 /// # Errors
 ///

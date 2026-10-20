@@ -26,8 +26,9 @@ pub fn trace_line(
                 Direction::Sent => "sent",
                 Direction::Received => "received",
             };
-            // A server can echo a secret in a message (design B81). Other
-            // text of the message does not change (B42).
+            // A server can echo a secret in a message, so the trace hides it.
+            // Other text of the message does not change, because the user
+            // already has the arguments and the result.
             let message = &crate::redact::json_strings(message, hide);
             Some(match format {
                 Format::Text => format!("trace: server {server}: {direction} {message}\n"),
