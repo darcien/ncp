@@ -47,6 +47,14 @@ the decisions and their reasons.
   yes (B63).
 - MCP objects pass through with no change: `Tool`, `CallToolResult`,
   `InputRequiredResult`. `ncp` adds only a small envelope where it must.
+- A release does not break the use of an earlier release. The commands,
+  the options, the configuration files, the stored credentials and the
+  JSON output of a release stay valid. When a change makes old input or
+  stored data invalid, `ncp` accepts the old form too, or migrates the
+  data. A change that the user must act on is a breaking change, and its
+  release notes give the steps. Versions follow SemVer 2.0.0: at
+  `0.y`, as in uv, a breaking change gives the next minor version, and a
+  new feature or a fix gives the next patch version.
 
 In this document, "the hint `COMMAND`" means a hint sentence that gives
 `COMMAND` (B80).
@@ -278,9 +286,8 @@ Rules:
   pipe.
 - MCP objects are copied with no change. Their schema is the MCP schema of
   the negotiated protocol version.
-- `ncp` objects have stable names. A new field can come in a minor version.
-  The removal or change of a field needs a major version. Before the
-  first release, the fields of a JSON object can change.
+- `ncp` objects have stable names. A new field can come in any version.
+  The removal or change of a field is a breaking change (section 1).
 - stderr is JSON Lines: one JSON object on each line. The key of each
   object is its kind: `error`, `warning`, `hint`, `debug` (`-v`), `trace`
   (`-vv`), `progress`, `serverLog` (a stderr line of a stdio server),
@@ -297,7 +304,7 @@ Rules:
 | Command | stdout |
 |---|---|
 | `server list` | `{"servers": [Server], "invalid": [{"name", "error", "causes"}]}` |
-| `server show` | `{"server", "target", "protocolVersion", "serverInfo", "capabilities", "instructions"}`. The last four use the names of the MCP spec. The set can become smaller before the first release. |
+| `server show` | `{"server", "target", "protocolVersion", "serverInfo", "capabilities", "instructions"}`. The last four use the names of the MCP spec. |
 | `tool list` | `{"server": "<name>", "tools": [MCP Tool]}` |
 | `tool show` | `{"server": "<name>", "tool": MCP Tool}` |
 | `tool call` | MCP `CallToolResult`, or MCP `InputRequiredResult` (code 5) |
@@ -460,7 +467,7 @@ user reviews them.
 | B31 | A native store that cannot answer does not stop the search for `${NAME}`: the file can have the name. When no place has it, the error gives the store error (exit 4) and the hint `ncp secret set NAME --credential-store file`. | Section 2.4, with the order of the places kept. |
 | B32 | A `${NAME}` in `command`, `args`, `cwd` or `url` comes only from the environment. `ncp` does not read a store for it. The error is "variable NAME is not set" with the hint `export NAME=<value>`. | Section 2.4: a stored value must not go into the process list or a URL. Not reading the store also shows no prompt. |
 | B33 | A credential file that `ncp` cannot read or write gives exit 3. A native store that is not available, is locked, or gives no answer gives exit 4. | Section 3. |
-| B34 | Items of the earlier layout (`<server>/env/<NAME>`) are ignored. | No release has used them (requirements: stored credentials can reset before the first release). |
+| B34 | Items of the earlier layout (`<server>/env/<NAME>`) are ignored. | No release has used them. |
 | B35 | After `secret set`, `ncp` checks the other place for a copy, with a limit of 5 s, and warns when the environment sets the name. Each warning names the place that wins. The check uses the same key, so it looks only at the same destination. When a copy is found, the warning names the destination, and the hint is `ncp secret delete NAME --server SERVER` (section 2.4): it removes the copies of this destination, and the user then stores the value in one place. When the check fails, the warning says so and gives no hint. In JSON, the warning then has `hints: []`. | The check only gives a warning, so it must not wait for a locked store. |
 | B36 | A host with no native store (for example Linux with no Secret Service) gives no warning in `secret list` and `secret delete`: the native store counts as empty. | A user who keeps all values in the file must not see the same warning at each run. |
 | B37 | `secret list` with a configuration file that does not load gives a warning, and no secret shows as used. | The names come from the stores, not from the file. |

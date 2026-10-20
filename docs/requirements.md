@@ -1,8 +1,8 @@
 # ncp: requirements
 
 Status: baseline, 2026-10-07. Spec: MCP [2026-07-28][ver]. License:
-`MIT OR Apache-2.0`. No release yet: during development, names, paths and
-stored credentials can change and reset.
+`MIT OR Apache-2.0`. Releases: the compatibility rule in
+[cli.md](design/cli.md) section 1.
 
 ## 1. Purpose
 
