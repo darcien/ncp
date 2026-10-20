@@ -8,6 +8,13 @@ hk = "2.5.0"
 shellcheck = "0.11.0"
 # pnpm installs the interop server (harness/interop). No Corepack.
 pnpm = "12.10.1"
+# The release tools (docs/release.md).
+"cargo:git-cliff" = "2.14.2"
+"cargo:cargo-release" = "1.1.6"
+
+# mise builds the cargo tools from crates.io, and downloads no binaries.
+[settings]
+cargo.binstall = false
 
 # `hk install` then runs the hooks through `mise x`, so that the hooks use
 # the pinned tools.
@@ -80,9 +87,35 @@ run = [
   "harness/linux/run.sh offline cargo test --workspace --locked",
 ]
 
+# The release steps are in docs/release.md.
 [tasks.release]
-description = "Build the release binaries for macOS and Linux, run them, and write SHA256SUMS"
+description = "Build the release archives for macOS and Linux on this Mac, run the binaries, and write SHA256SUMS"
 run = "harness/release.sh"
+
+[tasks."release:check"]
+description = "Check that a release tag agrees with the version in Cargo.toml, and that CHANGELOG.md has a section for it"
+usage = 'arg "<tag>" help="The release tag, for example v0.1.0"'
+run = 'harness/release.sh check "$usage_tag"'
+
+[tasks.changelog]
+description = "Show the next version and its new section for CHANGELOG.md, from the commits after the last release tag"
+run = "git-cliff --unreleased --bump"
+
+# cargo-release runs git-cliff, commits, tags and pushes (release.toml).
+[tasks."release:tag"]
+description = "Set the next version, add its section to CHANGELOG.md, commit, tag and push. Without --execute, do a dry run"
+usage = """
+arg "[version]" help="The new version. Default: the next version from the commits"
+flag "-x --execute" help="Commit, tag and push. Without it, cargo-release does a dry run"
+"""
+run = """
+version="${usage_version:-$(git-cliff --bumped-version)}"
+if [ "${usage_execute:-false}" = true ]; then
+	cargo release "${version#v}" --execute
+else
+	cargo release "${version#v}"
+fi
+"""
 
 # The conformance suite: an online install from the lock file, then an
 # offline run. See harness/conformance/run.sh.

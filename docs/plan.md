@@ -550,14 +550,28 @@ mise `github:darcien/ncp`.
    `main` that changes `site/` or the workflow. A later site, for example Astro with
    `base: '/ncp'`, builds from `site/` and copies `site/public/` at the
    same paths, so the CIMD URL stays the same.
-3. Release workflow: `.github/workflows/release.yaml` runs on a tag
-   `vX.Y.Z`. It checks that the tag is the version in `Cargo.toml`, builds
-   the macOS targets on a macOS runner and the Linux targets on a Linux
-   runner, and publishes `ncp-X.Y.Z-<target>.tar.gz` (one top folder with
-   `ncp` and the licenses), `SHA256SUMS`, and a GitHub artifact
-   attestation. Split `harness/release.sh` into the steps that the
-   workflow needs.
-4. The user sets the Pages source to GitHub Actions and pushes. When the
-   CIMD URL serves the document, the user pushes the tag `v0.1.0`.
-5. Check: `mise use github:darcien/ncp` gives a binary that runs on macOS
-   and Linux. The user runs `mise run live oauth`.
+3. Changelog and release tools: `CHANGELOG.md` is based on Keep a
+   Changelog 1.1.0. git-cliff (`cliff.toml`) writes each new section from
+   the `feat`, `fix` and breaking commits. At `0.y`, as in uv, a breaking
+   commit gives the next minor version, and a `feat` or `fix` commit gives
+   the next patch version. cargo-release (`release.toml`) sets the version
+   of the workspace, commits, makes the release tag `vX.Y.Z`, and pushes.
+   Its hook runs git-cliff, so the release commit includes the new
+   section. `mise run release:tag` runs cargo-release. Without
+   `--execute`, it does a dry run. Only the user runs these tools, on this
+   Mac.
+4. Release workflow: `.github/workflows/release.yaml` runs on a pushed
+   release tag. The job `check` stops when the tag does not agree with the
+   version in `Cargo.toml`, or when `CHANGELOG.md` has no section for it.
+   That section is the release notes. The macOS binaries build on
+   `macos-15`. The Linux binaries build in the harness on a runner of each
+   architecture, with the smoke test. The workflow publishes
+   `ncp-X.Y.Z-<target>.tar.gz` (one top directory with `ncp` and the
+   licenses) and `SHA256SUMS`, and makes a GitHub artifact attestation for
+   the archives. The jobs `check`, `macos`, `linux` and `pack` run the
+   steps of the same names in `harness/release.sh`. The workflow uses only
+   actions that GitHub owns, each pinned to a full SHA, and no secret.
+   Each job gets only the permissions that it needs.
+5. Release guide: `docs/release.md` gives the steps to publish a release,
+   to check it, and to recover after a failed job.
+6. The user publishes 0.1.0 and checks it with `docs/release.md`.

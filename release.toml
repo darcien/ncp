@@ -1,0 +1,18 @@
+# cargo-release sets the version of the workspace, commits, tags and
+# pushes. The workspace in Cargo.toml has one version and does not publish
+# to crates.io.
+allow-branch = ["main"]
+tag-name = "v{{version}}"
+tag-message = "ncp {{version}}"
+pre-release-commit-message = "chore(release): {{version}}"
+# git-cliff adds the section of the new version to CHANGELOG.md, and the
+# release commit includes it. cargo-release also runs the hook in a dry
+# run, so in a dry run the hook only shows the section.
+pre-release-hook = ["sh", "-c", """
+cd "$WORKSPACE_ROOT"
+if [ "$DRY_RUN" = true ]; then
+	git-cliff --unreleased --tag "v$NEW_VERSION"
+else
+	git-cliff --unreleased --tag "v$NEW_VERSION" --prepend CHANGELOG.md
+fi
+"""]
