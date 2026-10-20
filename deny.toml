@@ -13,6 +13,11 @@ targets = [
 [advisories]
 version = 2
 yanked = "deny"
+# RustSec marks zvariant, zbus_names and zvariant_derive as unmaintained,
+# because their code moved into zbus 6. secret-service and
+# zbus-secret-service-keyring-store still need zbus 5, which needs these
+# crates. Remove these entries when both use zbus 6.
+ignore = ["RUSTSEC-2026-0370", "RUSTSEC-2026-0371", "RUSTSEC-2026-0372"]
 
 [licenses]
 version = 2
