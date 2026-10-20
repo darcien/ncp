@@ -31,7 +31,8 @@ on the terminal with `>>>`.
 | `oauth` | A login at `mcp.cloudflare.com` with the browser and with `--no-browser`. The tokens go to the Keychain, `-vv` shows no token, and `server remove` removes the tokens. | Log in to Cloudflare two times. Before each login, a `>>>` line tells you what to do, and when to wait. |
 | `proxy` | With no proxy variable, `ncp` uses the HTTPS proxy of the system settings. The request goes through the tunnel of a test proxy to a local HTTPS server. | Nothing. It runs only with `NCP_DISPOSABLE_HOST=1`. |
 
-The `oauth` test uses the server that you approved on 2026-10-11.
+The `oauth` test uses `https://mcp.cloudflare.com/mcp`. It is the only
+third-party server of the live tests, and only the user runs them.
 
 ### The system proxy
 
@@ -41,7 +42,7 @@ that is thrown away after the test, for example a CI runner, with
 `NCP_DISPOSABLE_HOST=1` and `sudo` with no password. With no such
 variable, `mise run live` skips it.
 
-The other parts of the proxy rule have tests that change nothing on the
+The other parts of the proxy route have tests that change nothing on the
 machine, and the git hook runs them:
 
 - The unit tests of `crates/ncp/src/proxy.rs` give the matcher a fake
@@ -64,7 +65,3 @@ The record can contain your account name and the URLs of the login, so it
 stays in `.scratch/`. It also has the URL that you paste in the `oauth`
 test. The code in that URL works only one time, and only with the PKCE
 verifier of that login.
-
-These tests replace the steps of `docs/research/macos-keychain.md`,
-`oauth-login-steps.md`, `macos-system-proxy.md`, and the OAuth step of
-`server-add-interop.md`. Those reports are history.

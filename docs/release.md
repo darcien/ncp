@@ -14,9 +14,9 @@ publishes the release on GitHub. Only you do these steps, on this Mac.
 1. Do a dry run: `mise run release:tag`.
 2. Read the version and the new section in the output. Make sure that
    each breaking change gives the steps for the user.
-3. If the version is wrong for the changes, do the dry run again with the
-   correct version. Example: `mise run release:tag 0.3.0`. The version
-   rule is in `docs/design/cli.md` section 1.
+3. If the version does not obey the version rule (see "Reference"), do the
+   dry run again with the correct version. Example:
+   `mise run release:tag 0.3.0`.
 4. Run `mise run release:tag --execute`. If you gave a version in step 3,
    give it again.
 5. When cargo-release asks, confirm.
@@ -68,6 +68,20 @@ publishes the release on GitHub. Only you do these steps, on this Mac.
   cannot change. Correct the fault in a new patch version.
 
 ## Reference
+
+### Version rule
+
+A release keeps the commands, the options, the configuration files, the
+stored credentials and the JSON output of an earlier release valid. When a
+change makes old input or stored data invalid, `ncp` accepts the old form
+too, or migrates the data. When neither is possible, the change is a
+breaking change, and its release notes give the steps for the user.
+
+Versions follow SemVer 2.0.0. At `0.y`, as in uv, a breaking change gives
+the next minor version, and a new feature or a fix gives the next patch
+version.
+
+### Parts
 
 | Part | Function |
 |---|---|

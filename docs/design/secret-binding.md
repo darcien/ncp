@@ -1,5 +1,9 @@
 # Design: bind stored secrets to origins
 
+> Archived at v0.1.0. This MVP document describes v0.1.0 and gives no
+> direction. When the code and this document do not agree, the code is
+> correct.
+
 Status: accepted by the user on 2026-10-10 (revision 5). Requirement S9
 and [cli.md](cli.md) B72 record the rules. Build: [plan.md](../plan.md)
 milestone 17.

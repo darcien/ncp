@@ -1,5 +1,9 @@
 # Design: project configuration files
 
+> Archived at v0.1.0. This MVP document describes v0.1.0 and gives no
+> direction. When the code and this document do not agree, the code is
+> correct.
+
 Status: accepted by the user on 2026-10-11, revision 4. Build:
 [plan.md](../plan.md) milestone 18.
 

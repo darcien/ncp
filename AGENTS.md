@@ -3,26 +3,22 @@
 `ncp` is a command-line MCP client for one user on macOS and Linux. It is
 written in Rust on the official SDK `rmcp`.
 
-## MCP spec and requirements
+## MCP spec and sources
 
 - **MCP spec**: the official, versioned specification at
   modelcontextprotocol.io. `ncp` targets `2026-07-28`, with fallback to
   `2025-11-25`.
-- **Requirements**: `docs/requirements.md`. A temporary working
-  document for the MVP. It goes away when `ncp` conforms to the MCP spec.
-- When a change adds or changes behavior, update the requirements first. Put
-  the requirements change in the same commit as the code, or in an earlier
-  commit.
-- Requirement IDs (for example `P2`) are for the requirements document only.
-  Do not use them in code, tests, comments or commits.
-- Cite permanent sources: a versioned MCP spec URL, an RFC section (for
-  example "RFC 9207 §2.4"), or the name of an official conformance scenario.
+- Cite an external fact with its permanent source: a versioned MCP spec
+  URL, an RFC section (for example "RFC 9207 §2.4"), or the name of an
+  official conformance scenario. Open the source before you cite it. Do not
+  cite from memory.
 - For a rule that is specific to `ncp`, state the rule and its reason in
   words.
 - Name tests by behavior, for example
   `falls_back_to_initialize_when_discover_times_out`.
-- Research and history are in `docs/research/`. Do not change old reports.
-  Add a new report instead.
+- `docs/research/` holds dated reports. Each report is standalone and can
+  be stale. No permanent document depends on a report. Delete a report
+  when it has no use. A broken link in an MVP document is permitted.
 - Write a test report only for a defect, or for a fact that changes a
   decision. Do not commit a result that only passes.
 - Take prior art from the official MCP specification, SDKs and test parts,
@@ -34,7 +30,7 @@ written in Rust on the official SDK `rmcp`.
 
 ## Secrets: no detection
 
-`ncp` knows that a value is a secret only by fact (requirement S10):
+`ncp` knows that a value is a secret only by fact:
 
 - The value comes from `${NAME}` or from a credential store.
 - The value is in a header field that RFC 9110 defines as credentials:
@@ -43,14 +39,76 @@ written in Rust on the official SDK `rmcp`.
 
 Every other value is not a secret, also when it looks like one. Do not
 propose a detection of secrets by value, by pattern, or by a list of
-names. Do not ask the user about it again. The user decided this rule.
+names. Do not ask the user about it again. This rule is final.
+
+## Command-line principles
+
+- Choose in this order: the MCP spec, secure by default, good ergonomics,
+  the practice of uv and mise, the simplest design.
+- One CLI for people and agents: text on a TTY, JSON in a pipe. Results go
+  to stdout. Diagnostics go to stderr.
+- Names follow uv: full words, one name for each action, no aliases. Short
+  forms: only `-h`, `-q`, `-v` and `-V`. No `NCP_*` variables.
+- No command waits for input that it did not ask for, and each wait has a
+  time limit, so that an agent cannot hang.
+- Only `auth login` starts OAuth.
+- MCP objects pass through with no change.
+
+## Documents
+
+- Permanent documents: `AGENTS.md`, `CHANGELOG.md`, `docs/release.md`
+  and `docs/live-tests.md`. Code and other documents can cite them.
+- The code and its tests are the reference for the current behavior.
+- `docs/requirements.md`, `docs/plan.md` and `docs/design/` are the MVP
+  documents. They describe v0.1.0. Do not take a task, an order or a
+  design from them.
+- Exception: each MUST rule of `docs/requirements.md` stays in force until
+  a permanent document replaces it. When the code does not obey a MUST
+  rule, the code has a defect. For each other difference between the code
+  and an MVP document, the code is correct.
+- In code, tests and comments, do not cite an MVP document, an `ncp` RFC
+  (`docs/rfcs/`) or a research report, and do not use their IDs (for
+  example `P2` or `B67`). These documents can go away or change form. An
+  IETF RFC section is a permanent source (see "MCP spec and sources").
+- A commit body can give the path of the `ncp` RFC that it builds.
+- Write documents and comments for the current behavior. Do not write the
+  history of a change in them: the commit has it.
+
+## RFCs
+
+An `ncp` RFC records a design that the user must accept: a new or removed
+command, a new configuration key, a new format of stored data, a breaking
+change, or a change to a MUST rule of `docs/requirements.md`. A smaller
+choice needs only the reason in the commit body.
+
+- Path: `docs/rfcs/NNNN-slug.md`. Use the next free number. Do not use a
+  number again.
+- Front matter: `state` (`proposed`, `accepted`, `committed` or
+  `abandoned`) and `supersedes` (a list of numbers).
+- Write a new RFC with `state: proposed`. Only the user accepts or
+  abandons an RFC. Set `state: accepted` or `state: abandoned` only after
+  the user says so.
+- Only an `accepted` RFC gives direction. A `proposed` RFC is a draft.
+- The commit that completes the build also sets `state: committed`, and
+  changes the permanent documents that the build affects. After that
+  commit, the RFC is frozen.
+- Do not change a `committed` or `abandoned` RFC. A new design is a new
+  RFC with `supersedes`.
 
 ## Workflow
 
-- Follow `docs/plan.md`. Do the milestones in order.
-- You can break down the work for a milestone, and commit in small working chunk.
+- The backlog is in `.scratch/backlog/` (not tracked by git). Do the item
+  that the user names. Do not choose the next item yourself.
+- Commit in small working chunks.
+- Before you commit a change to a command, an option, an output field or
+  a message, get an adversarial review from a subagent. Do 3 rounds at
+  most. Put the findings that remain in the backlog, and tell the user
+  about each high finding.
+- Obey the version rule of `docs/release.md`. A breaking change needs an
+  `accepted` RFC, and its `BREAKING CHANGE` footer gives the steps for the
+  user.
 - Keep notes in `.scratch/` (not tracked by git). Update
-  `.scratch/progress.md` at the end of each milestone, and before a long
+  `.scratch/progress.md` at the end of each backlog item, and before a long
   pause: done, next, blocked.
 - At the start of a session, read `.scratch/progress.md` if it exists.
 
@@ -58,14 +116,16 @@ names. Do not ask the user about it again. The user decided this rule.
 
 Stop and ask the user before you:
 
-- Change a MUST requirement, or the plan order.
+- Change a MUST rule of `docs/requirements.md`, or the order of the work.
 - Add a network destination other than crates.io, the Rust toolchain, and
   pinned packages from the MCP organization. A pinned package includes the
   dependencies that its lock file pins.
 - Run code that does not come from these sources.
 - Change how secrets are stored or handled.
 - Add a dependency that `deny.toml` does not accept.
-- Pass a milestone that the plan marks as a gate.
+- Start to build a change of the list in "RFCs" before its RFC has
+  `state: accepted`. Write the RFC first. If you are not sure that a
+  change is on the list, ask.
 
 The rules for network destinations and code apply to `ncp` and to the
 development on this machine. The settings of the CI platform control the

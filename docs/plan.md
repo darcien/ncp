@@ -1,5 +1,9 @@
 # Implementation plan
 
+> Archived at v0.1.0. This MVP document describes v0.1.0 and gives no
+> direction. When the code and this document do not agree, the code is
+> correct.
+
 Temporary working document for the MVP, like `requirements.md`.
 Do the milestones in order. Each milestone ends with `mise run check` and
 `mise run test` green, and one or more commits.

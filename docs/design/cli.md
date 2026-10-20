@@ -1,5 +1,9 @@
 # Design: command line
 
+> Archived at v0.1.0. This MVP document describes v0.1.0 and gives no
+> direction. When the code and this document do not agree, the code is
+> correct.
+
 Status: accepted by the user on 2026-10-08 (plan milestone 5, gate).
 Baseline: [requirements.md](../requirements.md). Input:
 [interface-and-config.md](../research/interface-and-config.md),

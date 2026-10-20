@@ -1,5 +1,10 @@
 # ncp: requirements
 
+> Archived at v0.1.0. This MVP document describes v0.1.0. Its MUST rules
+> stay in force until a permanent document replaces them, and code that
+> does not obey one has a defect. For each other difference, the code is
+> correct.
+
 Status: baseline, 2026-10-07. Spec: MCP [2026-07-28][ver]. License:
 `MIT OR Apache-2.0`. Releases: the compatibility rule in
 [cli.md](design/cli.md) section 1.
