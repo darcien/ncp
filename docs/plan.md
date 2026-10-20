@@ -530,6 +530,8 @@ Each item is one or more small commits.
 
 ## Last milestone: distribution
 
+Status: done on 2026-10-20. Release v0.1.0 is published and checked.
+
 Repository: `github.com/darcien/ncp`. Version: SemVer `0.y`. Channel:
 mise `github:darcien/ncp`.
 
