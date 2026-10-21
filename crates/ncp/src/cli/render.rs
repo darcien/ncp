@@ -86,14 +86,17 @@ impl Reason {
         }
     }
 
-    /// The error and its causes on one line, for a table cell.
+    /// The error and its causes on one line, for a table cell. A table is
+    /// text for people on stdout, so it has no backticks.
     #[must_use]
     pub fn text(&self) -> String {
-        std::iter::once(&self.error)
-            .chain(&self.causes)
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-            .join(": ")
+        plain(
+            &std::iter::once(&self.error)
+                .chain(&self.causes)
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(": "),
+        )
     }
 }
 
@@ -130,8 +133,8 @@ impl Row {
     }
 }
 
-/// The JSON of the rows: the servers, and the invalid entries with their
-/// errors.
+/// The JSON of the rows: the servers, and the entries that are not valid
+/// with their errors.
 #[must_use]
 pub fn rows_json(rows: &[Row]) -> (Vec<Value>, Vec<Value>) {
     let (servers, invalid): (Vec<&Row>, Vec<&Row>) =
@@ -212,10 +215,10 @@ pub fn project_entries(entries: &[UnexpandedEntry]) -> Vec<String> {
                     shape
                         .problem
                         .iter()
-                        .map(|problem| format!("not valid: {}", chain_text(problem))),
+                        .map(|problem| format!("not valid: {}", plain(&chain_text(problem)))),
                 )
                 .collect(),
-                Err(error) => vec![format!("not valid: {error}", error = chain_text(&error))],
+                Err(error) => vec![format!("not valid: {}", plain(&chain_text(&error)))],
             };
             vec![entry.name.clone(), details.join("   ")]
         })
@@ -258,10 +261,21 @@ pub fn project_question(project: &Project) -> String {
     project_text(project, &format!("{state}. It has these servers:"))
 }
 
-/// The text of `ncp trust`: the file with its state, then its entries.
+/// The text of `ncp trust`: the file with its state, then its servers.
 #[must_use]
 pub fn project_file(project: &Project) -> String {
-    project_text(project, &format!("({})", project.trust.word()))
+    format!(
+        "Project file: {}",
+        project_text(project, &format!("({})", project.trust.word()))
+    )
+}
+
+// An entry line is data for people: on stdout, in the trust question and
+// in the data lines of an error. It has no backticks. A value with a space
+// then has no visible bounds. This is rare in an entry error, and the JSON
+// output and the error causes keep the backticks.
+fn plain(text: &str) -> String {
+    text.replace('`', "")
 }
 
 fn project_text(project: &Project, state: &str) -> String {
@@ -280,7 +294,7 @@ pub fn server_list(project: Option<&Project>, rows: &[Row]) -> String {
         .iter()
         .map(|row| {
             let (transport, target) = match (&row.error, &row.target) {
-                (Some(reason), _) => ("invalid".to_string(), reason.text()),
+                (Some(reason), _) => ("not valid".to_string(), reason.text()),
                 (None, Some((transport, target))) => ((*transport).to_string(), target.clone()),
                 (None, None) => (String::new(), String::new()),
             };
@@ -674,15 +688,17 @@ pub fn resource_contents(result: &Value) -> String {
         .map(Vec::as_slice)
         .unwrap_or_default();
     contents.iter().fold(String::new(), |mut text, content| {
-        match (content.get("text").and_then(Value::as_str), content.get("blob").and_then(Value::as_str)) {
+        match (
+            content.get("text").and_then(Value::as_str),
+            content.get("blob").and_then(Value::as_str),
+        ) {
             (Some(body), _) => text.push_str(body),
             (None, Some(blob)) => {
-                let mime = content.get("mimeType").and_then(Value::as_str).unwrap_or("binary data");
-                let _ = writeln!(
-                    text,
-                    "[{mime}, {} bytes as base64; use --output-format text and send stdout to a file]",
-                    blob.len()
-                );
+                let mime = content
+                    .get("mimeType")
+                    .and_then(Value::as_str)
+                    .unwrap_or("binary data");
+                let _ = writeln!(text, "[{mime}, {} bytes as base64]", blob.len());
             }
             (None, None) => {}
         }

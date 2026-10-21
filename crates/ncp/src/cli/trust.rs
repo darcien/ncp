@@ -1,4 +1,4 @@
-//! `ncp trust`, as `mise trust`: the commands of the project file of the
+//! `ncp trust`: the trust of the commands in the project file of the
 //! current folder.
 
 use crate::text::path_code;
@@ -13,8 +13,8 @@ use super::{
 };
 use crate::project::{self, Project};
 
-/// `ncp trust` asks no question and needs no TTY, as `mise trust`. The
-/// user typed the command, so the user means it.
+/// `ncp trust` asks no question and needs no TTY, because the user typed
+/// the command, so the user means it.
 ///
 /// # Errors
 ///

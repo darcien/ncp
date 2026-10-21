@@ -205,7 +205,8 @@ fn trusted(loaded: Loaded, env: &Env) -> Result<Loaded, Failure> {
 }
 
 /// The command can name a server of an untrusted project file. When a person
-/// can answer, `ncp` then shows the entries and asks, as `mise` asks. A Yes
+/// can answer, `ncp` then shows the entries and asks, because a project
+/// file can start a process on this machine. A Yes
 /// trusts the bytes that `ncp` read. A No writes the ignored record. With no
 /// answer, `select` stops with the entries.
 ///
@@ -228,7 +229,7 @@ pub async fn load(context: &Context<'_>, named: Option<&str>) -> Result<Loaded, 
     context
         .ui
         .diagnostic(&format!("{}\n", super::render::project_question(project)));
-    let change = match super::ask::confirm(context, "Trust? [y/N] ").await? {
+    let change = match super::ask::confirm(context, "Trust this file? [y/N] ").await? {
         Some(true) => Change::Trust,
         Some(false) => Change::Ignore,
         None => return Ok(loaded),
@@ -306,7 +307,7 @@ pub fn joined_failure(word: &str, fix: Hint) -> Failure {
 ///
 /// # Errors
 ///
-/// Returns a usage failure for an unknown server or an invalid entry.
+/// Returns a usage failure for an unknown server or an entry that is not valid.
 pub fn select<'a>(loaded: &'a Loaded, name: &str, ui: Ui) -> Result<&'a Server, Failure> {
     if let Some(project) = loaded.blocked_by(name) {
         return Err(blocked(name, project, loaded.config.has(name)));
@@ -423,7 +424,7 @@ fn entry_failure(name: &str, error: &EntryError, path: &Path) -> Failure {
             error: ExpandError::Unset(variable),
             ..
         } => failure.hint(format!(
-            "ncp puts a stored secret only into `env` and `headers` values. To set the variable, run `export {variable}=<value>`. Then run the command again."
+            "ncp puts a stored secret only into `env`, `headers` and `oauth.clientSecret` values. To set the variable, run `export {variable}=<value>`. Then run the command again."
         )),
         _ => failure,
     }
@@ -812,7 +813,7 @@ fn connect_failure(
         // first here.
         _ if error.is_not_found() => failure.hint(
             "The server has no MCP endpoint at the path of the URL. Many servers use `/mcp`. \
-             Examine the path in the entry.",
+                 Examine the path in the entry.",
         ),
         _ => failure,
     };
@@ -855,7 +856,7 @@ pub(super) fn http_failure(name: &str, error: &client::http::HttpError) -> Failu
         .caused_by(error);
     match error {
         client::http::HttpError::CertFile { path, .. } if path.is_empty() => {
-            failure.hint("Remove `SSL_CERT_FILE`, or set it to a file of PEM certificates")
+            failure.hint("Unset `SSL_CERT_FILE`, or set it to a file of PEM certificates")
         }
         _ => failure,
     }
@@ -1022,7 +1023,7 @@ pub fn interrupted(server: Option<&str>) -> Failure {
 // The store can fail at the save of a refresh. A read after the refresh
 // lock can also find tokens of another server. A file that fails is a
 // local error. A native store that fails, for example a locked keyring,
-// is an authorization error, because the file can keep the tokens.
+// is an authorization error, because the file can store the tokens.
 fn token_store_failure(server: &Server, text: &str) -> Failure {
     super::auth::token_text_failure(server, text, true)
 }
@@ -1201,7 +1202,7 @@ mod tests {
         assert_eq!(
             failure.hints().first().map(Hint::message),
             Some(
-                "ncp puts a stored secret only into `env` and `headers` values. To set the \
+                "ncp puts a stored secret only into `env`, `headers` and `oauth.clientSecret` values. To set the \
                  variable, run `export TOKEN=<value>`. Then run the command again."
             )
         );

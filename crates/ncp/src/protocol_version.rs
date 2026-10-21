@@ -28,7 +28,7 @@ const LATEST_WITH_INITIALIZE: &str = "2025-11-25";
 pub struct ProtocolVersion(String);
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("{0:?} is not a protocol version of the form YYYY-MM-DD")]
+#[error("{} is not a protocol version of the form YYYY-MM-DD", crate::text::code(.0))]
 pub struct VersionError(String);
 
 impl ProtocolVersion {

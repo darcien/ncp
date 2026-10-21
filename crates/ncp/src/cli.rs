@@ -296,7 +296,7 @@ fn usage_failure(error: &clap::Error, command: &[String]) -> Failure {
         _ => {
             let failure = Failure::usage("The command line is not valid").cause(clap_cause(error));
             match suggestion(error) {
-                Some(names) => failure.hint(format!("Did you mean {names}?")).hint(help),
+                Some(hint) => failure.hint(hint).hint(help),
                 None => failure.hint(help),
             }
         }
@@ -315,7 +315,7 @@ fn clap_cause(error: &clap::Error) -> String {
         .join("\n")
 }
 
-// The names that clap suggests for a word with a typing error.
+// The hint with the names that clap suggests for a word with a typing error.
 fn suggestion(error: &clap::Error) -> Option<String> {
     use clap::error::{ContextKind, ContextValue};
     let names = [ContextKind::SuggestedSubcommand, ContextKind::SuggestedArg]
@@ -327,8 +327,8 @@ fn suggestion(error: &clap::Error) -> Option<String> {
         })?;
     let names: Vec<String> = names.iter().map(|name| code(name)).collect();
     match names.split_last()? {
-        (last, []) => Some(last.clone()),
-        (last, rest) => Some(format!("{} or {last}", rest.join(", "))),
+        (last, []) => Some(format!("Did you mean {last}?")),
+        (last, rest) => Some(format!("Did you mean {} or {last}?", rest.join(", "))),
     }
 }
 

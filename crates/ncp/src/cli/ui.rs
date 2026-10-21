@@ -44,8 +44,8 @@ pub enum Verbosity {
 }
 
 impl Verbosity {
-    /// clap does not permit both. `-qq` is the same as `-q`, because uv
-    /// accepts it.
+    /// clap does not permit both. `-qq` is the same as `-q`, because a
+    /// repeated flag is not an error for a user who types it twice.
     #[must_use]
     pub fn from_flags(quiet: u8, count: u8) -> Self {
         match count {

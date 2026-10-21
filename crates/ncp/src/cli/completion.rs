@@ -198,8 +198,8 @@ pub fn servers(env: &Env) {
             let mut names: Vec<String> = config
                 .servers()
                 .map(|server| server.name.to_string())
-                // An invalid entry can have any key. A shell expands each
-                // word of the list again, so only a name that passes the
+                // An entry that is not valid can have any key. A shell expands
+                // each word of the list again, so only a name that passes the
                 // rule of server names (no shell characters) goes out.
                 .chain(
                     config

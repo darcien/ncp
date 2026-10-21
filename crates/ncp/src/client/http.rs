@@ -28,8 +28,8 @@ use crate::{
     text::code,
 };
 
-/// The variable that names a file of extra root certificates, as curl,
-/// OpenSSL and uv use it.
+/// The variable that names a file of root certificates. Many tools read this
+/// name, so a user has it set already.
 const CERT_FILE: &str = "SSL_CERT_FILE";
 
 #[derive(Debug, thiserror::Error)]
@@ -38,7 +38,7 @@ pub enum HttpError {
     Client(#[from] reqwest::Error),
     #[error("The header name {} is not valid", code(.0))]
     HeaderName(String),
-    #[error("The header {} has a value that is not valid in a header", code(.0))]
+    #[error("The value of the header {} is not valid", code(.0))]
     HeaderValue(String),
     #[error("ncp cannot use the root certificates in {} from `{CERT_FILE}`", code(.path))]
     CertFile {
@@ -238,8 +238,8 @@ pub fn configured(env: &Env, observer: &Observer) -> Result<reqwest::ClientBuild
 }
 
 // Replaces the system roots with the roots in the file that `SSL_CERT_FILE`
-// names, on each OS, as uv does. On Linux, the system store reads the variable
-// in place of the system roots, so a merge gives a different rule on each OS.
+// names, on each OS. On Linux, the system store reads the variable in place
+// of the system roots, so a merge gives a different rule on each OS.
 // A file that `ncp` cannot use is an error, because a silent fallback gives a
 // TLS error that does not name the cause.
 fn with_cert_file(

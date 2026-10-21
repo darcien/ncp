@@ -1,6 +1,6 @@
 //! The fixes for errors of the configuration. The error types say only
-//! what is wrong. The command line gives the fix as a hint, as
-//! `hints_for_error` of uv does.
+//! what is wrong. The command line gives the fix as a hint, so that an error
+//! type has no text that only the command line needs.
 
 use super::{
     outcome::{Failure, Hint},
@@ -17,12 +17,10 @@ use crate::{
 #[must_use]
 pub fn entry_hints(error: &EntryError) -> Vec<Hint> {
     let hint = match error {
-        EntryError::UrlWithoutType => {
-            "Add `\"type\": \"http\"` or `\"type\": \"sse\"` to the entry"
-        }
+        EntryError::UrlWithoutType => "Add `\"type\": \"http\"` to the entry",
         EntryError::Url(UrlError::PlainHttp) => "Use an `https` URL",
         EntryError::Url(UrlError::Credentials) => {
-            "Remove the user name and the password from the URL, and keep the secret in the credential store"
+            "Remove the user name and the password from the URL, and store the secret in a credential store"
         }
         EntryError::SecretWithoutIssuer { .. } => {
             "Set `oauth.issuer` to the issuer of the authorization server where you registered the client"
@@ -31,7 +29,9 @@ pub fn entry_hints(error: &EntryError) -> Vec<Hint> {
             error: ExpandError::BadReference(_),
             ..
         }
-        | EntryError::BadClientSecret => "ncp supports only `${NAME}` and `${env:NAME}`",
+        | EntryError::BadClientSecret => {
+            "ncp supports only `${NAME}` and `${env:NAME}`. Use one of these forms."
+        }
         // The text of these errors names the field and the problem, and
         // the fix is clear from it.
         EntryError::Name(_)
@@ -65,15 +65,15 @@ pub fn store_hints(error: &StoreError) -> Vec<Hint> {
 pub fn fix_hint(fix: &StoreFix) -> Hint {
     match fix {
         StoreFix::CloseFile(path) => Hint::run_text(
-            "close the file to other users",
+            "make the file private to you",
             &format!("chmod 600 {}", shell_word(&path.display().to_string())),
         ),
         StoreFix::AnswerPrompt => Hint::text(
             "If the store shows an unlock prompt, answer it. Then run the command again.",
         ),
-        StoreFix::UnlockKeyring => Hint::text("To list the locked items, unlock the keyring"),
+        StoreFix::UnlockKeyring => Hint::text("To read the locked items, unlock the keyring"),
         StoreFix::RemoveCopies => {
-            Hint::text("Remove the copies of the item in the keyring, and keep one")
+            Hint::text("Delete the copies of the item in the keyring, except one")
         }
     }
 }
@@ -103,7 +103,9 @@ mod tests {
         };
         assert_eq!(
             entry_hints(&error),
-            [Hint::text("ncp supports only `${NAME}` and `${env:NAME}`")]
+            [Hint::text(
+                "ncp supports only `${NAME}` and `${env:NAME}`. Use one of these forms."
+            )]
         );
     }
 }

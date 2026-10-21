@@ -100,7 +100,7 @@ impl fmt::Debug for ClientItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("The stored {item} item is not valid JSON of ncp")]
+#[error("The stored {item} item is not valid")]
 pub struct ItemError {
     pub item: &'static str,
     #[source]

@@ -1,8 +1,8 @@
 //! The opt-in file store: one JSON file with mode `0600`.
 //!
 //! Use it only after an explicit opt-in, for a system with no native store.
-//! The store does not read a file that other users can open, as ssh does for
-//! private keys.
+//! The store does not read a file that other users can open, because they
+//! could have read or changed the credentials in it.
 
 use std::{collections::BTreeMap, fs, io::ErrorKind, os::unix::fs::PermissionsExt, path::PathBuf};
 

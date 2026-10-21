@@ -28,8 +28,8 @@ pub enum ProjectFile {
     /// No project file. The folder where the search stopped.
     Absent(PathBuf),
     /// A file that `ncp` does not use, with the reason and its causes.
-    /// `ncp` does not search higher, as git does when it finds a repository
-    /// of another user.
+    /// `ncp` does not search higher, because a file of another user in a
+    /// parent folder must not take the place of a file that is not usable.
     Unusable {
         file: PathBuf,
         reasons: Vec<String>,
@@ -104,7 +104,8 @@ pub fn find(paths: &Paths, env: &Env, search: bool) -> ProjectFile {
 
 // Reads the file one time, and checks the owner on the same open file.
 // For a symlink, the check is on the target. Another user cannot make a
-// file that the user owns (git CVE-2022-24765).
+// file that the user owns, so the owner check proves that no other user of
+// this machine made the file.
 fn read_owned(file: &Path) -> Result<String, String> {
     // With no O_NONBLOCK, the open of a FIFO waits for a writer with no
     // limit, also in shell completion. The check of the open file follows.

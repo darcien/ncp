@@ -378,21 +378,21 @@ pub fn hint(field: &Field) -> String {
             min_items,
             max_items,
         } => match (min_items, max_items) {
-            (None, None) => format!("some of, with commas: {}", titles(list)),
+            (None, None) => format!("some of these, with commas between them: {}", titles(list)),
             (minimum, maximum) => format!(
-                "{} of, with commas: {}",
+                "{} of these, with commas between them: {}",
                 count_text(minimum.unwrap_or(0), *maximum),
                 titles(list)
             ),
         },
     };
-    let need = if field.required { ", required" } else { "" };
+    let need = if field.required { "required, " } else { "" };
     let default = field
         .default
         .as_ref()
         .map(|value| format!(" [{}]", shown(value)))
         .unwrap_or_default();
-    format!("{} ({kind}{need}){default}", field.label)
+    format!("{} ({need}{kind}){default}", field.label)
 }
 
 // The count of values that a multi-select takes, as words.
@@ -402,6 +402,30 @@ fn count_text(minimum: u64, maximum: Option<u64>) -> String {
         Some(maximum) => format!("{minimum} to {maximum}"),
         None => format!("at least {minimum}"),
     }
+}
+
+// The limits of a value in words. The caller asks only when a limit fails,
+// so at least one limit is set.
+fn bounds_text<T: std::fmt::Display + PartialEq>(minimum: Option<T>, maximum: Option<T>) -> String {
+    match (minimum, maximum) {
+        (Some(min), Some(max)) if min == max => format!("exactly {min}"),
+        (Some(min), Some(max)) => format!("from {min} to {max}"),
+        (Some(min), None) => format!("at least {min}"),
+        (None, Some(max)) => format!("at most {max}"),
+        (None, None) => "any".to_string(),
+    }
+}
+
+fn length_text(minimum: Option<u64>, maximum: Option<u64>) -> String {
+    let noun = if maximum.or(minimum) == Some(1) {
+        "character"
+    } else {
+        "characters"
+    };
+    format!(
+        "the text must have {} {noun}",
+        bounds_text(minimum, maximum)
+    )
 }
 
 fn titles(list: &[Choice]) -> String {
@@ -437,7 +461,7 @@ pub fn answer(field: &Field, typed: &str) -> Result<Option<Value>, String> {
         return match (&field.default, field.required) {
             (Some(default), _) => Ok(Some(default.clone())),
             (None, false) => Ok(None),
-            (None, true) => Err("a value is necessary".into()),
+            (None, true) => Err("a value is required".into()),
         };
     }
     let in_range = |value: f64, minimum: Option<f64>, maximum: Option<f64>| {
@@ -445,9 +469,8 @@ pub fn answer(field: &Field, typed: &str) -> Result<Option<Value>, String> {
             || maximum.is_some_and(|maximum| value > maximum)
         {
             Err(format!(
-                "the value must be from {} to {}",
-                minimum.map_or("any".into(), |m| m.to_string()),
-                maximum.map_or("any".into(), |m| m.to_string())
+                "the value must be {}",
+                bounds_text(minimum, maximum)
             ))
         } else {
             Ok(())
@@ -457,7 +480,7 @@ pub fn answer(field: &Field, typed: &str) -> Result<Option<Value>, String> {
         list.iter()
             .find(|choice| choice.value == word || choice.title.eq_ignore_ascii_case(word))
             .map(|choice| json!(choice.value))
-            .ok_or_else(|| format!("{word:?} is not one of: {}", titles(list)))
+            .ok_or_else(|| format!("{word} is not one of: {}", titles(list)))
     };
     match &field.kind {
         Kind::Text {
@@ -466,17 +489,13 @@ pub fn answer(field: &Field, typed: &str) -> Result<Option<Value>, String> {
             format,
         } => {
             if let Some(format) = format.filter(|format| !format.accepts(typed)) {
-                return Err(format!("type a {}", format.name()));
+                return Err(format!("type {}", format.name()));
             }
             let length = typed.chars().count() as u64;
             if min_length.is_some_and(|min| length < min)
                 || max_length.is_some_and(|max| length > max)
             {
-                return Err(format!(
-                    "the text must have {} to {} characters",
-                    min_length.unwrap_or(0),
-                    max_length.map_or("any".into(), |max| max.to_string())
-                ));
+                return Err(length_text(*min_length, *max_length));
             }
             Ok(Some(json!(typed)))
         }
@@ -559,7 +578,7 @@ pub fn safe_url(text: &str) -> Result<url::Url, String> {
         Ok(url)
     } else {
         Err(format!(
-            "ncp opens only `https` pages, not `{}:` pages",
+            "The scheme is `{}`, and ncp opens only `https` URLs and `http` URLs of a loopback host",
             url.scheme()
         ))
     }
@@ -669,7 +688,9 @@ mod tests {
             answer(&one_field(&tags, false), "a, a"),
             Ok(Some(json!(["a"])))
         );
-        assert!(hint(&one_field(&tags, false)).contains("1 to 2 of, with commas"));
+        assert!(
+            hint(&one_field(&tags, false)).contains("1 to 2 of these, with commas between them")
+        );
         let empty = json!({"type": "string", "enum": []});
         assert!(matches!(
             field("f", &empty, true),

@@ -368,7 +368,8 @@ fn miss(
         Destination::Origin(_) => (
             "ncp sent nothing to",
             Hint::text(format!(
-                "If the URL is correct, run `{set}` to store the value"
+                "If the URL is correct, run {} to store the value",
+                code(&set)
             )),
         ),
         Destination::Stdio => ("ncp did not start", Hint::run_text("store the value", &set)),
@@ -376,7 +377,7 @@ fn miss(
     let stop = format!("{stop} the server {}.", code(server.name.as_str()));
     let failure = match native_error {
         None => Failure::usage(format!(
-            "The variable {} is not set, and no store has a value for {shown}. {stop}",
+            "The variable {} is not set, and no credential store has a value for {shown}. {stop}",
             code(name.as_str())
         ))
         .hint(store)
@@ -578,7 +579,7 @@ fn set_target<'a>(
                 };
             }
             let failure = Failure::usage(format!(
-                "The entries give {} more than one destination:",
+                "The servers use {} for more than one destination:",
                 reference(name.as_str())
             ));
             list.fold(failure, Failure::data).hint(Hint::text(format!(
@@ -591,7 +592,7 @@ fn set_target<'a>(
 // No entry names `${NAME}` in a field that can read the store. A name in
 // `command`, `args`, `cwd` or `url` comes only from the environment, so
 // that no stored value goes into the process list or a URL. An unset one
-// makes the entry invalid.
+// makes the entry not valid.
 fn no_use(name: &SecretName, only: Option<&str>, loaded: &session::Loaded) -> Failure {
     if let Some(failure) = untrusted_use(loaded, name, only) {
         return failure;
@@ -624,7 +625,7 @@ fn no_use(name: &SecretName, only: Option<&str>, loaded: &session::Loaded) -> Fa
             "To set the variable, run `export {name}=<value>`. Then run the command again."
         )),
         (false, None) => failure.hint(format!(
-            "Add an entry that names {} first. Then run the command again.",
+            "To store the value, add an entry that names {} first. Then run the command again.",
             reference(name.as_str())
         )),
         (false, Some(_)) => failure,
@@ -813,7 +814,7 @@ async fn read_value(
     let text = text.map_err(|unread| match unread {
         Unread::Interrupted => session::interrupted(None),
         Unread::TimedOut => Failure::protocol(format!(
-            "No value of {} came in {} s",
+            "ncp got no value of {} in {} s",
             code(name),
             context.request_limit.as_secs()
         ))
@@ -1131,13 +1132,13 @@ pub(super) async fn store_for_add(
     let value = read_value(context, name.as_str(), &prompt, &pipe).await?;
     if let Some((other, _)) = stored.iter().find(|(_, old)| *old != value) {
         return Err(Failure::usage(format!(
-            "{} already has another value of {} for {}. Other entries with this origin use it.",
+            "{} already has another value of {} for {}. Other servers with this origin use it.",
             crate::text::capitalized(place_text(*other)),
             code(name.as_str()),
             destination_text(&destination)
         ))
         .hint(Hint::run_text(
-            "replace the stored value for each entry with this origin",
+            "replace the stored value for each server with this origin",
             &format!("ncp secret set {name} --server {word}"),
         )));
     }
@@ -1216,9 +1217,13 @@ pub(super) async fn rows_of_entry(
 }
 
 /// `ncp` knows only the global file and the project file of the current
-/// folder. A list of the project files, as `mise prune` keeps, comes after
-/// the first release.
-const UNUSED_SCOPE: &str = "ncp examined only the global file and the project file of this folder. A project in another folder can still use the item.";
+/// folder. A list of the project files of the user comes after the first
+/// release.
+const UNUSED_SCOPE: &str = "ncp checked only the global file and the project file of this folder. To check a project in another folder, run `ncp secret list` in that folder.";
+
+/// The same limit after a delete: the item is gone, so the fix is to store
+/// the value again.
+const DELETED_SCOPE: &str = "ncp checked only the global file and the project file of this folder. If a project in another folder used a deleted item, run `ncp secret set <NAME>` in that folder to store the value again.";
 
 async fn list(context: &Context<'_>) -> Result<(), Failure> {
     // The items come from the stores. A configuration file that does not
@@ -1374,7 +1379,7 @@ async fn chosen(
             [_] => Ok(choice(stored, None)),
             _ => {
                 let failure = Failure::usage(format!(
-                    "ncp deleted nothing, because the stores have items of {} for more than one destination:",
+                    "ncp deleted nothing, because the credential stores have items of {} for more than one destination:",
                     code(name.as_str())
                 ));
                 Err(stored
@@ -1404,7 +1409,7 @@ async fn chosen(
                 .hint(list_hint())),
                 (false, _) => {
                     warn_unlisted(context, &failed);
-                    context.ui.hint(None, &Hint::text(UNUSED_SCOPE));
+                    context.ui.hint(None, &Hint::text(DELETED_SCOPE));
                     Ok(choice(unused, Some(config_file)))
                 }
             }
@@ -1413,7 +1418,11 @@ async fn chosen(
 }
 
 fn not_stored(name: &SecretName) -> Failure {
-    Failure::usage(format!("No store has an item of {}", code(name.as_str()))).hint(list_hint())
+    Failure::usage(format!(
+        "No credential store has an item of {}",
+        code(name.as_str())
+    ))
+    .hint(list_hint())
 }
 
 fn one_server_hint(name: &SecretName) -> Hint {
@@ -1444,9 +1453,9 @@ fn unlisted_failure(place: CredentialPlace, error: &StoreError) -> Failure {
     store_failure_of(error, message, [])
 }
 
-// An invalid entry, or an entry of an untrusted project file, can name the
-// secret. Then `ncp` cannot know that no entry uses an item, so `--unused`
-// stops.
+// An entry that is not valid, or an entry of an untrusted project file, can
+// name the secret. Then `ncp` cannot know that no entry uses an item, so
+// `--unused` stops.
 async fn strict_config(
     context: &Context<'_>,
     name: &SecretName,

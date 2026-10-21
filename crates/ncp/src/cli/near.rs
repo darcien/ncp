@@ -1,4 +1,4 @@
-//! The near name for an unknown name: "did you mean ...?".
+//! The near name for an unknown name, for the hint "Did you mean ...?".
 
 // The edit distance (Levenshtein) of two names, in characters.
 fn distance(a: &str, b: &str) -> usize {

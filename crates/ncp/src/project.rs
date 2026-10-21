@@ -1,7 +1,7 @@
 //! The project file: a `.mcp.json` that a repository gives. The user did
 //! not write it, and a commit can change it. Thus it has no effect until
-//! the user trusts its exact bytes at its path, as in the paranoid mode of
-//! mise.
+//! the user trusts its exact bytes at its path. A project file can start a
+//! process, so a trust for a path must not cover a changed file.
 //!
 //! Pure functions:
 //! - the search over the folder entries that the caller gives
@@ -20,7 +20,8 @@ use sha2::{Digest as _, Sha256};
 
 use crate::config::UnexpandedEntry;
 
-/// The name of the project file. Claude Code and VS Code read it.
+/// The name of the project file. Other agent tools read the same file, so
+/// one file serves all of them.
 pub const FILE_NAME: &str = ".mcp.json";
 
 /// The largest project file that `ncp` reads. An `mcpServers` map is small. The

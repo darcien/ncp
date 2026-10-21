@@ -1,8 +1,10 @@
 //! The proxy route of an HTTP request, as reqwest takes it.
 //!
 //! reqwest reads the proxy variables, and the manual HTTP and HTTPS proxy
-//! of the macOS system settings, in the order of uv. This module finds the
-//! same route with the same matcher. Thus `-v` and the errors can show the
+//! of the macOS system settings. The variable of the scheme comes first,
+//! then the system settings, then `ALL_PROXY`: a setting for one scheme
+//! comes before a setting for all schemes. This module finds the same route
+//! with the same matcher. Thus `-v` and the errors can show the
 //! route with its source. There is no exception for loopback hosts:
 //! `NO_PROXY` is the only exception list.
 
@@ -262,7 +264,7 @@ mod tests {
     }
 
     #[test]
-    fn the_system_settings_come_before_all_proxy_as_in_uv() {
+    fn the_system_settings_come_before_all_proxy() {
         let vars = env(&[("ALL_PROXY", "http://all.test:1")]);
         let https = route_with_system(&vars, &url("https://a.example/"), "http://sys.test:8080");
         assert_eq!(

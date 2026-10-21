@@ -1,7 +1,8 @@
-//! Edits of a configuration file that keep each byte that `ncp` does not
-//! change: comments, the indent, the order and each unknown key. Pure
-//! functions from the old text to the new text, through a concrete syntax
-//! tree, as `deno add` edits `deno.json`.
+//! Edits of a configuration file or a project file that keep each byte that
+//! `ncp` does not change: comments, the indent, the order and each unknown key.
+//! Pure functions from the old text to the new text, through a concrete
+//! syntax tree. A user keeps comments in these files, and the diff of a
+//! change in a repository must show only the change.
 //!
 //! Lenient when it reads, strict when it writes: the new entry is strict
 //! JSON, and the edit never writes over content that it cannot read.
@@ -19,9 +20,9 @@ pub enum EditError {
     /// uses the last, so `ncp` does not choose.
     #[error("The file has the key {} more than one time", crate::text::code(.0))]
     Duplicate(String),
-    #[error("The file has no server {}", crate::text::code(.0))]
+    #[error("The file has no entry of the server {}", crate::text::code(.0))]
     NotFound(String),
-    #[error("The file already has a server {}", crate::text::code(.0))]
+    #[error("The file already has an entry of the server {}", crate::text::code(.0))]
     Exists(String),
     /// The new text does not parse to the old content with the one change.
     #[error("The edit does not give the expected content")]
@@ -88,8 +89,8 @@ pub fn add(
     finish(text, &root, &expected(old, name, Some(value))).map(Some)
 }
 
-/// Removes the entry by its raw key, so that an invalid entry or a name
-/// outside the name rule can go too.
+/// Removes the entry by its raw key, so that an entry that is not valid or a
+/// name outside the name rule can go too.
 ///
 /// # Errors
 ///

@@ -147,11 +147,11 @@ fn remote(server: &Server) -> Result<&RemoteServer, Failure> {
     match &server.transport {
         Transport::Http(remote) => Ok(remote),
         _ => Err(Failure::usage(format!(
-            "The server {} is a stdio server, and OAuth is only for http servers",
+            "The server {} is a stdio server, and OAuth is only for HTTP servers",
             code(server.name.as_str())
         ))
         .about(server.name.as_str())
-        .hint("Give the credentials of a stdio server in `env`")),
+        .hint("To give credentials to a stdio server, use the `env` field of its entry")),
     }
 }
 
@@ -350,7 +350,7 @@ async fn login(
     let url = session.get_authorization_url().to_string();
     let state = state_of(&url).ok_or_else(|| {
         Failure::protocol(format!(
-            "The authorization URL of rmcp for the server {} has no `state`",
+            "The authorization URL for the server {} has no `state` parameter",
             code(name)
         ))
         .about(name)
@@ -401,7 +401,7 @@ fn show_in_browser(context: &Context<'_>, name: &str, url: &str) {
             ))
             .about(name)
             .caused_by(&error)
-            .hint("Open the URL above in a browser"),
+            .hint("To log in, open the URL above in a browser"),
         );
     }
 }
@@ -456,7 +456,7 @@ async fn hold_tokens_lock(
         Ok(Err(error)) if error.kind() == std::io::ErrorKind::TimedOut => {
             context.ui.warn(
                 &Warning::new(format!(
-                    "ncp goes on with no lock of the tokens of the server {}",
+                    "ncp continues with no lock on the tokens of the server {}",
                     code(server.as_str())
                 ))
                 .about(server.as_str())
@@ -494,7 +494,7 @@ pub(super) fn token_text_failure(server: &Server, text: &str, file_fix: bool) ->
             let failure = Failure::new(
                 exit,
                 format!(
-                    "ncp cannot keep the OAuth tokens of the server {}",
+                    "ncp cannot store the OAuth tokens of the server {}",
                     code(name)
                 ),
             )
@@ -674,7 +674,7 @@ pub(super) fn binding_failure(server: &Server, mismatch: &items::BindingMismatch
     Failure::new(
         Exit::Auth,
         format!(
-            "ncp did not send the stored token of the server {}. ncp did this on purpose.",
+            "ncp did not send the stored tokens of the server {}. ncp did this on purpose.",
             code(name)
         ),
     )
@@ -731,7 +731,7 @@ pub(super) async fn remember_scopes(context: &Context<'_>, server: &Server, erro
     if let Err(failure) = add_required_scopes(context, server, &scopes).await {
         context.ui.warn(
             &Warning::from(failure.context(format!(
-                "ncp cannot keep the scopes of the server {} for the next login",
+                "ncp cannot store the scopes of the server {} for the next login",
                 code(name)
             )))
             .about(name),
@@ -768,7 +768,10 @@ async fn add_required_scopes(
         })?;
         context.ui.debug(
             Some(server.name.as_str()),
-            &format!("kept the scopes {} for the next login", required.join(" ")),
+            &format!(
+                "stored the scopes {} for the next login",
+                required.join(" ")
+            ),
         );
     }
     Ok(())
@@ -883,7 +886,7 @@ impl TokenPlaces {
             (None, Some(error)) => Err(Failure::new(
                 Exit::Auth,
                 format!(
-                    "The credential file has no OAuth tokens of the server {}, and the native store gave none",
+                    "The credential file has no OAuth tokens of the server {}, and ncp cannot use the native store",
                     code(name)
                 ),
             )
@@ -988,14 +991,14 @@ async fn remove_old_tokens(
     match removed {
         Ok(true) => context
             .ui
-            .debug(Some(name), "removed the old tokens of the other place"),
+            .debug(Some(name), "deleted the old tokens from the other store"),
         Ok(false) => {}
         Err(crate::store::StoreError::Interrupted) => {
             return Err(session::interrupted(Some(name)));
         }
         Err(error) => context.ui.warn(
             &Warning::new(format!(
-                "ncp cannot remove the old tokens of the server {} from the other store",
+                "ncp cannot delete the old tokens of the server {} from the other store",
                 code(name)
             ))
             .about(name)
@@ -1054,7 +1057,7 @@ async fn client_request(
         LoginClient::Configured(client) => {
             context
                 .ui
-                .debug(Some(name), "the login uses `oauth.clientId` of the entry");
+                .debug(Some(name), "the login uses oauth.clientId of the entry");
             let request = request.with_preregistered_client(client.client_id.clone());
             Ok(
                 match secrets::client_secret(context, server, client).await? {
@@ -1165,12 +1168,12 @@ fn registration_page(metadata: &AuthorizationMetadata) -> Option<String> {
 }
 
 // "register a client at `I`." and, for an `https` or a loopback `http` URL,
-// the page that tells how. The caller gives the first word its case.
+// the page that gives the steps. The caller gives the first word its case.
 fn register_there(metadata: &AuthorizationMetadata) -> String {
     let issuer = code(&issuer_of(metadata));
     match registration_page(metadata) {
         Some(page) => format!(
-            "register a client at {issuer}. The page {} tells how.",
+            "register a client at {issuer}. The page {} gives the steps.",
             code(&page)
         ),
         None => format!("register a client at {issuer}."),
@@ -1188,8 +1191,8 @@ fn no_registration(name: &str, metadata: &AuthorizationMetadata) -> Failure {
     )
     .about(name)
     .hint(format!(
-        "{} Then set `clientId`, `clientSecret` and `issuer` in the `oauth` object of the server {}.",
-        crate::text::capitalized(&register_there(metadata)),
+        "To log in, {} Then set `clientId`, `clientSecret` and `issuer` in the `oauth` object of the entry of the server {}.",
+        register_there(metadata),
         code(name)
     ))
 }
@@ -1216,7 +1219,10 @@ fn check_issuer(
     } else {
         "`clientId` and `issuer`"
     };
-    let object = format!("the `oauth` object of the server {}", code(name));
+    let object = format!(
+        "the `oauth` object of the entry of the server {}",
+        code(name)
+    );
     let moved = if metadata.registration_endpoint.is_some() {
         format!(
             "If the server moved on purpose, remove {keys} from {object}. Then run `ncp auth login {}`.",
@@ -1298,7 +1304,7 @@ async fn with_server_issuer(
         Ok(Ok(metadata)) => {
             let issuer = issuer_of(&metadata);
             failure.with_hints([Hint::text(format!(
-                "If you registered the client at {}, add {} to the `oauth` object of the server {}",
+                "If you registered the client at {}, add {} to the `oauth` object of the entry of the server {}",
                 code(&issuer),
                 code(&format!("\"issuer\": \"{issuer}\"")),
                 code(name)
@@ -1394,11 +1400,15 @@ async fn redirect_of(
             let _ = stream.write_all(page("200 OK", message).as_bytes()).await;
         }
         Err(error) if error.is_for_this_login() => {
-            let message = format!("The login failed. {}.", crate::text::chain_text(error));
+            let message = format!(
+                "The login failed. {}.",
+                crate::text::chain_text(error).trim_end_matches('.')
+            );
             let _ = stream.write_all(page("200 OK", &message).as_bytes()).await;
         }
         Err(error) => {
-            let message = format!("This redirect is not for the login that waits. {error}.");
+            let message =
+                format!("This redirect is not for the login that ncp waits for. {error}.");
             let _ = stream
                 .write_all(page("400 Bad Request", &message).as_bytes())
                 .await;
@@ -1506,11 +1516,11 @@ async fn logout(context: &Context<'_>, word: &str) -> Result<(), Failure> {
         .collect();
     context.ui.result(
         || match removed.as_slice() {
-            [] => format!("No tokens of {name} were stored.\n"),
+            [] => format!("ncp found no stored tokens of {name}.\n"),
             places => {
                 let names: Vec<&str> = places.iter().map(|p| secrets::place_text(*p)).collect();
                 format!(
-                    "Removed the tokens of {name} from {}.\n",
+                    "Deleted the tokens of {name} from {}.\n",
                     names.join(" and ")
                 )
             }
@@ -1711,7 +1721,7 @@ async fn status(context: &Context<'_>, word: Option<&str>) -> Result<(), Failure
 
 fn status_text(rows: &[(String, items::Status)]) -> String {
     if rows.is_empty() {
-        return "No http server is configured.\n".to_string();
+        return "No HTTP server is configured.\n".to_string();
     }
     let table: Vec<Vec<String>> = rows
         .iter()
@@ -1748,7 +1758,8 @@ mod tests {
         let server = config.server("web").unwrap();
         let resource = binding_failure(server, &items::BindingMismatch::Resource);
         assert!(
-            resource.message().contains("on purpose"),
+            resource.message().contains("did not send")
+                && resource.message().contains("on purpose"),
             "{}",
             resource.message()
         );
@@ -1760,6 +1771,7 @@ mod tests {
         );
         for failure in [&resource, &issuer] {
             assert!(!failure.message().contains("k3y"), "{}", failure.message());
+            assert!(failure.message().contains("did not send"));
             assert!(failure.message().contains("on purpose"));
         }
     }

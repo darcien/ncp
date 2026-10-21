@@ -312,7 +312,7 @@ fn unset_variable_in_args_gives_a_usage_error_with_the_fix() {
     assert_eq!(
         run.hints(),
         [
-            "ncp puts a stored secret only into `env` and `headers` values. To set the variable, \
+            "ncp puts a stored secret only into `env`, `headers` and `oauth.clientSecret` values. To set the variable, \
           run `export FIXTURE_MODE=<value>`. Then run the command again."
         ]
     );
@@ -338,7 +338,7 @@ fn name_that_no_place_has_names_the_secret_set_command() {
     let error = run.error();
     assert_eq!(
         error["message"],
-        "The variable `FIXTURE_TOKEN` is not set, and no store has a value for stdio servers. \
+        "The variable `FIXTURE_TOKEN` is not set, and no credential store has a value for stdio servers. \
          ncp did not start the server `fx`."
     );
     assert_eq!(
@@ -538,7 +538,7 @@ fn secret_set_stops_when_a_pipe_gives_no_value_in_the_time_limit() {
     assert_eq!(run.code(), 3, "{}", run.describe());
     // The exit does not wait for the read that is still open.
     assert!(started.elapsed() < std::time::Duration::from_millis(2500));
-    assert_eq!(run.error()["message"], "No value of `A` came in 1 s");
+    assert_eq!(run.error()["message"], "ncp got no value of `A` in 1 s");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -587,7 +587,7 @@ async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
     let error = run.error();
     assert_eq!(
         error["message"],
-        "The entries give `${K}` more than one destination:"
+        "The servers use `${K}` for more than one destination:"
     );
     let data = error["data"].to_string();
     assert!(data.contains(&web) && data.contains(&other), "{data}");
@@ -609,7 +609,7 @@ async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
     assert_eq!(
         error["message"],
         format!(
-            "The variable `K` is not set, and no store has a value for `{other}`. \
+            "The variable `K` is not set, and no credential store has a value for `{other}`. \
              ncp sent nothing to the server `other`."
         )
     );
@@ -643,7 +643,7 @@ async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
     let error = run.error();
     assert_eq!(
         error["message"],
-        "ncp deleted nothing, because the stores have items of `K` for more than one destination:"
+        "ncp deleted nothing, because the credential stores have items of `K` for more than one destination:"
     );
     assert_eq!(error["data"], json!([web, other]));
     let run = home.run(&["secret", "delete", "K", "--server", "other"]);
@@ -661,7 +661,10 @@ async fn stored_header_value_goes_only_to_the_origin_of_its_key() {
     assert_eq!(run.stdout()["deleted"][0]["destination"], web.as_str());
     let run = home.run(&["secret", "delete", "K", "--all"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["message"], "No store has an item of `K`");
+    assert_eq!(
+        run.error()["message"],
+        "No credential store has an item of `K`"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -704,7 +707,7 @@ fn secret_set_with_no_entry_tells_the_user_to_add_it_first() {
     );
     assert_eq!(
         run.hints(),
-        ["Add an entry that names `${A}` first. Then run the command again."]
+        ["To store the value, add an entry that names `${A}` first. Then run the command again."]
     );
 }
 
@@ -892,8 +895,9 @@ fn a_bad_reference_and_an_expanded_scheme_do_not_show_their_text() {
     let run = home.run(&["tool", "list", "typo"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert!(
-        run.hints()
-            .contains(&"ncp supports only `${NAME}` and `${env:NAME}`".to_string()),
+        run.hints().contains(
+            &"ncp supports only `${NAME}` and `${env:NAME}`. Use one of these forms.".to_string()
+        ),
         "{}",
         run.describe()
     );
@@ -1248,7 +1252,10 @@ fn secret_commands_work_with_no_native_store_and_no_noise() {
     );
     let run = home.run(&["secret", "delete", "TYPO"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["message"], "No store has an item of `TYPO`");
+    assert_eq!(
+        run.error()["message"],
+        "No credential store has an item of `TYPO`"
+    );
 }
 
 #[test]
@@ -1283,7 +1290,10 @@ fn name_used_only_in_args_is_not_used_and_names_the_rule() {
     let run = home.run(&["tool", "list", "fx"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     let hint = run.hints()[0].clone();
-    assert!(hint.contains("only into `env` and `headers`"), "{hint}");
+    assert!(
+        hint.contains("only into `env`, `headers` and `oauth.clientSecret`"),
+        "{hint}"
+    );
 }
 
 #[test]
@@ -1751,7 +1761,7 @@ async fn preregistered_client_id_comes_before_the_metadata_document() {
     assert_eq!(record.register_calls, 0);
     assert_eq!(record.token_client_id.as_deref(), Some("pre-1"));
     assert!(
-        debug_messages(&run).contains(&"the login uses `oauth.clientId` of the entry".into()),
+        debug_messages(&run).contains(&"the login uses oauth.clientId of the entry".into()),
         "{}",
         run.describe()
     );
@@ -1851,7 +1861,7 @@ async fn login_stops_before_the_browser_when_the_server_names_another_issuer() {
     assert_eq!(run.code(), 4, "{}", run.describe());
     let error = run.error();
     let message = error["message"].as_str().unwrap();
-    assert!(message.contains("on purpose"), "{message}");
+    assert!(message.contains("stopped the login"), "{message}");
     assert!(message.contains(&auth.issuer()) && message.contains("https://as.example"));
     assert!(
         message.contains("did not send the client secret"),
@@ -2160,7 +2170,7 @@ async fn stored_token_with_no_binding_is_not_sent_until_a_new_login() {
         run.error()["message"]
             .as_str()
             .unwrap()
-            .contains("on purpose")
+            .contains("did not send")
     );
     assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
     let run = home.run(&["tool", "list", "web"]);
@@ -3084,7 +3094,7 @@ fn refresh_gets_the_list_again_and_keeps_it() {
     assert_eq!(home.run(&["--refresh", "tool", "list", "fx"]).code(), 0);
     assert!(started.exists(), "--refresh must start the server");
     assert_ne!(std::fs::read_to_string(&cache).unwrap(), before);
-    // As in uv, --no-cache wins over --refresh: `ncp` writes nothing.
+    // --no-cache has priority over --refresh: `ncp` writes nothing.
     let before = std::fs::read_to_string(&cache).unwrap();
     assert_eq!(
         home.run(&["--refresh", "--no-cache", "tool", "list", "fx"])

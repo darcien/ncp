@@ -199,7 +199,7 @@ impl CredentialStore for SecurityStore {
                 Loaded::Absent => Ok(None),
                 Loaded::PartMissing => Err(StoreError::Failure(
                     format!(
-                        "The item {} is kept in parts, and a part is missing",
+                        "The item {} is stored in parts, and a part is missing",
                         code(&account)
                     )
                     .into(),

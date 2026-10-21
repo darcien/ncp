@@ -143,7 +143,7 @@ fn yes_at_the_question_trusts_the_file_and_runs_the_entry() {
         stderr.contains("is not trusted. It has these servers:"),
         "{stderr}"
     );
-    assert!(stderr.contains("Trust? [y/N]"), "{stderr}");
+    assert!(stderr.contains("Trust this file? [y/N]"), "{stderr}");
     let run = home.unset("NCP_TEST_TTY").run(&["trust", "--show"]);
     assert_eq!(run.stdout()["trust"], "trusted");
 }
@@ -620,9 +620,9 @@ fn delete_unused_stops_when_an_untrusted_entry_names_the_secret() {
     );
     let run = home.run(&["secret", "list"]);
     assert!(
-        messages(&run, "hint")
-            .iter()
-            .any(|hint| hint.contains("A project in another folder can still use the item")),
+        messages(&run, "hint").iter().any(|hint| hint.contains(
+            "To check a project in another folder, run `ncp secret list` in that folder"
+        )),
         "{}",
         run.describe()
     );

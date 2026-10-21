@@ -68,9 +68,9 @@ impl Entry {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AddError {
-    #[error("`--header` is only for an http entry")]
+    #[error("`--header` is only for an HTTP server")]
     HeaderOnStdio,
-    #[error("`--env` is only for a stdio entry")]
+    #[error("`--env` is only for a stdio server")]
     EnvOnRemote,
     #[error("The `--header` number {0} has no valid field name before `:`")]
     HeaderName(usize),
@@ -92,7 +92,7 @@ pub enum AddError {
     #[error("The command after `--` is empty")]
     EmptyCommand,
     #[error(
-        "The value of the header {} must be `${{NAME}}` or `<scheme> ${{NAME}}`, so that it comes from a store",
+        "The value of the header {} must be `${{NAME}}` or `<scheme> ${{NAME}}`, so that the value comes from the environment or a credential store",
         code(.0)
     )]
     CredentialHeader(String),
@@ -231,8 +231,8 @@ fn is_credential_template(value: &str) -> bool {
 }
 
 // `--env NAME` writes `"NAME": "${NAME}"`: the short form is the safe
-// form, as `docker run -e NAME`. `--env NAME=VALUE` writes the value as
-// the user gives it.
+// form, because the value stays out of the file and out of the shell
+// history. `--env NAME=VALUE` writes the value as the user gives it.
 fn env(flags: &[String]) -> Result<Map<String, Value>, AddError> {
     flags
         .iter()

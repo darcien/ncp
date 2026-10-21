@@ -21,10 +21,10 @@ use crate::{config::Target, private_file, server::ServerName};
 #[serde(rename_all = "camelCase")]
 pub struct CachedTools {
     /// The target as the file writes it. A changed target makes the list
-    /// invalid.
+    /// stale.
     pub target: Target,
     /// A digest of the entry as the file writes it: a changed `env`,
-    /// `headers` or `oauth.clientId` makes the list invalid.
+    /// `headers` or `oauth.clientId` makes the list stale.
     pub entry: u64,
     /// Milliseconds since the Unix epoch.
     pub fetched_at_ms: u64,

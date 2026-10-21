@@ -176,7 +176,7 @@ fn request(args: &AddArgs) -> Result<Request, Failure> {
                 "`ncp server add` needs a URL or a command after `--`, but not both",
             )
             .hint(Hint::run_text(
-                "add an http server",
+                "add an HTTP server",
                 "ncp server add <SERVER> <URL>",
             ))
             .hint(Hint::run_text(
@@ -221,7 +221,8 @@ fn add_failure(name: &str, error: &AddError) -> Failure {
 }
 
 fn two_files() -> Failure {
-    Failure::usage("`--global` and `--config-file` name two files").hint("Give one of them")
+    Failure::usage("`--global` and `--config-file` name two files")
+        .hint("Use `--global` or `--config-file`, but not both")
 }
 
 // The command must change the same file, so a named file keeps its
@@ -245,8 +246,8 @@ fn global_hint() -> Hint {
 
 // `server add` writes to the project file. It writes to the global file
 // with `--global`, with `--config-file`, or in the home folder. With no
-// project file, it makes `.mcp.json` in the current folder, as `mise use`
-// does.
+// project file, it makes `.mcp.json` in the current folder, because the
+// project is the place that a team shares.
 async fn add_target(
     context: &Context<'_>,
     loaded: &Loaded,
@@ -318,9 +319,10 @@ fn read(file: &Path) -> Result<Option<String>, Failure> {
     }
 }
 
-// `ncp` writes only a trusted project file, as `mise use` checks the
-// trust before it writes. With a TTY, an untrusted file gets the question:
-// a Yes trusts it, and a No writes the ignored record and stops.
+// `ncp` writes only a trusted project file, because a change to a file that
+// the user did not check can add a command that `ncp` then starts. With a
+// TTY, an untrusted file gets the question: a Yes trusts it, and a No writes
+// the ignored record and stops.
 async fn trusted_for_write(context: &Context<'_>, project: &Project) -> Result<(), Failure> {
     let file = path_code(&project.file);
     match project.trust {
@@ -333,7 +335,7 @@ async fn trusted_for_write(context: &Context<'_>, project: &Project) -> Result<(
             context
                 .ui
                 .diagnostic(&format!("{}\n", render::project_question(project)));
-            match ask::confirm(context, "Trust? [y/N] ").await? {
+            match ask::confirm(context, "Trust this file? [y/N] ").await? {
                 Some(true) => {
                     project_file::change(&context.paths, project, Change::Trust).map(|_| ())
                 }
@@ -657,7 +659,7 @@ fn warn_about_other_file(
             .and_then(|text| config_edit::entry(&text, name).ok().flatten())
             .map(|_| {
                 format!(
-                    "The global file {} also has the server {}. The entry in {} takes effect in this folder.",
+                    "The global file {} also has an entry of the server {}. The entry in {} takes effect in this folder.",
                     path_code(global),
                     code(name),
                     path_code(&target.file)
@@ -665,7 +667,7 @@ fn warn_about_other_file(
             }),
         Scope::Global { .. } => view.and_then(|view| view.project_of(name)).map(|project| {
             format!(
-                "The project file {} also has the server {}. Its entry takes effect in this folder.",
+                "The project file {} also has an entry of the server {}. Its entry takes effect in this folder.",
                 path_code(&project.file),
                 code(name)
             )
@@ -755,7 +757,7 @@ pub async fn remove(context: &Context<'_>, name: &str, global: bool) -> Result<(
                 ),
             };
             return Err(Failure::usage(format!(
-                "The global file has no server {}, but {} has it",
+                "The global file has no entry of the server {}, but {} has one",
                 code(name),
                 path_code(&project.file)
             ))
@@ -814,7 +816,7 @@ fn report_removed(
                 Some(format!("Removed {name} from {}.", target.file.display())),
                 still.map(|still| format!("OAuth tokens of {name}, if any, stay: {still}.")),
                 (!removed.is_empty()).then(|| format!(
-                    "Removed the OAuth tokens of {name} from {}. A project in another folder with the same entry needs a new login.",
+                    "Deleted the OAuth tokens of {name} from {}. A project in another folder with the same entry needs a new login.",
                     removed.join(" and ")
                 )),
                 tokens.kept.then(|| format!(
@@ -876,7 +878,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn remove_follows_the_table_of_the_design() {
+    fn remove_picks_the_file_from_the_trust_state_and_the_files_with_the_name() {
         let untrusted = Some(Trust::Untrusted { changed: false });
         let cases = [
             (Some(Trust::Trusted), false, false, Place::Project),

@@ -664,7 +664,9 @@ fn add_global_warns_when_a_trusted_project_entry_has_the_name() {
     assert_eq!(run.code(), 0, "{}", run.describe());
     let warning = run.warnings()[0]["message"].as_str().unwrap().to_string();
     assert!(
-        warning.ends_with("also has the server `web`. Its entry takes effect in this folder."),
+        warning.ends_with(
+            "also has an entry of the server `web`. Its entry takes effect in this folder."
+        ),
         "{warning}"
     );
 }
@@ -871,7 +873,7 @@ fn a_url_with_a_wrong_path_gives_a_hint_at_the_first_connect() {
         run.hints(),
         [
             "The server has no MCP endpoint at the path of the URL. Many servers use `/mcp`. \
-          Examine the path in the entry."
+             Examine the path in the entry."
         ]
     );
 }

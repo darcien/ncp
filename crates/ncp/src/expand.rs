@@ -1,7 +1,7 @@
 //! `${VAR}` expansion in configuration values.
 //!
-//! `ncp` supports only `${VAR}` and `${env:VAR}`. Cursor, Cline and Windsurf
-//! write the second form, so their files load with no change. Other forms can
+//! `ncp` supports only `${VAR}` and `${env:VAR}`. Other agent tools write
+//! the second form, so their files load with no change. Other forms can
 //! run commands or ask for input. They are errors, so the configuration never
 //! runs code.
 

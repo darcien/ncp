@@ -54,7 +54,8 @@ use crate::{
 };
 
 /// The time that `server/discover` gets before the fallback to
-/// `initialize`. It is the value of rmcp.
+/// `initialize`. The MCP SDK uses the same default time, so a server gets
+/// the same time from `ncp` as from a client with the SDK default.
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The limit of the whole connect: the server start, the probe, and
@@ -145,7 +146,7 @@ pub enum ConnectError {
     Timeout(Duration),
     #[error("ncp stopped the connection because of an interrupt")]
     Cancelled,
-    #[error("ncp has no HTTP client for an http server")]
+    #[error("ncp has no HTTP client for an HTTP server")]
     NoHttpClient,
     #[error("The process {} stopped with {}", code(command), code(status))]
     Exited { command: String, status: String },
@@ -161,7 +162,7 @@ pub enum RequestError {
     Timeout(Duration),
     #[error("The server sent a result of the wrong type")]
     UnexpectedResult,
-    #[error("The server sent a page cursor again, so the list has no end")]
+    #[error("The server sent a page cursor that it sent before, so the list does not end")]
     RepeatedCursor,
 }
 
@@ -407,7 +408,7 @@ impl rmcp::ClientHandler for Handler {
             // the client did not declare gets "Invalid params".
             self.refused.store(true, Ordering::SeqCst);
             return Err(rmcp::ErrorData::invalid_params(
-                "the client declared no elicitation: it has no terminal to ask",
+                "ncp declared no elicitation, because it has no terminal",
                 None,
             ));
         };

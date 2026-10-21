@@ -660,9 +660,13 @@ async fn resource_list(context: &Context<'_>, word: &str) -> Result<(), Failure>
     })
     .await?;
     let (resources, templates) = found.unwrap_or_else(|| {
+        let show = Hint::run(
+            "see what the server offers",
+            format!("ncp server show {}", render::shell_word(name)),
+        );
         context.ui.hint(
             Some(name),
-            &Hint::text(format!(
+            &show.after(&format!(
                 "The server {} offers no resources in its handshake",
                 code(name)
             )),
@@ -737,7 +741,21 @@ async fn resource_read(context: &Context<'_>, word: &str, uri: &str) -> Result<(
     }
     context
         .ui
-        .result(|| render::resource_contents(&value), || value.clone())
+        .result(|| render::resource_contents(&value), || value.clone())?;
+    // The text shows a blob as a placeholder. The fix is a hint on stderr,
+    // one time for all blobs, so that stdout holds only the result.
+    let has_blob = value["contents"]
+        .as_array()
+        .is_some_and(|contents| contents.iter().any(|content| content.get("blob").is_some()));
+    if context.ui.format == ui::Format::Text && has_blob {
+        context.ui.hint(
+            None,
+            &Hint::text(
+                "To get the bytes of a blob, run the command again with `--output-format text` and send stdout to a file",
+            ),
+        );
+    }
+    Ok(())
 }
 
 // The one content of a resource as bytes: the text, or the decoded blob.
@@ -787,7 +805,7 @@ fn input_required(
     Err(Failure::new(
         Exit::InputRequired,
         format!(
-            "The server {} asks for more input for {what}, and ncp cannot give it yet",
+            "The server {} asks for more input for {what}, and ncp cannot give it",
             code(server)
         ),
     )
@@ -810,9 +828,13 @@ async fn prompt_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
     })
     .await?
     .unwrap_or_else(|| {
+        let show = Hint::run(
+            "see what the server offers",
+            format!("ncp server show {}", render::shell_word(name)),
+        );
         context.ui.hint(
             Some(name),
-            &Hint::text(format!(
+            &show.after(&format!(
                 "The server {} offers no prompts in its handshake",
                 code(name)
             )),
@@ -930,7 +952,7 @@ async fn read_stdin_object(context: &Context<'_>) -> Result<JsonObject, Failure>
     if std::io::stdin().is_terminal() {
         context.ui.hint(
             None,
-            &Hint::text("ncp reads the JSON arguments from stdin. To end the input, push Ctrl-D."),
+            &Hint::text("ncp reads the JSON arguments from stdin. To end the input, press Ctrl-D."),
         );
     }
     let mut text = String::new();
@@ -1041,7 +1063,7 @@ fn print_response(
             failure(
                 Exit::InputRequired,
                 format!(
-                    "The tool {tool} of the server {} asks for more input, and ncp cannot give it yet",
+                    "The tool {tool} of the server {} asks for more input, and ncp cannot give it",
                     code(server)
                 ),
             )

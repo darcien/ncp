@@ -73,7 +73,7 @@ pub fn object(text: &str) -> Result<JsonObject, ArgumentError> {
     match serde_json::from_str::<Value>(text) {
         Ok(Value::Object(map)) => Ok(map),
         Ok(_) => Err(ArgumentError::NotObject(crate::config::ParserText(
-            "The text is another JSON value".into(),
+            "The text is a JSON value that is not an object".into(),
         ))),
         Err(error) => Err(ArgumentError::NotObject(crate::config::ParserText(
             error.to_string(),
@@ -102,7 +102,9 @@ fn pair(word: &str) -> Result<Pair, ArgumentError> {
     if key.is_empty() {
         return Err(ArgumentError::EmptyKey(word.to_string()));
     }
-    // An older form: a key that ends in `:` goes out with a wrong name.
+    // A word as `n:=12` has the key `n:`. `ncp` has no `key:=json` form,
+    // because the input schema gives the type of each value. It names the
+    // form instead of sending a wrong key to the server.
     if key.ends_with(':') {
         return Err(ArgumentError::JsonPair(word.to_string()));
     }

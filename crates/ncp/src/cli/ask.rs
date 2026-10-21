@@ -391,7 +391,8 @@ impl<T> Rounds for crate::client::Answer<T> {
     }
 }
 
-/// A yes or no question with No as the default, as `mise trust` asks.
+/// A yes or no question with No as the default, so that an empty line never
+/// gives a trust.
 /// `None`: no answer (the end of stdin or the time limit).
 ///
 /// # Errors

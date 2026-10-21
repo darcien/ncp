@@ -1,11 +1,14 @@
 //! The configuration model: the common `mcpServers` JSON core.
 //!
-//! The files are JSONC: JSON with comments and trailing commas, as VS Code
-//! and Zed read them. No checked tool reads JSON5, so its forms are errors.
+//! The files are JSONC: JSON with comments and trailing commas, because
+//! editors and agent tools write these. The other forms of JSON5 are
+//! errors, because the other tools do not read them, and a file must mean
+//! the same to each tool.
 //!
 //! Other agent tools write the same shape, so `ncp` reads their files too.
-//! Unknown keys give warnings and not errors. An invalid entry does not stop
-//! the other entries: its error shows when the user selects that server.
+//! Unknown keys give warnings and not errors. An entry that is not valid does
+//! not stop the other entries: its error shows when the user selects that
+//! server.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -34,7 +37,8 @@ const STDIO_KEYS: [&str; 5] = ["type", "command", "args", "env", "cwd"];
 const REMOTE_KEYS: [&str; 4] = ["type", "url", "headers", "oauth"];
 /// The keys of the `oauth` object that `ncp` reads. `ncp` adds a key only
 /// when a real server or an official conformance scenario can test it.
-/// `authorizationServer` is the key of Claude Desktop for the issuer.
+/// `ncp` reads `authorizationServer` as the issuer, because other agent
+/// tools write the issuer with this key.
 const OAUTH_KEYS: [&str; 4] = ["clientId", "clientSecret", "issuer", "authorizationServer"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,7 +303,7 @@ pub enum EntryError {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LookupError {
-    #[error("The configuration has no server {}", code(.0))]
+    #[error("No server {} is configured", code(.0))]
     NotFound(String),
     #[error("The entry of the server {} is not valid", code(.name))]
     Invalid {
@@ -319,7 +323,7 @@ pub struct Config {
 impl Config {
     /// # Errors
     ///
-    /// Returns an error for an unknown name or an invalid entry.
+    /// Returns an error for an unknown name or an entry that is not valid.
     pub fn server(&self, name: &str) -> Result<&Server, LookupError> {
         match self.entries.get(name) {
             None => Err(LookupError::NotFound(name.to_string())),
@@ -355,8 +359,8 @@ impl Config {
     }
 
     /// After a trust, each project entry replaces the global entry of the
-    /// same name as a whole. There is no merge of fields, as in mise for a
-    /// tool.
+    /// same name as a whole. There is no merge of fields, because a merge can
+    /// send a value of the global entry to the server of the project entry.
     #[must_use]
     pub fn with_project(self, project: Self) -> Self {
         // A global entry that a project entry replaces does not run, so its
@@ -385,8 +389,8 @@ impl Config {
     }
 
     /// The names of all `${NAME}` in `env` and `headers` values and in
-    /// `oauth.clientSecret`, also in invalid entries. Only these values can
-    /// come from a store.
+    /// `oauth.clientSecret`, also in entries that are not valid. Only these
+    /// values can come from a store.
     #[must_use]
     pub fn variables(&self) -> &BTreeSet<String> {
         &self.variables

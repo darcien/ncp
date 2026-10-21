@@ -330,8 +330,10 @@ impl<C: StreamableHttpClient + Sync> StreamableHttpClient for ObservedHttp<C> {
         let request =
             self.inner
                 .delete_session(uri.clone(), session_id, auth_header, custom_headers);
-        self.observed("DELETE", &uri, headers, request, |()| "done".to_string())
-            .await
+        self.observed("DELETE", &uri, headers, request, |()| {
+            "session closed or not supported".to_string()
+        })
+        .await
     }
 
     async fn get_stream(
