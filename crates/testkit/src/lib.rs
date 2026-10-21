@@ -386,7 +386,8 @@ impl ServerHandler for Fixture {
             }
             Some(_) => ListResourcesResult::with_all_items(vec![
                 Resource::new("fixture://logo", "logo").with_mime_type("image/png"),
-                Resource::new("fixture://pair", "pair").with_description("Two contents"),
+                Resource::new("fixture://pair", "pair")
+                    .with_description("Two contents: a text and a blob"),
                 Resource::new("fixture://ask", "ask").with_description("Asks for input"),
             ]),
         };
@@ -416,12 +417,25 @@ impl ServerHandler for Fixture {
                 InputRequiredResult::from_request_state("state-r"),
             )));
         }
-        if uri == "fixture://pair" {
+        // Several contents. The blob of `fixture://broken` is not base64.
+        let several = match uri.as_str() {
+            "fixture://pair" => Some(vec![
+                ResourceContents::text("one", uri.as_str()),
+                ResourceContents::blob("iVBORw0KGgo=", uri.as_str()).with_mime_type("image/png"),
+            ]),
+            "fixture://lines" => Some(vec![
+                ResourceContents::text("a\n", uri.as_str()),
+                ResourceContents::text("b\n", uri.as_str()),
+            ]),
+            "fixture://broken" => Some(vec![
+                ResourceContents::text("one", uri.as_str()),
+                ResourceContents::blob("not base64!", uri.as_str()),
+            ]),
+            _ => None,
+        };
+        if let Some(contents) = several {
             return std::future::ready(Ok(ReadResourceResponse::Complete(
-                ReadResourceResult::new(vec![
-                    ResourceContents::text("one", uri.as_str()),
-                    ResourceContents::text("two", uri.as_str()),
-                ]),
+                ReadResourceResult::new(contents),
             )));
         }
         let contents = match uri.as_str() {

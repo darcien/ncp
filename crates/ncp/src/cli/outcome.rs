@@ -327,7 +327,7 @@ struct Extra {
     login_challenge: Option<String>,
     /// The pages that the server asks the user to open before it can
     /// answer. A person at a TTY can open them. An agent gets them in the
-    /// JSON error.
+    /// error.
     pages: Box<[Page]>,
     /// The destination of a stored value that no place has.
     destination: Option<Destination>,

@@ -734,46 +734,46 @@ async fn resource_read(context: &Context<'_>, word: &str, uri: &str) -> Result<(
         }
     };
     let value = serde_json::to_value(&result).unwrap_or(Value::Null);
-    // A pipe gets JSON, as from each command. `--output-format text` in a
-    // pipe gives the contents as they are, for example into a file.
-    if context.ui.format == ui::Format::Text && !std::io::stdout().is_terminal() {
+    // Text in a pipe is the contents as they are, for example into a file.
+    if context.ui.format == ui::Format::Text && context.ui.stdout == ui::Stdout::Pipe {
         return ui::write_stdout_bytes(&raw_contents(name, &value)?);
     }
     context
         .ui
         .result(|| render::resource_contents(&value), || value.clone())?;
     // The text shows a blob as a placeholder. The fix is a hint on stderr,
-    // one time for all blobs, so that stdout holds only the result.
-    let has_blob = value["contents"]
+    // one time for all blobs, so that stdout holds only the result. A file
+    // gets several contents with no borders between them, so the bytes of
+    // a blob are usable only from a single content.
+    let contents = value["contents"]
         .as_array()
-        .is_some_and(|contents| contents.iter().any(|content| content.get("blob").is_some()));
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let has_blob = contents.iter().any(|content| content.get("blob").is_some());
     if context.ui.format == ui::Format::Text && has_blob {
-        context.ui.hint(
-            None,
-            &Hint::text(
-                "To get the bytes of a blob, run the command again with `--output-format text` and send stdout to a file",
-            ),
-        );
+        let hint = match contents {
+            [_] => "To get the bytes of a blob, run the command again and send stdout to a file",
+            _ => "To get the blobs as base64, run the command again with `--output-format json`",
+        };
+        context.ui.hint(None, &Hint::text(hint));
     }
     Ok(())
 }
 
-// The one content of a resource as bytes: the text, or the decoded blob.
-// Several contents have no raw form, because the bytes alone lose their
-// borders and types.
+// The contents of a resource as bytes, one after the other: the text, or
+// the decoded blob of each content.
 fn raw_contents(server: &str, result: &Value) -> Result<Vec<u8>, Failure> {
-    let contents = result
+    result
         .get("contents")
         .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
-    let [content] = contents else {
-        return Err(Failure::usage(format!(
-            "The resource has {} contents, and text output shows only one",
-            contents.len()
-        ))
-        .hint("To get all the contents, run the command again with `--output-format json`"));
-    };
+        .into_iter()
+        .flatten()
+        .map(|content| content_bytes(server, content))
+        .collect::<Result<Vec<_>, _>>()
+        .map(|parts| parts.concat())
+}
+
+fn content_bytes(server: &str, content: &Value) -> Result<Vec<u8>, Failure> {
     if let Some(text) = content.get("text").and_then(Value::as_str) {
         return Ok(text.as_bytes().to_vec());
     }

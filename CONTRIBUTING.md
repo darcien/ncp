@@ -64,15 +64,20 @@ secrets are stored or handled needs the maintainer.
 
 - Choose in this order: the MCP spec, secure by default, good ergonomics,
   the practice of uv and mise, the simplest design.
-- One CLI for people and agents: text on a TTY, JSON in a pipe.
-  `--output-format` sets the format. Results go to stdout. All other output
-  goes to stderr. JSON copies MCP objects with no change. The JSON keys and
-  types are stable (see `docs/release.md`). The strings of a message, a
-  cause and a hint are text: they can change in a release.
+- One CLI for people and agents. The output is text, on a TTY and in a
+  pipe, so that one command gives the same format in a terminal and in a
+  pipe. JSON comes only from `--output-format json`: one JSON value on
+  stdout, and JSON Lines on stderr. Interactive text on stderr is plain
+  text, also with `--output-format json` (see STYLE.md, "Plain text"). The
+  TTY sets only the layout of JSON on stdout: indented on a TTY, one line
+  in a pipe. Results go to stdout.
+  All other output goes to stderr. JSON copies MCP objects with no change.
+  The JSON keys and types are stable (see `docs/release.md`). The strings
+  of a message, a cause and a hint are text: they can change in a release.
 - Five outputs follow no format rule. `--help` and `--version` write the
   text of clap to stdout, also in a pipe. `generate-shell-completion`
-  writes the script to stdout. `resource read --output-format text` in a
-  pipe writes the raw bytes of the contents. `tool call --help` writes the
+  writes the script to stdout. `resource read` with text output in a pipe
+  writes the raw bytes of the contents. `tool call --help` writes the
   long help to stdout.
 - `ncp` does not wrap lines, on a terminal or in a pipe. The terminal and
   the reader know their own width. The help text is the exception: its
@@ -94,7 +99,8 @@ secrets are stored or handled needs the maintainer.
   documents. They describe v0.1.0. Do not take a task, an order or a
   design from them.
 - Exception: each MUST rule of `docs/requirements.md` stays in force until
-  a permanent document replaces it. When the code does not obey a MUST
+  a permanent document replaces it. The output formats in "Command-line
+  principles" replace the rule I1. When the code does not obey a MUST
   rule, the code has a defect. For each other difference between the code
   and an MVP document, the code is correct.
 - In code, tests and comments, do not cite an MVP document, an `ncp` RFC

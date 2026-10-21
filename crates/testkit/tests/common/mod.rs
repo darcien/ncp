@@ -1,7 +1,8 @@
 //! Helpers for the tests that run the `ncp` binary.
 //!
 //! Each test runs the binary with a clean environment, its own `HOME` and
-//! XDG directories, and no proxy. stdout is a pipe, so the output is JSON.
+//! XDG directories, and no proxy. stdout is a pipe. The output is JSON,
+//! because `Home::run` adds `--output-format json`.
 
 // Each test file uses only some of the helpers.
 #![allow(dead_code)]
@@ -146,7 +147,28 @@ impl Home {
         self.run_program(Path::new(NCP), args, stdin)
     }
 
+    /// Runs `ncp` with `--output-format json`, because the tests read JSON.
+    /// A test of text gives `--output-format text` itself. A completion
+    /// command of the shell scripts takes no options.
     pub fn run_program(&self, program: &Path, args: &[&str], stdin: &str) -> Run {
+        let json = !args.iter().any(|arg| arg.starts_with("--output-format"))
+            && !args
+                .first()
+                .is_some_and(|arg| arg.starts_with("__complete-"));
+        let format: &[&str] = if json {
+            &["--output-format", "json"]
+        } else {
+            &[]
+        };
+        self.spawn(program, &[format, args].concat(), stdin)
+    }
+
+    /// Runs `ncp` with no `--output-format`, as a user who gives none.
+    pub fn run_with_default_format(&self, args: &[&str]) -> Run {
+        self.spawn(Path::new(NCP), args, "")
+    }
+
+    fn spawn(&self, program: &Path, args: &[&str], stdin: &str) -> Run {
         use std::io::Write as _;
         let mut child = self
             .command(program)

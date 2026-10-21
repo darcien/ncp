@@ -122,6 +122,8 @@ fn ctrl_c_during_a_request_sends_cancel_stops_the_server_and_exits_130() {
     let marker_arg = format!("marker={}", marker.display());
     let started_arg = format!("started={}", started.display());
     let child = home.spawn(&[
+        "--output-format",
+        "json",
         "tool",
         "call",
         "fx",

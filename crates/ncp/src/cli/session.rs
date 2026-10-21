@@ -1227,6 +1227,7 @@ mod tests {
             Ui::new(
                 super::super::ui::Format::Json,
                 super::super::ui::Verbosity::Normal,
+                super::super::ui::Stdout::Pipe,
             ),
         )
         .unwrap_err();

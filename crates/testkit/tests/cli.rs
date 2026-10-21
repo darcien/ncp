@@ -1,7 +1,8 @@
 //! Tests of the `ncp` command line against local fixture servers.
 //!
 //! Each test runs the binary with a clean environment and its own `HOME`
-//! and XDG directories. stdout is a pipe, so the output is JSON.
+//! and XDG directories. stdout is a pipe. The output is JSON, because
+//! `Home::run` adds `--output-format json`.
 
 // Test code can use unwrap: a panic is a test failure.
 #![allow(clippy::unwrap_used)]
@@ -516,6 +517,8 @@ fn secret_set_stops_when_a_pipe_gives_no_value_in_the_time_limit() {
     home.configure(&json!({"s": {"command": "s", "env": {"A": "${A}"}}}));
     let mut child = Command::new(NCP)
         .args([
+            "--output-format",
+            "json",
             "--timeout",
             "1",
             "secret",
@@ -963,9 +966,17 @@ fn server_that_cannot_start_exits_with_3() {
 }
 
 #[test]
-fn usage_error_from_the_parser_is_a_json_error_in_a_pipe() {
+fn usage_error_from_the_parser_is_clap_text_or_a_json_error_on_request() {
     let home = Home::new("parse-error");
-    let run = home.run(&["tool", "frob"]);
+    let run = home.run_with_default_format(&["tool", "frob"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert!(
+        run.stderr_text()
+            .starts_with("error: unrecognized subcommand 'frob'"),
+        "{}",
+        run.describe()
+    );
+    let run = home.run_with_default_format(&["--output-format=json", "tool", "frob"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     let error = run.error();
     assert_eq!(error["code"], "usage");
@@ -1101,9 +1112,18 @@ fn era_cache_that_cannot_be_written_gives_a_warning_only() {
 }
 
 #[test]
-fn a_word_that_is_not_utf8_gives_the_json_error_and_not_a_crash() {
+fn a_word_that_is_not_utf8_gives_a_usage_error_and_not_a_crash() {
     use std::os::unix::ffi::OsStrExt as _;
     let home = Home::new("non-utf8-word");
+    let output = home
+        .command(std::path::Path::new(NCP))
+        .args(["--output-format", "json"])
+        .arg(std::ffi::OsStr::from_bytes(b"\xff"))
+        .output()
+        .unwrap();
+    let run = Run(output);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(run.error()["message"], "The command line is not valid");
     let output = home
         .command(std::path::Path::new(NCP))
         .arg(std::ffi::OsStr::from_bytes(b"\xff"))
@@ -1111,7 +1131,11 @@ fn a_word_that_is_not_utf8_gives_the_json_error_and_not_a_crash() {
         .unwrap();
     let run = Run(output);
     assert_eq!(run.code(), 2, "{}", run.describe());
-    assert_eq!(run.error()["message"], "The command line is not valid");
+    assert!(
+        run.stderr_text().starts_with("error: "),
+        "{}",
+        run.describe()
+    );
 }
 
 #[test]
@@ -1985,6 +2009,8 @@ async fn login_with_no_browser_reads_the_pasted_redirect_url() {
     home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
     let mut child = Command::new(NCP)
         .args([
+            "--output-format",
+            "json",
             "auth",
             "login",
             "web",
@@ -2389,6 +2415,7 @@ async fn login_ignores_idle_connections_and_redirects_of_another_login() {
     let home = Home::new("login-forged");
     home.configure(&json!({"web": {"type": "http", "url": fixture.url}}));
     let mut child = Command::new(NCP)
+        .args(["--output-format", "json"])
         .args(LOGIN_TO_FILE)
         .env_clear()
         .envs(home.env.iter().cloned())
@@ -2626,15 +2653,29 @@ async fn trace_of_a_login_hides_a_value_in_the_server_url() {
 }
 
 #[test]
-fn output_format_option_chooses_text_or_json() {
+fn output_is_text_in_a_pipe_and_json_only_on_request() {
     let home = Home::new("output-format");
     home.configure(&json!({"fx": stdio("modern")}));
-    let text = home.run(&["--output-format", "text", "server", "list"]);
-    assert_eq!(text.code(), 0, "{}", text.describe());
-    let stdout = String::from_utf8_lossy(&text.0.stdout).to_string();
-    assert!(stdout.starts_with("fx"), "{stdout}");
+    for text in [
+        home.run_with_default_format(&["server", "list"]),
+        home.run(&["--output-format", "text", "server", "list"]),
+    ] {
+        assert_eq!(text.code(), 0, "{}", text.describe());
+        assert!(text.stdout_text().starts_with("fx"), "{}", text.describe());
+    }
+    let run = home.run_with_default_format(&["tool", "list", "nothing"]);
+    assert!(
+        run.stderr_text().starts_with("error: "),
+        "{}",
+        run.describe()
+    );
     let json = home.run(&["server", "list", "--output-format", "json"]);
     assert_eq!(json.stdout()["servers"][0]["name"], "fx");
+    assert!(
+        !json.stdout_text().trim_end().contains('\n'),
+        "{}",
+        json.describe()
+    );
 }
 
 #[test]
@@ -2720,16 +2761,16 @@ fn resource_list_gives_resources_and_templates() {
 }
 
 #[test]
-fn resource_read_gives_json_in_a_pipe_and_raw_contents_on_request() {
+fn resource_read_gives_raw_contents_in_a_pipe_and_json_on_request() {
     let home = Home::new("resource-read");
     home.configure(&json!({"fx": stdio("modern")}));
     let run = home.run(&["resource", "read", "fx", "fixture://echo/x"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert_eq!(run.stdout()["contents"][0]["text"], "x");
-    let raw = ["--output-format", "text", "resource", "read", "fx"];
-    let run = home.run(&[&raw[..], &["fixture://greeting"]].concat());
+    let raw = ["resource", "read", "fx"];
+    let run = home.run_with_default_format(&[&raw[..], &["fixture://greeting"]].concat());
     assert_eq!(run.0.stdout, b"hello\n");
-    let run = home.run(&[&raw[..], &["fixture://logo"]].concat());
+    let run = home.run_with_default_format(&[&raw[..], &["fixture://logo"]].concat());
     assert_eq!(run.0.stdout, b"\x89PNG\r\n\x1a\n");
     let run = home.run(&["resource", "read", "fx", "fixture://none"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
@@ -2945,27 +2986,63 @@ fn input_required_from_a_resource_or_a_prompt_gives_exit_5() {
 }
 
 #[test]
-fn raw_read_of_several_contents_is_a_usage_error_with_empty_stdout() {
+fn several_contents_in_a_pipe_give_the_bytes_of_each_content() {
     let home = Home::new("pair-raw");
     home.configure(&json!({"fx": stdio("modern")}));
+    let run = home.run_with_default_format(&["resource", "read", "fx", "fixture://pair"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(run.0.stdout, b"one\x89PNG\r\n\x1a\n");
+    assert!(run.0.stderr.is_empty(), "{}", run.describe());
+    // ncp decodes all contents before it writes, so a bad blob leaves
+    // stdout empty.
     let run = home.run(&[
         "--output-format",
         "text",
         "resource",
         "read",
         "fx",
-        "fixture://pair",
+        "fixture://broken",
     ]);
-    assert_eq!(run.code(), 2, "{}", run.describe());
-    assert!(run.stdout_is_empty());
-    // --output-format text gives text on stderr too.
-    let stderr = String::from_utf8_lossy(&run.0.stderr).to_string();
+    assert_eq!(run.code(), 3, "{}", run.describe());
+    assert!(run.stdout_is_empty(), "{}", run.describe());
     assert!(
-        stderr.contains(
-            "\nhint: To get all the contents, run the command again with `--output-format json`\n"
-        ),
-        "{stderr}"
+        run.stderr_text()
+            .starts_with("error: The server `fx` sent a blob that is not base64\n"),
+        "{}",
+        run.describe()
     );
+}
+
+#[test]
+fn stdout_on_a_tty_gives_the_text_view_and_indented_json() {
+    let home = Home::new("stdout-tty").set("NCP_TEST_STDOUT_TTY", "1");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let read = |uri: &str| home.run_with_default_format(&["resource", "read", "fx", uri]);
+    let run = read("fixture://logo");
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(run.stdout_text(), "[image/png, 12 bytes as base64]\n");
+    assert_eq!(
+        run.stderr_text(),
+        "hint: To get the bytes of a blob, run the command again and send stdout to a file\n"
+    );
+    let run = read("fixture://pair");
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(run.stdout_text(), "one[image/png, 12 bytes as base64]\n");
+    assert_eq!(
+        run.stderr_text(),
+        "hint: To get the blobs as base64, run the command again with `--output-format json`\n"
+    );
+    let run = read("fixture://lines");
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(run.stdout_text(), "a\nb\n");
+    assert!(run.0.stderr.is_empty(), "{}", run.describe());
+    // A C1 control character can change a terminal. JSON keeps it as an
+    // escape, also in the indented layout.
+    let run = home.run(&["resource", "read", "fx", "fixture://echo/a\u{9b}b"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    let stdout = run.stdout_text();
+    assert!(stdout.starts_with("{\n  "), "{stdout}");
+    assert!(stdout.contains(r#""text": "a\u009bb""#), "{stdout}");
 }
 
 #[test]

@@ -1,6 +1,7 @@
 //! The output channels. Results go to stdout. Errors, warnings and hints go
-//! to stderr. On a TTY the output is text for people. In a pipe stdout is
-//! JSON, and stderr is JSON Lines: one JSON object on each line.
+//! to stderr. The output is text for people, on a TTY and in a pipe. With
+//! `--output-format json`, stdout is JSON, and stderr is JSON Lines: one
+//! JSON object on each line.
 
 use std::{
     borrow::Cow,
@@ -19,16 +20,25 @@ pub enum Format {
     Json,
 }
 
-impl Format {
-    /// Text when stdout is a TTY, else JSON.
+/// What stdout is. A file descriptor does not change in a run, so `ncp`
+/// checks it one time at the start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stdout {
+    Terminal,
+    Pipe,
+}
+
+impl Stdout {
     #[must_use]
-    pub fn detect() -> Self {
-        if std::io::stdout().is_terminal() {
-            Self::Text
-        } else {
-            Self::Json
-        }
+    pub fn from_terminal(terminal: bool) -> Self {
+        if terminal { Self::Terminal } else { Self::Pipe }
     }
+}
+
+/// True when stdout is a TTY. Tests replace this check.
+#[must_use]
+pub fn stdout_is_terminal() -> bool {
+    std::io::stdout().is_terminal()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -61,6 +71,7 @@ impl Verbosity {
 pub struct Ui {
     pub format: Format,
     pub verbosity: Verbosity,
+    pub stdout: Stdout,
     /// The secret values that `ncp` knows in this run. Each error, warning,
     /// hint and debug line hides them, so that no output place can forget
     /// it. The list lives for the whole process, and a reference keeps `Ui`
@@ -70,10 +81,11 @@ pub struct Ui {
 
 impl Ui {
     #[must_use]
-    pub fn new(format: Format, verbosity: Verbosity) -> Self {
+    pub fn new(format: Format, verbosity: Verbosity, stdout: Stdout) -> Self {
         Self {
             format,
             verbosity,
+            stdout,
             known: Box::leak(Box::default()),
         }
     }
@@ -100,9 +112,10 @@ impl Ui {
     ) -> Result<(), Failure> {
         match self.format {
             Format::Text => write_stdout(&printable(&text())),
-            // JSON on a TTY comes only from `--output-format json`. A person
-            // reads it, so it is pretty.
-            Format::Json if std::io::stdout().is_terminal() => {
+            // The TTY sets only the layout of JSON. A person reads JSON on a
+            // TTY, so it is pretty. A program reads it in a pipe, so it is
+            // one line.
+            Format::Json if self.stdout == Stdout::Terminal => {
                 write_stdout(&format!("{}\n", escape_raw_controls(pretty_json(&json()))))
             }
             Format::Json => write_stdout(&json_line(&json())),

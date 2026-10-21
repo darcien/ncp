@@ -249,7 +249,10 @@ fn run() -> Result<(), String> {
     };
     eprintln!("scenario {scenario}, version {version}, url {url}");
     let mut logins = 0;
-    let listed = run.with_login(&["tool", "list", SERVER], &mut logins)?;
+    let listed = run.with_login(
+        &["--output-format", "json", "tool", "list", SERVER],
+        &mut logins,
+    )?;
     let tools: Value = serde_json::from_slice(&listed.stdout).unwrap_or(Value::Null);
     for (name, arguments) in calls(&scenario, &context, &tools["tools"]) {
         let arguments = arguments.to_string();

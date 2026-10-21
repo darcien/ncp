@@ -12,6 +12,7 @@
 //!   is available.
 //! - With `NCP_TEST_TTY=1`, a person answers questions on stdin, as on a
 //!   TTY.
+//! - With `NCP_TEST_STDOUT_TTY=1`, `ncp` writes stdout as on a TTY.
 //! - With `NCP_TEST_CHANGE_BEFORE_RENAME=1`, the configuration file changes
 //!   immediately before `ncp` renames its new copy over it.
 //! - `NCP_TEST_CLIENT_METADATA_URL` replaces the URL of the Client ID
@@ -82,6 +83,10 @@ fn fake_tty() -> bool {
     std::env::var_os("NCP_TEST_TTY").is_some()
 }
 
+fn fake_stdout_tty() -> bool {
+    std::env::var_os("NCP_TEST_STDOUT_TTY").is_some()
+}
+
 // With `NCP_TEST_CHANGE_BEFORE_RENAME=1`, another tool changes the
 // configuration file immediately before `ncp` renames its new copy over it.
 fn change_before_rename(path: &std::path::Path) {
@@ -105,6 +110,7 @@ fn main() -> std::process::ExitCode {
         open_native: fake_native,
         open_browser: fake_browser,
         interactive: fake_tty,
+        stdout_terminal: fake_stdout_tty,
         before_rename: change_before_rename,
         client_metadata_url: client_metadata_url(),
     })

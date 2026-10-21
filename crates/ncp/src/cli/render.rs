@@ -1,4 +1,4 @@
-//! Text output for people on a TTY. Pure functions: data in, text out.
+//! Text output for people. Pure functions: data in, text out.
 //!
 //! The JSON output copies MCP objects with no change, so it needs no code
 //! here. Text output is for reading, and can change between versions.

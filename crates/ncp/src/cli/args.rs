@@ -21,7 +21,7 @@ environment, the native store or the credential file. To store a value,
 run:
   ncp secret set <NAME>
 
-Output is text on a TTY and JSON in a pipe.";
+Output is text. To get JSON, use --output-format json.";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -73,7 +73,7 @@ pub struct GlobalOptions {
     /// and gets the tool list again. --no-cache has priority over --refresh.
     #[arg(long, global = true)]
     pub refresh: bool,
-    /// The output format. Default: text on a TTY, JSON in a pipe.
+    /// The output format. Default: text.
     #[arg(long, global = true, value_enum, value_name = "FORMAT")]
     pub output_format: Option<OutputFormat>,
     /// Use this configuration file in place of the global file: ncp/mcp.json in
@@ -159,9 +159,9 @@ pub enum ResourceCommand {
     },
     /// Read one resource
     ///
-    /// On a TTY, ncp shows the contents for people. With --output-format text
-    /// in a pipe, ncp writes the contents with no change: the text, or the
-    /// bytes of a blob. With --output-format json, ncp writes the MCP result.
+    /// On a TTY, ncp shows the contents for people. With text output in a
+    /// pipe, ncp writes the contents with no change: the text, or the bytes
+    /// of a blob. With --output-format json, ncp writes the MCP result.
     Read {
         /// The server name from the configuration
         server: String,
