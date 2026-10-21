@@ -4,6 +4,19 @@ All notable changes to `ncp` are in this file. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and `ncp` uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.0 - 2026-10-21
+
+### Changed
+
+- cli: Write text by default, also in a pipe
+  - In a pipe, ncp writes text and not JSON. If a script or an agent reads JSON from ncp, add --output-format json to each command.
+
+### Fixed
+
+- cli: Make the help text self-contained and consistent
+- cli: Use one form and one term for each output message
+- deps: Update rustls-webpki to 0.103.16
+
 ## 0.1.0 - 2026-10-20
 
 The first release: a command-line MCP client for macOS and Linux.
