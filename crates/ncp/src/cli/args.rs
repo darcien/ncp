@@ -8,7 +8,7 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 const AFTER_HELP: &str = "\
-The normal order of work:
+The usual steps:
   ncp server add <SERVER> <URL>
   ncp server list
   ncp server show <SERVER>
@@ -16,8 +16,9 @@ The normal order of work:
   ncp tool show <SERVER> <TOOL>
   ncp tool call <SERVER> <TOOL> [key=value...]
 
-A ${NAME} in an env or headers value comes from the environment, the
-native store, or the credential file. Store a value with:
+A ${NAME} in an env, headers or oauth.clientSecret value comes from the
+environment, the native store or the credential file. To store a value,
+run:
   ncp secret set <NAME>
 
 Output is text on a TTY and JSON in a pipe.";
@@ -40,8 +41,8 @@ pub struct Cli {
 
 #[derive(Debug, Args)]
 pub struct GlobalOptions {
-    /// The time limit for one request, in whole seconds. A timeout sends a
-    /// cancel request.
+    /// The time limit in whole seconds for one request, a login or an input.
+    /// After a timeout, ncp cancels the request or stops the connection.
     #[arg(
         long,
         global = true,
@@ -50,34 +51,35 @@ pub struct GlobalOptions {
         value_parser = clap::value_parser!(u64).range(1..)
     )]
     pub timeout: u64,
-    /// Show diagnostics on stderr: where each value comes from (never the
-    /// value), the proxy route, the cached protocol version. -vv also shows the
-    /// JSON-RPC messages and the HTTP requests. ncp hides the credentials of
-    /// the connection, and shows the messages as they are.
+    /// Show log lines on stderr: where each value comes from (never the
+    /// value), the proxy route and the cached protocol version. -vv also shows
+    /// the JSON-RPC messages and the HTTP requests. ncp hides the credentials
+    /// of the connection, and shows all other text with no change.
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
     pub verbose: u8,
     /// Show the time of each step on stderr: CPU, configuration,
     /// credentials, server start, DNS, connect and each response.
     #[arg(long, global = true)]
     pub timings: bool,
-    /// Show no hints and no warnings on stderr. Errors stay.
+    /// Show no hints, no warnings and no progress on stderr. ncp still shows
+    /// errors.
     #[arg(short, long, global = true, conflicts_with = "verbose", action = clap::ArgAction::Count)]
     pub quiet: u8,
-    /// Read and write no cache: no cached protocol version and no cached
-    /// tool list.
+    /// Do not read or write the cache: the protocol version and the tool
+    /// list of each server.
     #[arg(long, global = true)]
     pub no_cache: bool,
-    /// Read no cache, but write it: find the protocol version and get the
-    /// tool list again. --no-cache wins over it, as in uv.
+    /// Do not read the cache, but write it: ncp finds the protocol version
+    /// and gets the tool list again. --no-cache has priority over --refresh.
     #[arg(long, global = true)]
     pub refresh: bool,
-    /// The output format. Default: text on a TTY, else JSON.
+    /// The output format. Default: text on a TTY, JSON in a pipe.
     #[arg(long, global = true, value_enum, value_name = "FORMAT")]
     pub output_format: Option<OutputFormat>,
-    /// The configuration file in place of the default file, mcp.json in the
-    /// ncp folder of the XDG configuration folder. It must exist. ncp then
-    /// does not search for a project .mcp.json, and runs the servers of this
-    /// file with no trust question.
+    /// Use this configuration file in place of the global file: ncp/mcp.json in
+    /// the XDG configuration folder, by default ~/.config/ncp/mcp.json.
+    /// The file must exist. ncp then does not search for a project .mcp.json,
+    /// and runs the servers of this file with no trust question.
     #[arg(long, global = true, value_name = "PATH")]
     pub config_file: Option<std::path::PathBuf>,
 }
@@ -107,15 +109,18 @@ pub enum Command {
     /// OAuth login of HTTP servers
     #[command(subcommand)]
     Auth(AuthCommand),
-    /// Named values for ${NAME} in the configuration
+    /// Secrets for ${NAME} in the configuration
     #[command(subcommand)]
     Secret(SecretCommand),
-    /// Trust the project .mcp.json of the current folder, and show its
-    /// entries. Before the trust, its servers do not run. Each change of
-    /// the file needs a new trust.
+    /// Trust the project .mcp.json of the current folder
+    ///
+    /// ncp shows the entries of the file. The servers of a project file do
+    /// not run until you trust the file. After each change of the file, you
+    /// must trust it again.
     Trust(TrustArgs),
-    /// Show the completion script for a shell. Server names complete from the
-    /// configuration.
+    /// Show the completion script for a shell
+    ///
+    /// The script completes server names from the configuration.
     GenerateShellCompletion {
         /// The shell
         #[arg(value_enum)]
@@ -123,17 +128,17 @@ pub enum Command {
     },
 }
 
-/// The options of `ncp trust`, as `mise trust`: only one of them.
+/// The options of ncp trust. Only one can be given.
 #[derive(Debug, Args)]
 #[group(multiple = false)]
 pub struct TrustArgs {
     /// Show the entries and the trust state, and change nothing
     #[arg(long)]
     pub show: bool,
-    /// Remove the trust
+    /// Remove the trust of the project file
     #[arg(long)]
     pub untrust: bool,
-    /// Ignore the file: ncp does not ask again until ncp trust
+    /// Ignore the project file: ncp does not ask again until you run ncp trust
     #[arg(long)]
     pub ignore: bool,
 }
@@ -152,8 +157,11 @@ pub enum ResourceCommand {
         /// The server name from the configuration
         server: String,
     },
-    /// Read one resource. The text goes to stdout as it is. With
-    /// --output-format json, the MCP result goes to stdout.
+    /// Read one resource
+    ///
+    /// On a TTY, ncp shows the contents for people. With --output-format text
+    /// in a pipe, ncp writes the contents with no change: the text, or the
+    /// bytes of a blob. With --output-format json, ncp writes the MCP result.
     Read {
         /// The server name from the configuration
         server: String,
@@ -169,21 +177,23 @@ pub enum PromptCommand {
         /// The server name from the configuration
         server: String,
     },
-    /// Get one prompt with its arguments: key=value pairs. The spec gives
-    /// prompt arguments as text.
+    /// Get one prompt
+    ///
+    /// Give the arguments as key=value pairs. Each value is text, because MCP
+    /// gives prompt arguments as text.
     Get {
         /// The server name from the configuration
         server: String,
         /// The prompt name
         prompt: String,
-        /// The prompt arguments
+        /// The prompt arguments: key=value pairs
         arguments: Vec<String>,
     },
 }
 
 #[derive(Debug, Subcommand)]
 pub enum AuthCommand {
-    /// Log in to an HTTP server with OAuth and keep the tokens.
+    /// Log in to an HTTP server with OAuth and store the tokens.
     Login {
         /// The server name from the configuration
         server: String,
@@ -191,18 +201,20 @@ pub enum AuthCommand {
         /// stdin.
         #[arg(long)]
         no_browser: bool,
-        /// The place for the tokens.
+        /// The credential store for the tokens.
         #[arg(long, value_enum, default_value_t = CredentialPlace::Native)]
         credential_store: CredentialPlace,
     },
-    /// Remove the OAuth tokens of a server from all places. The client
-    /// registration stays.
+    /// Delete the OAuth tokens of a server from all credential stores
+    ///
+    /// The OAuth client registration stays.
     Logout {
         /// The server name from the configuration
         server: String,
     },
-    /// Show the OAuth login of each server, or of one server. Shows no
-    /// token.
+    /// Show the OAuth login of each server, or of one server
+    ///
+    /// ncp shows no token.
     Status {
         /// The server name from the configuration
         server: Option<String>,
@@ -211,34 +223,39 @@ pub enum AuthCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum SecretCommand {
-    /// Read one value from stdin and keep it under the name, for the
-    /// destination of the entries that name ${NAME}. On a TTY, ncp does not
-    /// show the input.
+    /// Store a value for ${NAME}
+    ///
+    /// ncp reads one value from stdin. On a TTY, ncp does not show the input.
+    /// The value goes only to the destination of the entries that name
+    /// ${NAME}.
     Set {
         /// The name, as in ${NAME} in the configuration
         name: String,
-        /// Use only the destination of this entry.
+        /// Use only the destination of this server.
         #[arg(long, value_name = "SERVER")]
         server: Option<String>,
-        /// The place for the value.
+        /// The credential store for the value.
         #[arg(long, value_enum, default_value_t = CredentialPlace::Native)]
         credential_store: CredentialPlace,
     },
-    /// List the stored secrets: the name, the destination, the place and
-    /// the servers that use each one. Shows no value. The servers come
+    /// List the stored secrets
+    ///
+    /// For each secret, ncp shows the name, the destination, the credential
+    /// store and the servers that use it. ncp shows no value. The servers come
     /// from the global file and the project file of the current folder. A
-    /// project in another folder can still use a secret that no server
-    /// uses here.
+    /// project in another folder can still use a secret that no server uses
+    /// here.
     List,
-    /// Delete the stored secret from all places. With no flag, only when
-    /// the name has one destination.
+    /// Delete a stored secret from all credential stores
+    ///
+    /// With no option, ncp deletes it only when the name has one destination.
     Delete {
         /// The name, as in ${NAME} in the configuration
         name: String,
-        /// Delete only the item of the destination of this entry.
+        /// Delete only the item of the destination of this server.
         #[arg(long, value_name = "SERVER", group = "removal")]
         server: Option<String>,
-        /// Delete the items that no entry of the global file or of the
+        /// Delete the items that no server of the global file or of the
         /// project file of the current folder uses. A project in another
         /// folder can still use them.
         #[arg(long, group = "removal")]
@@ -254,8 +271,8 @@ Examples:
   ncp server add docs https://docs.example.com/mcp
   ncp server add github --env GITHUB_TOKEN --secret GITHUB_TOKEN -- github-mcp-server stdio
 
-A secret in one command: ncp asks for the value (hidden on a TTY), or
-reads it from a pipe, stores it, and the file keeps ${LINEAR_KEY}:
+A secret in one command. ncp asks for the value (hidden on a TTY) or
+reads it from a pipe. ncp stores the value, and the file keeps ${LINEAR_KEY}:
   ncp server add linear https://mcp.linear.app/mcp \\
     --header 'Authorization: Bearer ${LINEAR_KEY}' --secret LINEAR_KEY
 The same in two commands:
@@ -263,21 +280,23 @@ The same in two commands:
     --header 'Authorization: Bearer ${LINEAR_KEY}'
   ncp secret set LINEAR_KEY
 
-The single quotes keep ${NAME} from the shell. A stored value goes only to
-its origin, and the entries with the same origin share it. --env NAME
-writes ${NAME}; --env NAME=VALUE writes VALUE into the file as it is.";
+The single quotes stop the shell from expanding ${NAME}. A stored value
+goes only to its destination: the origin of the URL (the scheme, host and
+port), or the stdio servers. The entries with the same destination share
+it. --env NAME writes ${NAME}. --env NAME=VALUE writes VALUE into the file
+with no change.";
 
 #[derive(Debug, Args)]
 pub struct AddArgs {
     /// The server name: letters, digits, - and _
     pub server: String,
-    /// The URL of an http server
+    /// The URL of an HTTP server
     pub url: Option<String>,
     /// Add the entry to the global file
     #[arg(long)]
     pub global: bool,
-    /// A header of an http server. An Authorization header must be
-    /// '<scheme> ${NAME}' or '${NAME}'.
+    /// A header of an HTTP server. The value of an Authorization or
+    /// Proxy-Authorization header must be '<scheme> ${NAME}' or '${NAME}'.
     // A value that starts with "-" is a value, so that clap does not show
     // it in an error: the text can be a secret.
     #[arg(
@@ -287,52 +306,58 @@ pub struct AddArgs {
     )]
     pub headers: Vec<String>,
     /// An environment variable of a stdio server: NAME writes ${NAME}, and
-    /// NAME=VALUE writes VALUE as it is
+    /// NAME=VALUE writes VALUE with no change
     #[arg(long = "env", value_name = "NAME[=VALUE]", allow_hyphen_values = true)]
     pub env: Vec<String>,
-    /// Read the value of ${NAME} and store it for the origin of the entry
+    /// Read the value of ${NAME} from the terminal or stdin, and store it for
+    /// the destination of the entry
     #[arg(long, value_name = "NAME", allow_hyphen_values = true)]
     pub secret: Option<String>,
-    /// The place for the value of --secret. Default: native.
+    /// The credential store for the value of --secret. Default: native.
     #[arg(long, value_enum, requires = "secret")]
     pub credential_store: Option<CredentialPlace>,
-    /// The command of a stdio server and its arguments
+    /// The command of a stdio server and its arguments, after --
     #[arg(last = true, value_name = "COMMAND")]
     pub command: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum CredentialPlace {
-    /// The macOS Keychain or the Linux Secret Service
+    /// The native store: the macOS Keychain or the Linux Secret Service
     Native,
-    /// The opt-in credential file, mode 0600
+    /// The credential file, with mode 0600
     File,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum ServerCommand {
-    /// Add a server to the project .mcp.json, or with --global to
-    /// ~/.config/ncp/mcp.json. ncp keeps every other byte of the file, and
-    /// does not contact the server.
+    /// Add a server to the project .mcp.json or the global file
+    ///
+    /// In the home folder, or with --global, ncp adds it to the global file.
+    /// With --config-file, ncp adds it to that file. ncp changes no other
+    /// part of the file, and does not connect to the server.
     #[command(after_help = ADD_HELP)]
     Add(AddArgs),
-    /// Remove a server from the file that gives it, or with --global from
-    /// ~/.config/ncp/mcp.json, and its OAuth tokens. Stored ${NAME} values
-    /// stay: other entries of the same origin can use them. A project in
-    /// another folder with an entry of the same name and URL then needs a
-    /// new login.
+    /// Remove a server from the file that gives it
+    ///
+    /// With --global, ncp removes it from the global file. ncp also deletes
+    /// the OAuth tokens of the entry, when no other entry of the name takes
+    /// effect. Stored ${NAME} values stay, because other entries of the same
+    /// destination can use them. A project in another folder with an entry of
+    /// the same name and URL then needs a new login.
     Remove {
         /// The server name from the configuration
         server: String,
-        /// Remove the entry of the global file
+        /// Remove the entry from the global file
         #[arg(long)]
         global: bool,
     },
-    /// List the servers of the global file and of the project file. Starts
-    /// no server.
+    /// List the servers of the global file and of the project file
+    ///
+    /// ncp starts no server.
     List,
-    /// Show what the server says about itself in its handshake, with its
-    /// instructions.
+    /// Show the information and the instructions that the server gives in
+    /// its handshake.
     Show {
         /// The server name from the configuration
         server: String,
@@ -353,12 +378,12 @@ pub enum ToolCommand {
         /// The tool name
         tool: Option<String>,
     },
-    /// Call a tool.
+    /// Call a tool
     ///
     /// Arguments: key=value pairs, one JSON object, or - to read a JSON
-    /// object from stdin. A key=value value is text, except when the input
-    /// schema gives the property another type: then the value is JSON.
-    /// For the text of a file, use the shell: key="$(cat FILE)".
+    /// object from stdin. A key=value value is text. When the input schema
+    /// gives the property another type, the value is JSON. To give the text
+    /// of a file, use the shell: key="$(cat FILE)".
     #[command(disable_help_flag = true)]
     Call(CallArgs),
 }
@@ -369,12 +394,12 @@ pub struct CallArgs {
     pub server: Option<String>,
     /// The tool name
     pub tool: Option<String>,
-    /// The tool arguments
+    /// The tool arguments: key=value pairs, one JSON object, or -
     pub arguments: Vec<String>,
     /// Do not check the arguments against the input schema of the tool.
     #[arg(long)]
     pub no_validate: bool,
-    /// Show the tool, as `tool show` does. With no tool, show this help.
+    /// Show the tool, as ncp tool show does. With no tool, show this help.
     #[arg(short, long)]
     pub help: bool,
 }
