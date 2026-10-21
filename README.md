@@ -50,6 +50,9 @@ mise run check
 mise run test
 ```
 
+Read [CONTRIBUTING.md](CONTRIBUTING.md) and [STYLE.md](STYLE.md) before you
+change the project.
+
 ## License
 
 MIT or Apache-2.0, at your choice.

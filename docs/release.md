@@ -2,7 +2,7 @@
 
 `mise run release:tag --execute` pushes a release tag `vX.Y.Z`. The tag
 starts `.github/workflows/release.yaml`, which builds, attests and
-publishes the release on GitHub. Only you do these steps, on this Mac.
+publishes the release on GitHub. Only the maintainer does these steps, on this Mac.
 
 ## Before each release
 
@@ -17,7 +17,7 @@ publishes the release on GitHub. Only you do these steps, on this Mac.
 3. If the version does not obey the version rule (see "Reference"), do the
    dry run again with the correct version. Example:
    `mise run release:tag 0.3.0`.
-4. Run `mise run release:tag --execute`. If you gave a version in step 3,
+4. Run `mise run release:tag --execute`. If step 3 gave a version,
    give it again.
 5. When cargo-release asks, confirm.
 
@@ -73,7 +73,7 @@ publishes the release on GitHub. Only you do these steps, on this Mac.
 
 A release keeps the commands, the options, the configuration files, the
 stored credentials and the JSON output of an earlier release valid. When a
-change makes old input or stored data invalid, `ncp` accepts the old form
+change makes old input or stored data not valid, `ncp` accepts the old form
 too, or migrates the data. When neither is possible, the change is a
 breaking change, and its release notes give the steps for the user.
 

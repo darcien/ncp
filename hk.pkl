@@ -18,7 +18,7 @@ local buildInputs = List(
   "site/public/oauth/client-metadata.json",
 )
 local linuxInputs = (buildInputs) { "harness/linux/**" }
-// No crate reads a Markdown file.
+// No crate reads a Markdown file, except the test that reads STYLE.md.
 local markdown = "**/*.md"
 
 // hk locks the files of a command with no declared effect, so such steps run
@@ -72,9 +72,10 @@ steps {
     glob = List("**/Cargo.toml", "Cargo.lock", "deny.toml", "mise.toml")
     check = reads("mise run check:deny")
   }
+  // A test reads STYLE.md, the word list of the output text.
   ["cargo-test"] {
-    glob = buildInputs
-    exclude = markdown
+    glob = (buildInputs) { "STYLE.md" }
+    exclude = "crates/**/*.md"
     depends = fixers
     check = reads("mise run test")
   }
