@@ -65,7 +65,12 @@ depends = ["check:fmt", "check:clippy", "check:deny", "check:typos", "check:shel
 
 [tasks.test]
 description = "Run all tests. Tests use only local servers"
+depends = ["test:conformance-report"]
 run = "cargo test --workspace --locked"
+
+[tasks."test:conformance-report"]
+description = "Test the writer of the conformance results file"
+run = "node --test harness/conformance/report.test.mjs"
 
 # The Linux tasks run in a container (harness/linux). NCP_LINUX_PLATFORM
 # selects linux/arm64 (default) or linux/amd64.
@@ -127,10 +132,6 @@ run = "npm ci --ignore-scripts"
 [tasks.conformance]
 description = "Run the official MCP conformance suite against ncp for each protocol version"
 run = "harness/conformance/run.sh"
-
-[tasks."conformance:test"]
-description = "Test the writer of the conformance results file"
-run = "node --test harness/conformance/report.test.mjs"
 
 # The interop tests: an online install from the lock file, then an offline
 # run against the official everything server.

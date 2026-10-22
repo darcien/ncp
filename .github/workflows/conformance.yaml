@@ -24,22 +24,22 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+    env:
+      # The suite needs only Node from mise. mise run does not install the
+      # other tools of mise.toml, because mise builds some of them from source.
+      MISE_AUTO_INSTALL: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - run: rustup toolchain install
-      # The suite needs only Rust and Node. Without --skip-tools, mise run
-      # installs each missing tool of mise.toml. mise builds some of these
-      # tools from source, for example git-cliff.
       - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
           version: 2026.10.17
           install_args: node
           cache: false
-      - run: mise run --skip-tools conformance:install
-      - run: mise run --skip-tools conformance:test
-      - run: mise run --skip-tools conformance
+      - run: mise run conformance:install
+      - run: mise run conformance
       # The Pages workflow refuses a report of more than 10 MiB.
       - id: report
         if: ${{ !cancelled() }}

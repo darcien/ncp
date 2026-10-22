@@ -54,10 +54,6 @@ steps {
   ["shellcheck"] = (Builtins.shellcheck) {
     check = reads("mise run check:shellcheck {{files}}")
   }
-  ["conformance-test"] {
-    glob = List("harness/conformance/report.mjs", "harness/conformance/report.test.mjs")
-    check = reads("mise run conformance:test")
-  }
   ["cargo-fmt"] {
     glob = "**/*.rs"
     check = reads("mise run check:fmt")
@@ -76,9 +72,14 @@ steps {
     glob = List("**/Cargo.toml", "Cargo.lock", "deny.toml", "mise.toml")
     check = reads("mise run check:deny")
   }
-  // A test reads STYLE.md, the word list of the output text.
-  ["cargo-test"] {
-    glob = (buildInputs) { "STYLE.md" }
+  // A test reads STYLE.md, the word list of the output text. The task `test`
+  // also runs the test of report.mjs.
+  ["test"] {
+    glob = (buildInputs) {
+      "STYLE.md"
+      "harness/conformance/report.mjs"
+      "harness/conformance/report.test.mjs"
+    }
     exclude = "crates/**/*.md"
     depends = fixers
     check = reads("mise run test")
@@ -94,7 +95,7 @@ steps {
   ["disk"] {
     glob = linuxInputs
     exclude = markdown
-    depends = List("cargo-clippy", "cargo-test", "linux")
+    depends = List("cargo-clippy", "test", "linux")
     check = reads("mise run check:disk")
     output_summary = "stdout"
   }
