@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP conformance of ncp</title>
+<style>
+:root { color-scheme: light dark; --pass: #1a7f37; --fail: #cf222e; --muted: #57606a; --line: #d0d7de; --bg: #fff; --head: #f6f8fa; }
+@media (prefers-color-scheme: dark) { :root { --pass: #3fb950; --fail: #f85149; --muted: #8b949e; --line: #30363d; --bg: #0d1117; --head: #161b22; } }
+/* Spacing comes only from gap, so that each space on the page is one of three sizes. */
+:where(body, h1, h2, h3, p, ul, dl, dd, table, details) { margin: 0; }
+body { font: 16px/1.5 system-ui, sans-serif; background: var(--bg); }
+/* A track of minmax(0, 1fr) lets a wide table shrink, so that the page does not scroll sideways. */
+main, #report { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2rem; }
+main { max-width: 60rem; margin-inline: auto; padding: 1rem; }
+.stack, details[open] { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.75rem; }
+.stack-sm { display: grid; gap: 0.125rem; }
+h2 { font-size: 1.25rem; }
+h3 { font-size: 1rem; }
+small, .none, .skipped, .info, #status { color: var(--muted); }
+#status:empty { display: none; }
+a { color: inherit; }
+.passed { color: var(--pass); }
+/* A warning fails a scenario, so it has the color of a failure. */
+.failed, .warning { color: var(--fail); }
+/* Long names have no break point. Without this, a phone scrolls the page sideways. */
+td, code, summary, dd, li { overflow-wrap: anywhere; }
+.causes { list-style: none; padding: 0; display: grid; gap: 0.75rem; }
+.causes li { display: grid; gap: 0.125rem; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.125rem 0.75rem; }
+/* The page font, so that a mark in the legend looks the same as in the table. */
+dt { font-weight: 600; }
+/* Separate borders move with the sticky header. Collapsed borders stay behind and let text show through. */
+table { border-collapse: separate; border-spacing: 0; width: 100%; }
+th, td { text-align: left; vertical-align: top; padding: 0.375rem 0.5rem; border-bottom: 1px solid var(--line); }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
+/* A summary opens with the same marker as an area. */
+summary { cursor: pointer; list-style: none; }
+summary::-webkit-details-marker { display: none; }
+summary::before { content: "▸ "; }
+details[open] > summary::before { content: "▾ "; }
+/* The header rows stay in view while a person scrolls the table. */
+.matrix > thead { position: sticky; top: 0; }
+.matrix > thead > tr > * { background: var(--head); vertical-align: middle; }
+.matrix > thead > tr:last-child > * { border-bottom: 2px solid var(--muted); font-weight: 600; }
+/* The result columns are narrow and centered, so that each result is near its revision. */
+.matrix > * > tr > :not(:first-child) { width: 7rem; text-align: center; white-space: nowrap; overflow-wrap: normal; }
+.matrix .area > * { font-weight: 600; }
+/* An area and a failed scenario open in the same way, with the same marker. A flex button keeps the marker next to the first word when the name wraps. */
+.matrix button { display: inline-flex; gap: 0.25rem; }
+.matrix button::before { content: "▸"; width: 1ch; }
+.matrix button[aria-expanded="true"]::before { content: "▾"; }
+/* The first column keeps a width, so that a phone does not break it letter by letter. */
+.matrix .scenario th { min-width: 7rem; padding-left: 1.5rem; font-weight: normal; }
+/* A name with no marker starts where the names with a marker start. */
+.matrix .scenario th:not(:has(button)) { padding-left: calc(1.5rem + 1ch + 0.25rem); }
+.matrix [data-collapsed] :is(.scenario, .detail) { display: none; }
+.checks { font-size: 0.875rem; }
+/* A result word is short. Broken in the middle, it is hard to read. */
+.checks td:first-child { white-space: nowrap; overflow-wrap: normal; }
+/* On a narrow phone, the dates wrap and the cells are tighter, so that the table fits. */
+@media (max-width: 420px) {
+  .matrix > * > tr > :not(:first-child) { width: auto; }
+  .matrix > thead > tr > th:not(:first-child) { white-space: normal; }
+  .matrix :is(th, td) { padding-inline: 0.25rem; }
+  .matrix .scenario th { min-width: 5rem; padding-left: 0.75rem; }
+}
+/* On a phone, a check is a block, because three columns do not fit. */
+@media (max-width: 600px) {
+  .checks thead { display: none; }
+  .checks :is(tbody, tr, td) { display: block; }
+  .checks td { border: 0; padding: 0.125rem 0; }
+  .checks tr { border-bottom: 1px solid var(--line); padding-block: 0.375rem; }
+}
+</style>
+</head>
+<body>
+<main>
+<div class="stack">
+<h1>MCP conformance of ncp</h1>
+<p>When available, this page shows a result from the official <a href="https://github.com/modelcontextprotocol/conformance">MCP conformance suite</a> for <a href="https://github.com/darcien/ncp">ncp</a>. It does not show whether the current <code>main</code> commit passes.</p>
+<p id="status" role="status">The page cannot show the conformance result because its script did not load.</p>
+</div>
+<div id="report"></div>
+</main>
+<script type="module">
+const status = document.getElementById("status");
+const report = document.getElementById("report");
+status.textContent = "Loading the conformance result.";
+
+// An area name opens its scenarios. The name of a failed scenario opens its
+// checks.
+report.addEventListener("click", (event) => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  const open = button.getAttribute("aria-expanded") !== "true";
+  button.setAttribute("aria-expanded", String(open));
+  const detail = button.getAttribute("aria-controls");
+  if (detail) document.getElementById(detail).hidden = !open;
+  else button.closest("tbody").toggleAttribute("data-collapsed", !open);
+});
+
+const show = async () => {
+  let response;
+  try {
+    response = await fetch("conformance.json");
+  } catch {
+    return "The page cannot load the results file.";
+  }
+  if (response.status === 404) return "No conformance result is available.";
+  if (!response.ok) return `The page cannot load the results file (HTTP ${response.status}).`;
+  let results;
+  try {
+    results = await response.json();
+  } catch {
+    return "The results file is not valid JSON.";
+  }
+  let render;
+  try {
+    ({ render } = await import("./render.js"));
+  } catch (error) {
+    console.error(error);
+    return "The page cannot load the result script.";
+  }
+  try {
+    report.innerHTML = render(results);
+    return "";
+  } catch (error) {
+    console.error(error);
+    return error instanceof TypeError ? "The page cannot show the results file." : error.message;
+  }
+};
+status.textContent = await show();
+</script>
+</body>
+</html>

@@ -1,34 +1,109 @@
-# The OAuth client metadata document of ncp is part of the site, so it is
-# available before a release uses its URL.
+# The site holds the OAuth client metadata document of ncp. A release uses
+# its URL. This workflow deploys a site change at once, so a slow or failed
+# conformance run cannot delay that document.
 name: pages
 
 on:
   push:
     branches: [main]
-    paths: [site/**, .github/workflows/pages.yaml]
+    paths:
+      - site/**
+      - .github/workflows/pages.yaml
+  workflow_run:
+    workflows: [conformance]
+    types: [completed]
   workflow_dispatch:
 
 permissions: {}
 
-# A newer push waits, so that a deploy is never cut off in the middle.
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    if: >-
+      ${{ github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.head_repository.id == github.event.repository.id &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == 'main' &&
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch'))) }}
+    # A new job waits until the current job ends, so that GitHub does not
+    # stop a deployment before it is complete. The new job then reads main and
+    # the published result, so it sees the result of the previous job.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
+      actions: read
       pages: write
       id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # A job can wait for the lock while main gets new commits. Thus the job
+      # uses the latest commit of main, not the commit of the event. To compare
+      # the commits of two results, the job needs the full history.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: main
+          fetch-depth: 0
           persist-credentials: false
+      - name: Read the published result
+        run: |
+          curl --fail --silent --show-error \
+            --connect-timeout 5 --max-time 15 --max-filesize 10485760 \
+            --output "$RUNNER_TEMP/published.json" \
+            https://darcien.github.io/ncp/conformance/conformance.json || \
+            rm -f "$RUNNER_TEMP/published.json"
+      # If the build fails, the conformance run has no artifact. The job then
+      # deploys the site without a new result.
+      - if: ${{ github.event_name == 'workflow_run' }}
+        id: result
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: conformance
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/conformance
+      - name: Select the result
+        env:
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_RUN: ${{ github.event_name == 'workflow_run' && steps.result.outcome == 'success' }}
+        run: |
+          set -eu
+          # The report comes from a job that ran third-party code. This function
+          # accepts only a report with the expected form and both runs. If one
+          # run is missing, the page shows half of the results as complete.
+          report_commit() {
+            [ "$(wc -c < "$1")" -le 10485760 ] || return 1
+            jq -er -s 'select(length == 1) | .[0] |
+              select(.schema == 1 and (.date | type == "string") and
+                (.ncp.version | type == "string") and
+                (.ncp.target | type == "string") and
+                (.suite.version | type == "string") and
+                (.runs | type == "array" and length == 2 and
+                  all(.[]; (.revision | type == "string") and
+                    (.scenarios | type == "array" and length > 0)))) |
+              .ncp.commit | select(type == "string" and test("^[0-9a-f]{40}$"))' "$1" 2>/dev/null
+          }
+          public="$RUNNER_TEMP/published.json"
+          incoming="$RUNNER_TEMP/conformance/conformance.json"
+          destination=site/public/conformance/conformance.json
+          old=''
+          new=''
+          if [ -f "$public" ]; then
+            old="$(report_commit "$public")" || old=''
+          fi
+          if [ "$SOURCE_RUN" = true ] && [ -f "$incoming" ] && [ ! -L "$incoming" ]; then
+            new="$(report_commit "$incoming")" || new=''
+            [ "$new" = "$SOURCE_SHA" ] || new=''
+          fi
+          if [ -n "$new" ] && { [ -z "$old" ] || git merge-base --is-ancestor "$old" "$new"; }; then
+            cp "$incoming" "$destination"
+          elif [ -n "$old" ]; then
+            cp "$public" "$destination"
+          fi
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site/public

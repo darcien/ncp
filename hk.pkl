@@ -54,6 +54,10 @@ steps {
   ["shellcheck"] = (Builtins.shellcheck) {
     check = reads("mise run check:shellcheck {{files}}")
   }
+  ["conformance-test"] {
+    glob = List("harness/conformance/report.mjs", "harness/conformance/report.test.mjs")
+    check = reads("mise run conformance:test")
+  }
   ["cargo-fmt"] {
     glob = "**/*.rs"
     check = reads("mise run check:fmt")

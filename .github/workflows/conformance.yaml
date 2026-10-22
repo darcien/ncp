@@ -1,0 +1,56 @@
+name: conformance
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - crates/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - mise.toml
+      - harness/conformance/**
+      - .github/workflows/conformance.yaml
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  # The suite is third-party npm code. This job has only read access. The
+  # Pages workflow deploys the result, so the suite cannot get a token that
+  # publishes the site.
+  conformance:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      # The suite needs only Rust and Node. Without --skip-tools, mise run
+      # installs each missing tool of mise.toml. mise builds some of these
+      # tools from source, for example git-cliff.
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.10.17
+          install_args: node
+          cache: false
+      - run: mise run --skip-tools conformance:install
+      - run: mise run --skip-tools conformance:test
+      - run: mise run --skip-tools conformance
+      # The Pages workflow refuses a report of more than 10 MiB.
+      - id: report
+        if: ${{ !cancelled() }}
+        run: |
+          file=harness/conformance/results/conformance.json
+          if [ -f "$file" ] && [ "$(wc -c < "$file")" -le 10485760 ]; then
+            echo 'upload=true' >> "$GITHUB_OUTPUT"
+          fi
+      - if: ${{ !cancelled() && steps.report.outputs.upload == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: conformance
+          path: harness/conformance/results/conformance.json
+          if-no-files-found: ignore

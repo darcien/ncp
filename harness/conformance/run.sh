@@ -16,6 +16,10 @@
 # scenarios as an agent with no TTY. expected-failures.yaml and
 # expected-failures-agent.yaml list the known failures with their reasons.
 # The suite fails on a new failure and on an entry that passes.
+#
+# After the runs, report.mjs writes results/conformance.json from the
+# requirements runs, also when a run failed, so that the file shows the
+# failure. The exit status still tells if each run succeeded.
 set -eu
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -27,10 +31,11 @@ if [ ! -f "$suite" ]; then
 	exit 2
 fi
 
-cargo build --locked -p ncp-testkit --bin ncp-cli --bin ncp-conformance
-adapter="$root/target/debug/ncp-conformance"
+# The old results go first, so that a failed build leaves no old file.
 results="$here/results"
 rm -rf "$results"
+cargo build --locked -p ncp-testkit --bin ncp-cli --bin ncp-conformance
+adapter="$root/target/debug/ncp-conformance"
 
 run_with() {
 	expected="$1"
@@ -45,8 +50,9 @@ run() {
 	run_with expected-failures.yaml "$@"
 }
 
+versions="2025-11-25 2026-07-28"
 status=0
-for version in 2025-11-25 2026-07-28; do
+for version in $versions; do
 	echo "== requirements $version"
 	run --requirements "$version" -o "$results/requirements-$version" || status=1
 	echo "== all scenarios $version"
@@ -60,4 +66,12 @@ for version in 2025-11-25 2026-07-28; do
 	(NCP_CONFORMANCE_AGENT=1 run_with expected-failures-agent.yaml --suite all \
 		--spec-version "$version" -o "$results/agent-$version") || status=1
 done
+# An assignment stops the script when its command fails. A command
+# substitution in an argument does not stop it.
+ncp_version="$("$root/target/debug/ncp-cli" --version)"
+commit="$(git -C "$root" rev-parse HEAD)"
+# In the root, rustup uses the toolchain of rust-toolchain.toml.
+target="$(cd "$root" && rustc --print host-tuple)"
+# shellcheck disable=SC2086 # Each version is one argument.
+node "$here/report.mjs" "${ncp_version#ncp }" "$commit" "$target" $versions || status=1
 exit "$status"

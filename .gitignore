@@ -2,3 +2,5 @@
 /.scratch
 /dist
 .DS_Store
+# The Pages workflow puts the results file of its run here.
+/site/public/conformance/conformance.json
