@@ -55,6 +55,8 @@ details[open] > summary::before { content: "▾ "; }
 /* A name with no marker starts where the names with a marker start. */
 .matrix .scenario th:not(:has(button)) { padding-left: calc(1.5rem + 1ch + 0.25rem); }
 .matrix [data-collapsed] :is(.scenario, .detail) { display: none; }
+/* A reason can break at a space or a hyphen, so that the table fits a phone. */
+.matrix > * > tr > .reason, .matrix td small { white-space: normal; }
 .checks { font-size: 0.875rem; }
 /* A result word is short. Broken in the middle, it is hard to read. */
 .checks td:first-child { white-space: nowrap; overflow-wrap: normal; }
@@ -78,7 +80,7 @@ details[open] > summary::before { content: "▾ "; }
 <main>
 <div class="stack">
 <h1>MCP conformance of ncp</h1>
-<p>When available, this page shows a result from the official <a href="https://github.com/modelcontextprotocol/conformance">MCP conformance suite</a> for <a href="https://github.com/darcien/ncp">ncp</a>. It does not show whether the current <code>main</code> commit passes.</p>
+<p>This page shows the result of the official <a href="https://github.com/modelcontextprotocol/conformance">MCP conformance suite</a> for one commit of <a href="https://github.com/darcien/ncp">ncp</a>.</p>
 <p id="status" role="status">The page cannot show the conformance result because its script did not load.</p>
 </div>
 <div id="report"></div>

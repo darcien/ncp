@@ -136,7 +136,7 @@ const checksTable = (checks) => {
 
 // One detail row for each failed scenario. When the failed checks are the
 // same in each revision, the row shows them one time.
-const detailRow = (row, runs) => {
+const detailRow = (row, runs, columns) => {
   const failed = row.cells
     .map((s, column) => (isFailed(s) ? { s, revisions: [runs[column].revision] } : null))
     .filter(Boolean);
@@ -145,15 +145,29 @@ const detailRow = (row, runs) => {
   const parts = failed.every((f) => signature(f) === signature(failed[0]))
     ? [{ s: failed[0].s, revisions: failed.flatMap((f) => f.revisions) }]
     : failed;
-  return `<tr class="detail" id="${idOf(row.name)}" hidden><td colspan="${runs.length + 1}"><div class="stack">
+  return `<tr class="detail" id="${idOf(row.name)}" hidden><td colspan="${columns}"><div class="stack">
 ${parts
   .map((part) => `<h3><code>${escape(row.name)}</code> in ${revisionNames(part.revisions)}</h3>${checksTable(part.s.checks)}`)
   .join("")}</div></td></tr>`;
 };
 
-const cell = (scenario) => scenario
-  ? `<td>${result(isFailed(scenario) ? "failed" : "passed")}${isRequired(scenario) ? "" : `<br><small>${escape(scenario.requirement)}</small>`}</td>`
+// Each row of the main table counts as required. If a revision does not
+// score the scenario, its cell says so, because that table has no reason
+// column.
+const cell = (scenario, showReason) => scenario
+  ? `<td>${result(isFailed(scenario) ? "failed" : "passed")}${showReason && !isRequired(scenario) ? `<br><small>not scored (${escape(scenario.requirement)})</small>` : ""}</td>`
   : notInRevision;
+
+// All revisions of a row usually give the same reason. If not, each reason
+// names its revision.
+const reasonOf = (row, runs) => {
+  const reasons = row.cells
+    .map((s, column) => s && { reason: s.requirement, revision: runs[column].revision })
+    .filter(Boolean);
+  return reasons.every((r) => r.reason === reasons[0].reason)
+    ? escape(reasons[0].reason)
+    : reasons.map((r) => `${escape(r.reason)} in MCP ${escape(r.revision)}`).join("<br>");
+};
 
 // The name of a failed scenario opens its checks, as the name of an area
 // opens its scenarios. The checks of a passed scenario tell nothing new.
@@ -164,27 +178,34 @@ const scenarioName = (row) => {
     : name;
 };
 
-const tally = (rows, column, requiredOnly) => {
-  const present = rows.map((row) => row.cells[column]).filter((s) => s && (!requiredOnly || isRequired(s)));
+const tally = (rows, column) => {
+  const present = rows.map((row) => row.cells[column]).filter((s) => s && isRequired(s));
   if (!present.length) return notInRevision;
   return countCell(present.filter((s) => !isFailed(s)).length, present.length);
 };
 
+// The table of scenarios that are not scored has a column for the reason.
+const scenarioRows = (rows, runs, withReason = false) =>
+  rows
+    .map(
+      (row) => `<tr class="scenario"><th scope="row">${scenarioName(row)}</th>${
+        withReason ? `<td class="reason">${reasonOf(row, runs)}</td>` : ""
+      }${row.cells.map((s) => cell(s, !withReason)).join("")}</tr>
+${detailRow(row, runs, runs.length + (withReason ? 2 : 1))}`,
+    )
+    .join("");
+
+const headerRow = (runs, extra = "") =>
+  `<tr><th scope="col">Scenario</th>${extra}${runs.map((run) => `<th scope="col">MCP ${escape(run.revision)}</th>`).join("")}</tr>`;
+
 // A group is open only when a required scenario in it failed, so that the
 // table shows the answer first and the detail on demand.
-const group = (title, rows, runs, requiredOnly = true) => {
+const group = (title, rows, runs) => {
   const open = rows.some((row) => row.cells.some((s) => s && isRequired(s) && isFailed(s)));
   return `<tbody${open ? "" : " data-collapsed"}>
 <tr class="area"><th scope="rowgroup"><button type="button" aria-expanded="${open}">${title}</button></th>
- ${runs.map((run, column) => tally(rows, column, requiredOnly)).join("")}</tr>
-${rows
-  .map(
-    (row) => `<tr class="scenario"><th scope="row">${scenarioName(row)}${
-      row.requirement === "required" ? "" : ` <small>${escape(row.requirement)}</small>`
-    }</th>${row.cells.map(cell).join("")}</tr>
-${detailRow(row, runs)}`,
-  )
-  .join("")}
+ ${runs.map((run, column) => tally(rows, column)).join("")}</tr>
+${scenarioRows(rows, runs)}
 </tbody>`;
 };
 
@@ -192,7 +213,6 @@ ${detailRow(row, runs)}`,
 // so that the answer and the table are one view.
 const matrix = (runs, rows) => {
   const required = rows.filter((row) => row.requirement === "required");
-  const other = rows.filter((row) => row.requirement !== "required");
   // The largest area first, and "Other" last.
   const size = (area) => (area ? required.filter((row) => row.area === area).length : -1);
   const areas = [...new Set(required.map((row) => row.area))].sort((a, b) => size(b) - size(a));
@@ -202,12 +222,25 @@ const matrix = (runs, rows) => {
   };
   return `<table class="matrix">
 <thead>
-<tr><th scope="col">MCP revision</th>${runs.map((run) => `<th scope="col">${escape(run.revision)}</th>`).join("")}</tr>
+${headerRow(runs)}
 <tr><th scope="row">Required scenarios that passed</th>${runs.map(score).join("")}</tr>
 </thead>
 ${areas.map((area) => group(areaTitle(area), required.filter((row) => row.area === area), runs)).join("")}
- ${other.length ? group("Not required", other, runs, false) : ""}
 </table>`;
+};
+
+// A separate table keeps the scenarios that are not scored out of the
+// score of the first table.
+const notScored = (runs, rows) => {
+  const other = rows.filter((row) => row.requirement !== "required");
+  if (!other.length) return "";
+  return `<section class="stack"><h2>Not scored</h2>
+<p>These scenarios do not count for conformance.</p>
+<table class="matrix">
+<thead>${headerRow(runs, '<th scope="col">Reason</th>')}</thead>
+<tbody>${scenarioRows(other, runs, true)}</tbody>
+</table>
+</section>`;
 };
 
 // Each failed required scenario shows one time with its first failed
@@ -243,24 +276,27 @@ export function render(report) {
 <dl>
 <dt>Tested commit</dt><dd>${link(`${repo}/commit/${commit}`, commit)}</dd>
 <dt>Test date</dt><dd>${escape(report.date.slice(0, 10))} (UTC)</dd>
-<dt>Version</dt><dd>${escape(version)}, from <code>Cargo.toml</code></dd>
+<dt>ncp version</dt><dd>${escape(version)}, from <code>Cargo.toml</code></dd>
 <dt>Build</dt><dd>ncp-cli, the test build of ncp for ${escape(target)}. It has a fake Keychain, a fake browser and a fake TTY.</dd>
-<dt>Suite</dt><dd>${escape(report.suite.version)}</dd>
+<dt>Suite version</dt><dd>${escape(report.suite.version)}</dd>
 </dl>
 </section>
-<p>This table shows two requirement runs. It does not show the six other suite runs, which can fail. A full score means all required scenarios in that run passed. Non-required scenarios can fail.</p>
 ${matrix(runs, rows)}
 ${failures(runs, rows, known)}
+${notScored(runs, rows)}
 <section class="stack"><h2>Terms</h2>
 <dl>
-<dt>${result("passed")}</dt><dd>Passed.</dd>
-<dt>${result("failed")}</dt><dd>Failed.</dd>
+<dt>${result("passed")}</dt><dd>The scenario or the check passed. In an area row, all required scenarios of the area passed.</dd>
+<dt>${result("failed")}</dt><dd>The scenario or the check failed. In an area row, one or more required scenarios of the area failed.</dd>
 <dt>${result("warning")}</dt><dd>The check has a warning. A warning fails the scenario.</dd>
-<dt class="none">${marks.none}</dt><dd>The revision does not have the scenario.</dd>
-<dt>required</dt><dd>The revision requires the scenario. Only these scenarios count for conformance.</dd>
+<dt class="none">${marks.none}</dt><dd>The suite does not run the scenario for the MCP revision. In an area row, the area has no required scenario for the revision.</dd>
+<dt>Scenario</dt><dd>A test of the suite. It has one or more checks.</dd>
+<dt>Check</dt><dd>One condition that a scenario examines.</dd>
+<dt>Required scenario</dt><dd>The suite requires the scenario for the MCP revision. Only required scenarios count for conformance.</dd>
+<dt>Not scored</dt><dd>The suite runs the scenario and reports it, but the scenario does not count for conformance.</dd>
 <dt>extension</dt><dd>The scenario tests an optional extension of MCP.</dd>
 <dt>added-after-release</dt><dd>The suite added the scenario after MCP published the revision.</dd>
-<dt>pending</dt><dd>The reference client of the suite cannot pass the scenario yet.</dd>
+<dt>pending</dt><dd>The reference fixture of the suite cannot pass the scenario yet.</dd>
 </dl>
 </section>`;
 }
