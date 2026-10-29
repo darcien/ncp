@@ -66,16 +66,20 @@ fn fixture(mode: &str, pid_file: &Path) -> serde_json::Value {
 }
 
 fn wait_for_file(path: &Path) -> String {
+    wait_for(path, |text| !text.is_empty())
+}
+
+fn wait_for(path: &Path, done: impl Fn(&str) -> bool) -> String {
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
         if let Ok(text) = std::fs::read_to_string(path)
-            && !text.is_empty()
+            && done(&text)
         {
             return text;
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    panic!("no file {}", path.display())
+    panic!("no expected text in {}", path.display())
 }
 
 fn signal(pid: u32, name: &str) -> bool {
@@ -174,6 +178,8 @@ fn ctrl_c_during_a_question_exits_130() {
     let home = Home::new("question");
     let pid_file = home.path("server.pid");
     home.configure(&json!({"fx": fixture("modern", &pid_file)}));
+    // Stderr goes to a file, so that the test can see the question.
+    let stderr_file = home.path("stderr");
     // A person at a TTY who does not answer: stdin stays open.
     let mut child = Command::new(NCP)
         .args(["tool", "call", "fx", "elicit", "text=x"])
@@ -183,15 +189,15 @@ fn ctrl_c_during_a_question_exits_130() {
         .env("NCP_TEST_TTY", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(std::fs::File::create(&stderr_file).unwrap())
         .spawn()
         .unwrap();
     let stdin = child.stdin.take();
     let server = wait_for_file(&pid_file);
-    // The question comes after the first round of the call.
-    std::thread::sleep(Duration::from_millis(500));
-    let (code, elapsed, stderr) = interrupt(child);
+    wait_for(&stderr_file, |text| text.contains("Who are you?"));
+    let (code, elapsed, _) = interrupt(child);
     drop(stdin);
+    let stderr = std::fs::read_to_string(&stderr_file).unwrap();
     assert_eq!(code, 130, "{stderr}");
     assert!(stderr.contains("Who are you?"), "{stderr}");
     assert!(elapsed < Duration::from_secs(6), "{elapsed:?}");
