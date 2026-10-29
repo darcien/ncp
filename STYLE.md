@@ -82,9 +82,12 @@ not check. A text that the test does not check obeys the table too.
 One word has one meaning. Use the word of this table for its meaning, and
 no other word for it.
 
+A term is a domain noun or a noun with a qualifier, not a plain English word
+alone. A text needs plain words such as "value" and "server" in their usual
+meaning, so the table cannot reserve them.
+
 | Term | Meaning |
 |---|---|
-| server | A named server. |
 | entry | The object of a server in a configuration file: "the entry of the server `web`". |
 | global file | `~/.config/ncp/mcp.json`, in the XDG configuration folder. |
 | project file | The `.mcp.json` of a project. |
@@ -95,8 +98,8 @@ no other word for it.
 | store (verb) | Put a credential into a credential store. Never "keep" or "place". As a noun, "the store" can stand for a credential store when the diagnostic already names it. |
 | delete | Take a stored item out of a credential store. |
 | remove | Take a part out of a file, or take the trust out. |
-| item | One record in a credential store. |
-| value | The secret text of an item. |
+| stored item | One record in a credential store. "The item" can stand for it when the text is about a credential store. |
+| stored value | The secret text of a stored item. "The value" can stand for it when the text names the secret or the item. |
 | destination | Where a stored value can go: an origin, an issuer, or the stdio servers. |
 | origin | The scheme, host and port of a URL. |
 | HTTP server | In a sentence. Write `http` only as the value of `type`. |
@@ -133,7 +136,7 @@ Interactive text (a prompt, "Type y, n or c.") also goes to stderr. It has no
 prefix and no JSON key (see "Plain text").
 
 A line that `ncp` writes with a prefix starts at column 0 only with that
-prefix, and each other line of the same item is indented or empty. Thus a
+prefix, and each continuation line is indented or empty. Thus a
 line of a server cannot look like a line of `ncp` that has a prefix. A line
 of a server can start with any text, because it passes with no change.
 
