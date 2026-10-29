@@ -364,7 +364,7 @@ async fn login(
     let callback = wait_for_redirect(listener, &redirect, &expected, read_stdin, name).await?;
     // A refresh of the old tokens in another process must not save over
     // the new tokens.
-    let _lock = hold_tokens_lock(context, &server.name).await;
+    let _lock = hold_tokens_lock(context, &server.name).await?;
     session
         .handle_callback_with_issuer(&callback.code, &callback.state, callback.iss.as_deref())
         .await
@@ -438,19 +438,22 @@ fn refresh_lock(context: &Context<'_>, server: &ServerName) -> std::path::PathBu
         .with_file_name(format!("oauth-{}.lock", server.as_str()))
 }
 
-// Gives `None` when `ncp` cannot make the lock file. This is not an error,
+// Gives `None` when `ncp` cannot get the lock. This is not an error,
 // because the lock only puts a refresh, a login and a logout in order.
+// Ctrl-C ends the wait at once. Its thread stops at the limit or at the exit.
 async fn hold_tokens_lock(
     context: &Context<'_>,
     server: &ServerName,
-) -> Option<crate::private_file::Lock> {
+) -> Result<Option<crate::private_file::Lock>, Failure> {
     let path = refresh_lock(context, server);
-    let locked = crate::store::run_blocking(crate::store::CALL_LIMIT, move || {
+    let wait = crate::store::run_blocking(crate::store::CALL_LIMIT, move || {
         Ok(crate::oauth::store::lock_tokens(&path))
-    })
-    .await;
-    match locked {
-        Ok(Ok(lock)) => Some(lock),
+    });
+    match secrets::interruptible(context, wait).await {
+        Ok(Ok(lock)) => Ok(Some(lock)),
+        Err(crate::store::StoreError::Interrupted) => {
+            Err(session::interrupted(Some(server.as_str())))
+        }
         // Another process holds the lock past its limit: go on, but say so,
         // because that process can undo this change.
         Ok(Err(error)) if error.kind() == std::io::ErrorKind::TimedOut => {
@@ -462,9 +465,9 @@ async fn hold_tokens_lock(
                 .about(server.as_str())
                 .caused_by(&error),
             );
-            None
+            Ok(None)
         }
-        _ => None,
+        _ => Ok(None),
     }
 }
 
@@ -746,7 +749,7 @@ async fn add_required_scopes(
 ) -> Result<(), Failure> {
     // The read and the write of the item must not go around the save of a
     // login or a refresh in another process.
-    let _lock = hold_tokens_lock(context, &server.name).await;
+    let _lock = hold_tokens_lock(context, &server.name).await?;
     let key = CredentialKey::OAuthTokens(server.name.clone());
     if let Some((store, secret)) = find_tokens(context, server).await? {
         let name = server.name.as_str();
@@ -1504,7 +1507,7 @@ async fn logout(context: &Context<'_>, word: &str) -> Result<(), Failure> {
     remote(server)?;
     let key = CredentialKey::OAuthTokens(server.name.clone());
     // A refresh in another process must not bring the tokens back.
-    let _lock = hold_tokens_lock(context, &server.name).await;
+    let _lock = hold_tokens_lock(context, &server.name).await?;
     let removed = remove_everywhere(context, name, &key).await?;
     crate::list_cache::remove(&crate::list_cache::path(
         &context.paths.cache_dir,
@@ -1537,6 +1540,9 @@ pub(super) struct TokenRemoval {
     /// A place keeps tokens of the name that are for another server, or
     /// that `ncp` cannot compare.
     pub kept: bool,
+    /// The error of a Ctrl-C that stopped the work before `ncp` checked
+    /// each place.
+    pub interrupted: Option<Failure>,
 }
 
 enum Found {
@@ -1553,14 +1559,23 @@ enum Found {
 ///
 /// A store that cannot answer gives only a warning. The remove of the
 /// entry must not depend on the store, and the binding stops the use of
-/// the old tokens.
+/// the old tokens. Ctrl-C stops the work, and the tokens that are not
+/// deleted yet stay.
 pub(super) async fn remove_bound_items(
     context: &Context<'_>,
     server: &ServerName,
     resource: Option<&str>,
     issuer: Option<&str>,
 ) -> TokenRemoval {
-    let _lock = hold_tokens_lock(context, server).await;
+    let _lock = match hold_tokens_lock(context, server).await {
+        Ok(lock) => lock,
+        Err(failure) => {
+            return TokenRemoval {
+                interrupted: Some(failure),
+                ..TokenRemoval::default()
+            };
+        }
+    };
     let mut removal = TokenRemoval::default();
     for (place, opened) in secrets::places(context).await {
         let found = match opened {
@@ -1572,6 +1587,12 @@ pub(super) async fn remove_bound_items(
             Ok(Found::Nothing) => {}
             Ok(Found::Removed) => removal.removed.push(place),
             Ok(Found::Kept) => removal.kept = true,
+            Err(crate::store::StoreError::Interrupted) => {
+                return TokenRemoval {
+                    interrupted: Some(session::interrupted(Some(server.as_str()))),
+                    ..removal
+                };
+            }
             Err(error) => context.ui.warn(
                 &Warning::new(format!(
                     "ncp cannot check {} for tokens of the server {}, so the tokens stay",

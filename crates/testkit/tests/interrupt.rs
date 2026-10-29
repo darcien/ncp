@@ -203,3 +203,70 @@ fn ctrl_c_during_a_question_exits_130() {
     assert!(elapsed < Duration::from_secs(6), "{elapsed:?}");
     assert!(!is_alive(&server), "server {server} is alive");
 }
+
+// Another process holds the lock of the tokens of `web`. Runs `ncp -v ARGS`,
+// and sends SIGINT during the wait for the lock. Gives the exit code, the
+// time to the exit, stdout and stderr.
+fn interrupt_the_wait_for_the_tokens_lock(
+    home: &Home,
+    args: &[&str],
+) -> (i32, Duration, String, String) {
+    home.configure(&json!({"web": {"type": "http", "url": "http://127.0.0.1:9/mcp"}}));
+    let state = home.path(".local/state/ncp");
+    std::fs::create_dir_all(&state).unwrap();
+    let lock = std::fs::File::create(state.join("oauth-web.lock")).unwrap();
+    lock.lock().unwrap();
+    let (stdout_file, stderr_file) = (home.path("stdout"), home.path("stderr"));
+    let child = Command::new(NCP)
+        .arg("-v")
+        .args(args)
+        .env_clear()
+        .env("HOME", &home.root)
+        .env("XDG_CONFIG_HOME", home.root.join("config"))
+        .stdin(Stdio::null())
+        .stdout(std::fs::File::create(&stdout_file).unwrap())
+        .stderr(std::fs::File::create(&stderr_file).unwrap())
+        .spawn()
+        .unwrap();
+    // The handler of Ctrl-C is in place before the first log line.
+    wait_for(&stderr_file, |text| {
+        text.contains("debug: configuration file:")
+    });
+    let (code, elapsed, _) = interrupt(child);
+    (
+        code,
+        elapsed,
+        std::fs::read_to_string(&stdout_file).unwrap(),
+        std::fs::read_to_string(&stderr_file).unwrap(),
+    )
+}
+
+const LOCK_INTERRUPTED: &str =
+    "error: ncp stopped the work with the server `web` because of an interrupt";
+
+#[test]
+fn ctrl_c_during_the_wait_for_the_tokens_lock_exits_130() {
+    let home = Home::new("tokens-lock");
+    let (code, elapsed, _, stderr) =
+        interrupt_the_wait_for_the_tokens_lock(&home, &["auth", "logout", "web"]);
+    assert_eq!(code, 130, "{stderr}");
+    assert!(stderr.contains(LOCK_INTERRUPTED), "{stderr}");
+    assert!(elapsed < Duration::from_secs(6), "{elapsed:?}");
+}
+
+#[test]
+fn ctrl_c_during_the_wait_for_the_tokens_lock_of_server_remove_reports_the_removed_entry() {
+    let home = Home::new("remove-lock");
+    let (code, elapsed, stdout, stderr) =
+        interrupt_the_wait_for_the_tokens_lock(&home, &["server", "remove", "web"]);
+    assert_eq!(code, 130, "{stderr}");
+    assert!(stderr.contains(LOCK_INTERRUPTED), "{stderr}");
+    assert!(elapsed < Duration::from_secs(6), "{elapsed:?}");
+    let config = std::fs::read_to_string(home.path("config/ncp/mcp.json")).unwrap();
+    assert!(!config.contains("web"), "{config}");
+    assert!(stdout.starts_with("Removed web from "), "{stdout}");
+    assert!(
+        stdout.contains("OAuth tokens of web, if any, stay: ncp stopped before it checked each credential store."),
+        "{stdout}"
+    );
+}

@@ -790,7 +790,9 @@ pub async fn remove(context: &Context<'_>, name: &str, global: bool) -> Result<(
         (None, Some(entry)) => remove_tokens(context, name, entry).await,
         _ => TokenRemoval::default(),
     };
-    report_removed(context, &target, name, still.as_deref(), &tokens)
+    // The file has no entry now, so the result shows also after Ctrl-C.
+    report_removed(context, &target, name, still.as_deref(), &tokens)?;
+    tokens.interrupted.map_or(Ok(()), Err)
 }
 
 fn report_removed(
@@ -822,6 +824,9 @@ fn report_removed(
                 tokens.kept.then(|| format!(
                     "The OAuth tokens of {name} stay: they are for another URL or issuer, or ncp cannot compare them."
                 )),
+                tokens.interrupted.is_some().then(|| format!(
+                    "OAuth tokens of {name}, if any, stay: ncp stopped before it checked each credential store."
+                )),
             ]
             .into_iter()
             .flatten()
@@ -834,7 +839,7 @@ fn report_removed(
                 "scope": target.scope.word(),
                 "file": target.file,
                 "credentialStores": places,
-                "tokensStay": still.is_some() || tokens.kept,
+                "tokensStay": still.is_some() || tokens.kept || tokens.interrupted.is_some(),
             })
         },
     )
