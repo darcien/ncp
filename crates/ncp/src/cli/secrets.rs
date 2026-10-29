@@ -1217,13 +1217,13 @@ pub(super) async fn rows_of_entry(
 }
 
 /// `ncp` knows only the global file and the project file of the current
-/// folder. A list of the project files of the user comes after the first
+/// directory. A list of the project files of the user comes after the first
 /// release.
-const UNUSED_SCOPE: &str = "ncp checked only the global file and the project file of this folder. To check a project in another folder, run `ncp secret list` in that folder.";
+const UNUSED_SCOPE: &str = "ncp checked only the global file and the project file of this directory. To check a project in another directory, run `ncp secret list` in that directory.";
 
 /// The same limit after a delete: the item is gone, so the fix is to store
 /// the value again.
-const DELETED_SCOPE: &str = "ncp checked only the global file and the project file of this folder. If a project in another folder used a deleted item, run `ncp secret set <NAME>` in that folder to store the value again.";
+const DELETED_SCOPE: &str = "ncp checked only the global file and the project file of this directory. If a project in another directory used a deleted item, run `ncp secret set <NAME>` in that directory to store the value again.";
 
 async fn list(context: &Context<'_>) -> Result<(), Failure> {
     // The items come from the stores. A configuration file that does not

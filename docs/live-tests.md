@@ -3,7 +3,7 @@
 The live tests run `ncp` against the real parts of this Mac and a real
 server: the login Keychain, a browser, the system settings, and a login
 with the account of the maintainer. The other tests are sealed: they use only local stubs,
-fixtures and temporary folders. A live test changes the state of this Mac,
+fixtures and temporary directories. A live test changes the state of this Mac,
 so only the maintainer runs them, and the git hook only compiles them.
 
 Run them before a release, and after a change to the store, the login or
@@ -18,7 +18,7 @@ mise run live keychain   # One test. The filter is a part of the test name.
 
 The task builds `ncp`, and runs the tests in
 `crates/testkit/tests/live.rs`. Each test uses its own temporary XDG
-folders, so the configuration of the maintainer does not change. The Keychain is shared:
+directories, so the configuration of the maintainer does not change. The Keychain is shared:
 the tests use only the names `NCP_LIVE_CHECK` and `ncp-live-cf`, and they
 delete their items at the end, also after a failure. The questions show
 on the terminal with `>>>`.

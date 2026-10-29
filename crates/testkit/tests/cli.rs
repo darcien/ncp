@@ -2782,7 +2782,7 @@ fn resource_read_gives_raw_contents_in_a_pipe_and_json_on_request() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn refresh_of_native_tokens_works_when_the_state_folder_is_read_only() {
+async fn refresh_of_native_tokens_works_when_the_state_dir_is_read_only() {
     let (auth, fixture) = oauth_fixture(AuthSettings {
         expires_in: 5,
         ..AuthSettings::default()

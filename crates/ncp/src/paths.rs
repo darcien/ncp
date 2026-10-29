@@ -8,7 +8,7 @@ use crate::expand::Env;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paths {
     pub config_file: PathBuf,
-    /// The folder of the caches: the protocol version cache and the list cache.
+    /// The directory of the caches: the protocol version cache and the list cache.
     pub cache_dir: PathBuf,
     pub version_cache: PathBuf,
     pub credential_file: PathBuf,

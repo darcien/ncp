@@ -21,7 +21,7 @@ const FAKE: &str = env!("CARGO_BIN_EXE_fake-security");
 const HARD_VALUE: &str =
     "he said \"hi\" and 'bye' \\ $HOME `x` #\n  tab\t\r\n\u{fc}n\u{ef}c\u{f8}d\u{e9} \u{1f511}";
 
-// A new folder with a link to the fake program. The fake keeps its files next
+// A new directory with a link to the fake program. The fake keeps its files next
 // to the link.
 fn keychain(test: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("ncp-security-{}-{test}", std::process::id()));

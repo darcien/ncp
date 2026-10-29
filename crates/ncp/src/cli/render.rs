@@ -247,7 +247,7 @@ fn shown_url(url: &str) -> String {
     }
 }
 
-// A path on one line: a folder name can hold a new line.
+// A path on one line: a directory name can hold a new line.
 fn path_text(path: &Path) -> String {
     super::ui::printable(&super::ui::one_line(&path.display().to_string())).into_owned()
 }

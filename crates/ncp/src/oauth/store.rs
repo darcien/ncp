@@ -380,7 +380,7 @@ impl RmcpStore for TokenStore {
         let Some(path) = self.refresh_lock.clone() else {
             return Ok(None);
         };
-        // `ncp` cannot make a lock file in a read-only home folder. That must
+        // `ncp` cannot make a lock file in a read-only home directory. That must
         // not stop a refresh of tokens in the native store, because the lock
         // only puts refreshes in order. A wait past the limit is an error.
         let lock = store::run_blocking(store::CALL_LIMIT, move || match lock_tokens(&path) {

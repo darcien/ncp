@@ -21,7 +21,7 @@ comes from the current code.
 - New text copies the form of the nearest existing text. The nearest
   existing text is a text of the same kind (error, hint, prompt, help line
   or line on stdout) in the same file. If the file has none, it is a text of
-  the same kind in the same module folder.
+  the same kind in the same module directory.
 - To change a rule, change this document first, after the maintainer
   agrees. Put a rule change and the changes of the texts that it makes
   false in one commit.
@@ -57,7 +57,7 @@ A test fails when a sentence of output text has one of these phrases.
 | Do not use | Use |
 |---|---|
 | `invalid` | not valid |
-| `directory` | folder |
+| `folder` | directory |
 | `please` | (leave it out) |
 | `simply` | (leave it out) |
 | `basically` | (leave it out) |
@@ -89,7 +89,7 @@ meaning, so the table cannot reserve them.
 | Term | Meaning |
 |---|---|
 | entry | The object of a server in a configuration file: "the entry of the server `web`". |
-| global file | `~/.config/ncp/mcp.json`, in the XDG configuration folder. |
+| global file | `~/.config/ncp/mcp.json`, in the XDG configuration directory. |
 | project file | The `.mcp.json` of a project. |
 | configuration file | The global file or the file of `--config-file`. Use it when the text can mean both. |
 | native store | The macOS Keychain or the Linux Secret Service. |
@@ -103,7 +103,7 @@ meaning, so the table cannot reserve them.
 | destination | Where a stored value can go: an origin, an issuer, or the stdio servers. |
 | origin | The scheme, host and port of a URL. |
 | HTTP server | In a sentence. Write `http` only as the value of `type`. |
-| folder | Never "directory". |
+| directory | Never "folder". |
 
 ## Streams and formats
 

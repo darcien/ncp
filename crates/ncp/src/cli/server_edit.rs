@@ -55,8 +55,8 @@ impl Scope {
         }
     }
 
-    /// Only for the default global file, `ncp` makes the missing folders.
-    fn makes_folders(self) -> bool {
+    /// Only for the default global file, `ncp` makes the missing directories.
+    fn makes_dirs(self) -> bool {
         self == Self::Global { named: false }
     }
 }
@@ -245,8 +245,8 @@ fn global_hint() -> Hint {
 }
 
 // `server add` writes to the project file. It writes to the global file
-// with `--global`, with `--config-file`, or in the home folder. With no
-// project file, it makes `.mcp.json` in the current folder, because the
+// with `--global`, with `--config-file`, or in the home directory. With no
+// project file, it makes `.mcp.json` in the current directory, because the
 // project is the place that a team shares.
 async fn add_target(
     context: &Context<'_>,
@@ -269,20 +269,20 @@ async fn add_target(
             )
         }
         ProjectFile::Absent(_) => {
-            let folder = std::env::current_dir()
+            let dir = std::env::current_dir()
                 .and_then(fs::canonicalize)
                 .map_err(|error| {
-                    Failure::protocol("ncp cannot find the current folder").caused_by(&error)
+                    Failure::protocol("ncp cannot find the current directory").caused_by(&error)
                 })?;
             let home = context
                 .env
                 .get("HOME")
                 .and_then(|home| fs::canonicalize(home).ok());
-            if home.as_deref() == Some(folder.as_path()) {
+            if home.as_deref() == Some(dir.as_path()) {
                 return global_target(context);
             }
             Ok(Target {
-                file: folder.join(project::FILE_NAME),
+                file: dir.join(project::FILE_NAME),
                 scope: Scope::Project,
                 base: None,
             })
@@ -403,7 +403,7 @@ async fn change(
         return Ok(Outcome::Unchanged);
     };
     let mode = mode_for_write(target, &real)?;
-    if target.scope.makes_folders() {
+    if target.scope.makes_dirs() {
         DirBuilder::new()
             .recursive(true)
             .mode(0o700)
@@ -470,7 +470,7 @@ fn real_path(file: &Path) -> Result<PathBuf, Failure> {
 }
 
 // The mode of the old file, or `0600` for a new one. A rename needs only
-// the access to the folder, so a read-only file gets its own check.
+// the access to the directory, so a read-only file gets its own check.
 fn mode_for_write(target: &Target, real: &Path) -> Result<u32, Failure> {
     match fs::metadata(real) {
         Ok(metadata) => {
@@ -644,7 +644,7 @@ fn next_steps(context: &Context<'_>, name: &str, entry: &Entry, rows: &[SecretRo
 }
 
 // A warning when the other file has the name: it says which entry takes
-// effect in this folder.
+// effect in this directory.
 fn warn_about_other_file(
     context: &Context<'_>,
     view: Option<&Loaded>,
@@ -659,7 +659,7 @@ fn warn_about_other_file(
             .and_then(|text| config_edit::entry(&text, name).ok().flatten())
             .map(|_| {
                 format!(
-                    "The global file {} also has an entry of the server {}. The entry in {} takes effect in this folder.",
+                    "The global file {} also has an entry of the server {}. The entry in {} takes effect in this directory.",
                     path_code(global),
                     code(name),
                     path_code(&target.file)
@@ -667,7 +667,7 @@ fn warn_about_other_file(
             }),
         Scope::Global { .. } => view.and_then(|view| view.project_of(name)).map(|project| {
             format!(
-                "The project file {} also has an entry of the server {}. Its entry takes effect in this folder.",
+                "The project file {} also has an entry of the server {}. Its entry takes effect in this directory.",
                 path_code(&project.file),
                 code(name)
             )
@@ -781,7 +781,7 @@ pub async fn remove(context: &Context<'_>, name: &str, global: bool) -> Result<(
         }),
         Scope::Global { .. } => loaded.project_of(name).map(|project| {
             format!(
-                "the entry of {name} in {} still takes effect in this folder",
+                "the entry of {name} in {} still takes effect in this directory",
                 project.file.display()
             )
         }),
@@ -818,7 +818,7 @@ fn report_removed(
                 Some(format!("Removed {name} from {}.", target.file.display())),
                 still.map(|still| format!("OAuth tokens of {name}, if any, stay: {still}.")),
                 (!removed.is_empty()).then(|| format!(
-                    "Deleted the OAuth tokens of {name} from {}. A project in another folder with the same entry needs a new login.",
+                    "Deleted the OAuth tokens of {name} from {}. A project in another directory with the same entry needs a new login.",
                     removed.join(" and ")
                 )),
                 tokens.kept.then(|| format!(

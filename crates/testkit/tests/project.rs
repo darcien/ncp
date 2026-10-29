@@ -227,11 +227,11 @@ fn the_same_bytes_at_another_path_ask_again() {
 }
 
 #[test]
-fn one_file_linked_into_two_folders_asks_in_each_folder() {
+fn one_file_linked_into_two_dirs_asks_in_each_dir() {
     let mut home = Home::new("p-link").project("shared", &json!({"fx": fixture()}));
     let target = home.cwd.join(".mcp.json");
-    for folder in ["a", "b"] {
-        let dir = home.root.join(folder);
+    for name in ["a", "b"] {
+        let dir = home.root.join(name);
         std::fs::create_dir_all(dir.join(".git")).unwrap();
         std::os::unix::fs::symlink(&target, dir.join(".mcp.json")).unwrap();
     }
@@ -621,7 +621,7 @@ fn delete_unused_stops_when_an_untrusted_entry_names_the_secret() {
     let run = home.run(&["secret", "list"]);
     assert!(
         messages(&run, "hint").iter().any(|hint| hint.contains(
-            "To check a project in another folder, run `ncp secret list` in that folder"
+            "To check a project in another directory, run `ncp secret list` in that directory"
         )),
         "{}",
         run.describe()

@@ -34,7 +34,7 @@ fn ncp() -> PathBuf {
 }
 
 // A home with the real `HOME`, so that `/usr/bin/security` finds the
-// login Keychain. The XDG folders stay in the test home.
+// login Keychain. The XDG directories stay in the test home.
 fn live_home(test: &str) -> Home {
     Home::new(test)
         .unset("HOME")
@@ -149,8 +149,8 @@ const LIVE_SERVER: &str = "ncp-live-cf";
 #[test]
 #[ignore = "needs a browser and a Cloudflare account"]
 fn oauth_login_with_a_browser_keeps_the_tokens_in_the_native_store() {
-    // `server add` writes a new `.mcp.json` in a project folder, which
-    // the `.git` folder marks, as for a user in a repository.
+    // `server add` writes a new `.mcp.json` in a project directory, which
+    // the `.git` directory marks, as for a user in a repository.
     let mut home = live_home("oauth");
     home.cwd = home.root.join("project");
     std::fs::create_dir_all(home.cwd.join(".git")).unwrap();

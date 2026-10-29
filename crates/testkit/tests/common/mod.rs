@@ -21,7 +21,7 @@ const FAKE_SECURITY: &str = env!("CARGO_BIN_EXE_fake-security");
 pub struct Home {
     pub root: PathBuf,
     pub env: Vec<(String, String)>,
-    /// The current folder of each run. The home folder by default, where
+    /// The current directory of each run. The home directory by default, where
     /// the search for a project file stops.
     pub cwd: PathBuf,
 }
@@ -57,10 +57,10 @@ impl Home {
         }
     }
 
-    /// Writes `.mcp.json` with the servers in the folder (relative to the
-    /// root) with a `.git` folder, and runs the next commands there.
-    pub fn project(mut self, folder: &str, servers: &Value) -> Self {
-        let dir = self.root.join(folder);
+    /// Writes `.mcp.json` with the servers in the directory (relative to the
+    /// root) with a `.git` directory, and runs the next commands there.
+    pub fn project(mut self, relative_dir: &str, servers: &Value) -> Self {
+        let dir = self.root.join(relative_dir);
         std::fs::create_dir_all(dir.join(".git")).unwrap();
         std::fs::write(
             dir.join(".mcp.json"),
@@ -71,7 +71,7 @@ impl Home {
         self
     }
 
-    /// The path of the project file of the current folder, as `ncp` finds
+    /// The path of the project file of the current directory, as `ncp` finds
     /// it: the real path.
     pub fn project_file(&self) -> PathBuf {
         std::fs::canonicalize(&self.cwd).unwrap().join(".mcp.json")
@@ -132,7 +132,7 @@ impl Home {
         self.run_with_stdin(args, "")
     }
 
-    /// The program in the current folder, with only the environment of
+    /// The program in the current directory, with only the environment of
     /// this home.
     pub fn command(&self, program: &Path) -> Command {
         let mut command = Command::new(program);

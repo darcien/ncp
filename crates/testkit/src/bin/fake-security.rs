@@ -2,12 +2,12 @@
 //! store. Tests never use the real Keychain.
 //!
 //! The fake does only the commands that the store sends, with the exit codes of
-//! the real program. It keeps its files in the folder of the path that started
-//! it (`argv[0]`). Each test links the fake into its own folder. An environment
+//! the real program. It keeps its files in the directory of the path that started
+//! it (`argv[0]`). Each test links the fake into its own directory. An environment
 //! variable cannot do this: the store starts the program with the environment
 //! of the test process, which all tests share.
 //!
-//! Files in that folder:
+//! Files in that directory:
 //! - `items.json`: the items, as `{service: {account: password}}`.
 //! - `calls.log`: the arguments of each call, as one JSON array on each
 //!   line.

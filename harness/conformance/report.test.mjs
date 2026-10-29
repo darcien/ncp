@@ -49,9 +49,9 @@ test("reports incomplete checks as failed without changing recorded checks", (t)
     not_scored: [],
   }));
   for (const [name, checks] of cases) {
-    const folder = join(results, `${name}-2026-10-21T13-12-38-339Z`);
-    mkdirSync(folder);
-    if (checks !== null) writeFileSync(join(folder, "checks.json"), JSON.stringify(checks));
+    const dir = join(results, `${name}-2026-10-21T13-12-38-339Z`);
+    mkdirSync(dir);
+    if (checks !== null) writeFileSync(join(dir, "checks.json"), JSON.stringify(checks));
   }
 
   const process = spawnSync(globalThis.process.execPath, [

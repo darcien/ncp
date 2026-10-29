@@ -1,5 +1,5 @@
-//! Files that only the user can open: mode `0600`, in a folder with mode `0700`
-//! when `ncp` makes the folder.
+//! Files that only the user can open: mode `0600`, in a directory with mode `0700`
+//! when `ncp` makes the directory.
 //!
 //! A write goes to a new file that replaces the old file, so a failed write
 //! cannot leave a partial file.
@@ -12,11 +12,11 @@ use std::{
     path::Path,
 };
 
-/// Makes the missing parent folders with mode `0700`.
+/// Makes the missing parent directories with mode `0700`.
 ///
 /// # Errors
 ///
-/// Returns an error when `ncp` cannot write a folder or the file.
+/// Returns an error when `ncp` cannot write a directory or the file.
 pub fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let parent = path.parent().unwrap_or(Path::new("."));
     DirBuilder::new()
@@ -26,7 +26,7 @@ pub fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     replace(path, bytes, 0o600, || Ok(()))
 }
 
-/// Replaces the file with a new file of the mode, in the same folder, so that a
+/// Replaces the file with a new file of the mode, in the same directory, so that a
 /// failed write cannot leave a partial file. `before_rename` runs last, for
 /// example to check that nobody changed the old file. Its error stops the
 /// rename.
@@ -102,7 +102,7 @@ pub struct Lock {
 const LOCK_STEP: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// Gets an exclusive lock on the lock file, and waits for it at most the limit.
-/// The lock file is empty, with mode `0600`, in a folder with mode `0700`. The
+/// The lock file is empty, with mode `0600`, in a directory with mode `0700`. The
 /// call blocks: an async caller runs it on a blocking thread.
 ///
 /// # Errors

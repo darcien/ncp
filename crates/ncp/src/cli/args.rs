@@ -77,7 +77,7 @@ pub struct GlobalOptions {
     #[arg(long, global = true, value_enum, value_name = "FORMAT")]
     pub output_format: Option<OutputFormat>,
     /// Use this configuration file in place of the global file: ncp/mcp.json in
-    /// the XDG configuration folder, by default ~/.config/ncp/mcp.json.
+    /// the XDG configuration directory, by default ~/.config/ncp/mcp.json.
     /// The file must exist. ncp then does not search for a project .mcp.json,
     /// and runs the servers of this file with no trust question.
     #[arg(long, global = true, value_name = "PATH")]
@@ -112,7 +112,7 @@ pub enum Command {
     /// Secrets for ${NAME} in the configuration
     #[command(subcommand)]
     Secret(SecretCommand),
-    /// Trust the project .mcp.json of the current folder
+    /// Trust the project .mcp.json of the current directory
     ///
     /// ncp shows the entries of the file. The servers of a project file do
     /// not run until you trust the file. After each change of the file, you
@@ -242,8 +242,8 @@ pub enum SecretCommand {
     ///
     /// For each secret, ncp shows the name, the destination, the credential
     /// store and the servers that use it. ncp shows no value. The servers come
-    /// from the global file and the project file of the current folder. A
-    /// project in another folder can still use a secret that no server uses
+    /// from the global file and the project file of the current directory. A
+    /// project in another directory can still use a secret that no server uses
     /// here.
     List,
     /// Delete a stored secret from all credential stores
@@ -256,8 +256,8 @@ pub enum SecretCommand {
         #[arg(long, value_name = "SERVER", group = "removal")]
         server: Option<String>,
         /// Delete the items that no server of the global file or of the
-        /// project file of the current folder uses. A project in another
-        /// folder can still use them.
+        /// project file of the current directory uses. A project in another
+        /// directory can still use them.
         #[arg(long, group = "removal")]
         unused: bool,
         /// Delete the items of all destinations.
@@ -333,7 +333,7 @@ pub enum CredentialPlace {
 pub enum ServerCommand {
     /// Add a server to the project .mcp.json or the global file
     ///
-    /// In the home folder, or with --global, ncp adds it to the global file.
+    /// In the home directory, or with --global, ncp adds it to the global file.
     /// With --config-file, ncp adds it to that file. ncp changes no other
     /// part of the file, and does not connect to the server.
     #[command(after_help = ADD_HELP)]
@@ -343,7 +343,7 @@ pub enum ServerCommand {
     /// With --global, ncp removes it from the global file. ncp also deletes
     /// the OAuth tokens of the entry, when no other entry of the name takes
     /// effect. Stored ${NAME} values stay, because other entries of the same
-    /// destination can use them. A project in another folder with an entry of
+    /// destination can use them. A project in another directory with an entry of
     /// the same name and URL then needs a new login.
     Remove {
         /// The server name from the configuration

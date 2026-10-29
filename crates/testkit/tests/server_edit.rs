@@ -26,7 +26,7 @@ fn jsonc_value(text: &str) -> Value {
     Value::Object(ncp::config::parse_root(text).unwrap())
 }
 
-// A folder in the home folder with a `.git` folder and no project file.
+// A directory in the home directory with a `.git` directory and no project file.
 fn in_repository(mut home: Home) -> Home {
     let dir = home.root.join("app");
     std::fs::create_dir_all(dir.join(".git")).unwrap();
@@ -64,7 +64,7 @@ fn add_global_with_stdin(
 const WEB: &str = "https://web.example.com/mcp";
 
 #[test]
-fn add_creates_a_project_file_in_the_current_folder_and_trusts_it() {
+fn add_creates_a_project_file_in_the_current_dir_and_trusts_it() {
     let home = in_repository(Home::new("a-new"));
     let run = home.run(&["server", "add", "docs", "https://docs.example.com/mcp"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
@@ -91,7 +91,7 @@ fn add_creates_a_project_file_in_the_current_folder_and_trusts_it() {
 }
 
 #[test]
-fn add_in_the_home_folder_and_with_global_writes_the_global_file() {
+fn add_in_the_home_dir_and_with_global_writes_the_global_file() {
     let home = Home::new("a-home");
     let run = home.run(&["server", "add", "docs", "https://docs.example.com/mcp"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
@@ -665,7 +665,7 @@ fn add_global_warns_when_a_trusted_project_entry_has_the_name() {
     let warning = run.warnings()[0]["message"].as_str().unwrap().to_string();
     assert!(
         warning.ends_with(
-            "also has an entry of the server `web`. Its entry takes effect in this folder."
+            "also has an entry of the server `web`. Its entry takes effect in this directory."
         ),
         "{warning}"
     );
@@ -808,7 +808,7 @@ fn remove_deletes_only_the_tokens_bound_to_the_entry() {
 fn remove_with_a_store_that_fails_gives_a_warning_and_removes_the_entry() {
     let home = Home::new("r-store");
     home.configure(&json!({"web": {"type": "http", "url": WEB}}));
-    // A folder in the place of the credential file: each read fails.
+    // A directory in the place of the credential file: each read fails.
     std::fs::create_dir_all(home.root.join("state/ncp/credentials.json")).unwrap();
     let run = home.run(&["server", "remove", "web"]);
     assert_eq!(run.code(), 0, "{}", run.describe());

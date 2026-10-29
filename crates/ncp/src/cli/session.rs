@@ -262,12 +262,9 @@ fn report_files(context: &Context<'_>, loaded: &Loaded) {
     );
     match &loaded.project {
         ProjectFile::NotSearched => {}
-        ProjectFile::Absent(folder) => context.ui.debug(
+        ProjectFile::Absent(dir) => context.ui.debug(
             None,
-            &format!(
-                "no project file: the search stopped at {}",
-                folder.display()
-            ),
+            &format!("no project file: the search stopped at {}", dir.display()),
         ),
         ProjectFile::Unusable { file, reasons } => context
             .ui

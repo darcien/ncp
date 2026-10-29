@@ -1,5 +1,5 @@
 //! `ncp trust`: the trust of the commands in the project file of the
-//! current folder.
+//! current directory.
 
 use crate::text::path_code;
 use serde_json::json;
@@ -29,11 +29,11 @@ pub fn command(context: &Context<'_>, args: &TrustArgs) -> Result<(), Failure> {
                 "`--config-file` names the file, so ncp has no project file to trust",
             ));
         }
-        ProjectFile::Absent(folder) => {
+        ProjectFile::Absent(dir) => {
             return Err(Failure::usage(format!(
-                "ncp found no `{}` from the current folder up to {}",
+                "ncp found no `{}` from the current directory up to {}",
                 project::FILE_NAME,
-                path_code(&folder)
+                path_code(&dir)
             )));
         }
         ProjectFile::Unusable { file, reasons } => {

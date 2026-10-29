@@ -4,7 +4,7 @@
 //! process, so a trust for a path must not cover a changed file.
 //!
 //! Pure functions:
-//! - the search over the folder entries that the caller gives
+//! - the search over the directory entries that the caller gives
 //! - the trust state from the records
 //! - the gate of a server name
 //! - the entries to show before a trust
@@ -25,37 +25,37 @@ use crate::config::UnexpandedEntry;
 pub const FILE_NAME: &str = ".mcp.json";
 
 /// The largest project file that `ncp` reads. An `mcpServers` map is small. The
-/// limit stops a read of a large file that a folder can hold.
+/// limit stops a read of a large file that a directory can hold.
 pub const MAX_BYTES: u64 = 1 << 20;
 
 /// Where the search of the project file ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Search {
-    /// The project root: the folder that holds `.mcp.json`.
+    /// The project root: the directory that holds `.mcp.json`.
     Found(PathBuf),
-    /// No project file. The folder where the search stopped.
+    /// No project file. The directory where the search stopped.
     Stopped(PathBuf),
 }
 
-/// Searches from `start` up for the folder with `.mcp.json`. The search stops
-/// after a folder with `.git`, at the home folder, and at the root folder. It
-/// never reads `~/.mcp.json`: a file there applies to each folder below it.
-/// `has` tells if a folder has an entry of that name. It reads only the folder
-/// entries, never the content of a `.git` file, which a downloaded folder can
+/// Searches from `start` up for the directory with `.mcp.json`. The search stops
+/// after a directory with `.git`, at the home directory, and at the root directory. It
+/// never reads `~/.mcp.json`: a file there applies to each directory below it.
+/// `has` tells if a directory has an entry of that name. It reads only the directory
+/// entries, never the content of a `.git` file, which a downloaded directory can
 /// forge.
 pub fn search(start: &Path, home: Option<&Path>, has: impl Fn(&Path, &str) -> bool) -> Search {
     let mut last = start;
-    for folder in start.ancestors() {
-        if Some(folder) == home {
-            return Search::Stopped(folder.to_path_buf());
+    for dir in start.ancestors() {
+        if Some(dir) == home {
+            return Search::Stopped(dir.to_path_buf());
         }
-        if has(folder, FILE_NAME) {
-            return Search::Found(folder.to_path_buf());
+        if has(dir, FILE_NAME) {
+            return Search::Found(dir.to_path_buf());
         }
-        if has(folder, ".git") {
-            return Search::Stopped(folder.to_path_buf());
+        if has(dir, ".git") {
+            return Search::Stopped(dir.to_path_buf());
         }
-        last = folder;
+        last = dir;
     }
     Search::Stopped(last.to_path_buf())
 }
@@ -113,7 +113,7 @@ pub fn record_name(file: &Path) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
     /// The path where the search found the file. `ncp` does not resolve a
-    /// symlink, so that a file linked into two folders asks in each folder.
+    /// symlink, so that a file linked into two directories asks in each directory.
     pub file: PathBuf,
     /// The text that `ncp` read one time. It shows, hashes and runs this
     /// one copy.
@@ -153,11 +153,11 @@ mod tests {
     // A fake tree: the paths that exist.
     fn tree(paths: &[&str]) -> impl Fn(&Path, &str) -> bool {
         let set: HashSet<PathBuf> = paths.iter().map(PathBuf::from).collect();
-        move |folder, name| set.contains(&folder.join(name))
+        move |dir, name| set.contains(&dir.join(name))
     }
 
     #[test]
-    fn finds_the_file_in_the_current_folder_or_a_parent() {
+    fn finds_the_file_in_the_current_dir_or_a_parent() {
         let has = tree(&["/w/app/.mcp.json", "/w/app/.git"]);
         let home = Some(Path::new("/home/u"));
         assert_eq!(
@@ -180,7 +180,7 @@ mod tests {
     }
 
     #[test]
-    fn stops_at_the_home_folder_and_does_not_read_its_file() {
+    fn stops_at_the_home_dir_and_does_not_read_its_file() {
         let has = tree(&["/home/u/.mcp.json", "/home/.mcp.json"]);
         let home = Some(Path::new("/home/u"));
         assert_eq!(
@@ -190,7 +190,7 @@ mod tests {
     }
 
     #[test]
-    fn stops_at_the_root_folder() {
+    fn stops_at_the_root_dir() {
         assert_eq!(
             search(Path::new("/a/b"), None, tree(&[])),
             Search::Stopped("/".into())

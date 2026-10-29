@@ -25,11 +25,11 @@ use crate::{
 pub enum ProjectFile {
     /// `--config-file` names the file, so there is no search.
     NotSearched,
-    /// No project file. The folder where the search stopped.
+    /// No project file. The directory where the search stopped.
     Absent(PathBuf),
     /// A file that `ncp` does not use, with the reason and its causes.
     /// `ncp` does not search higher, because a file of another user in a
-    /// parent folder must not take the place of a file that is not usable.
+    /// parent directory must not take the place of a file that is not usable.
     Unusable {
         file: PathBuf,
         reasons: Vec<String>,
@@ -59,7 +59,7 @@ impl ProjectFile {
     }
 }
 
-/// Searches from the real path of the current folder, and reads the file
+/// Searches from the real path of the current directory, and reads the file
 /// that the search finds. With `search` false (`--config-file`), there is
 /// no project file.
 #[must_use]
@@ -73,9 +73,9 @@ pub fn find(paths: &Paths, env: &Env, search: bool) -> ProjectFile {
     let home = env
         .get("HOME")
         .map(|home| std::fs::canonicalize(home).unwrap_or_else(|_| PathBuf::from(home)));
-    let has = |folder: &Path, name: &str| folder.join(name).symlink_metadata().is_ok();
+    let has = |dir: &Path, name: &str| dir.join(name).symlink_metadata().is_ok();
     match project::search(&start, home.as_deref(), has) {
-        Search::Stopped(folder) => ProjectFile::Absent(folder),
+        Search::Stopped(dir) => ProjectFile::Absent(dir),
         Search::Found(root) => {
             let file = root.join(project::FILE_NAME);
             let read = read_owned(&file)
@@ -139,8 +139,8 @@ pub fn trust_state(paths: &Paths, file: &Path, digest: &str) -> Trust {
     Trust::from_records(digest, trusted.as_deref(), ignored)
 }
 
-fn record(folder: &Path, file: &Path) -> PathBuf {
-    folder.join(project::record_name(file))
+fn record(dir: &Path, file: &Path) -> PathBuf {
+    dir.join(project::record_name(file))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
