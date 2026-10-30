@@ -4,6 +4,17 @@ All notable changes to `ncp` are in this file. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and `ncp` uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.1 - 2026-10-30
+
+### Added
+
+- cli: Show structuredContent in the text output of tool call
+
+### Fixed
+
+- cli: Stop the wait for the token lock at Ctrl-C
+- cli: Use "directory" in place of "folder"
+
 ## 0.2.0 - 2026-10-21
 
 ### Changed
