@@ -239,6 +239,11 @@ fn tools() -> Vec<Tool> {
         Tool::new("fail", "Return a tool error", text_arg("text")),
         Tool::new("ask", "Return input_required", text_arg("text")),
         Tool::new(
+            "summary",
+            "Return a summary, an embedded resource and structured content",
+            schema(json!({"type": "object"})),
+        ),
+        Tool::new(
             "progress",
             "Report three steps of progress",
             text_arg("text"),
@@ -540,6 +545,14 @@ impl ServerHandler for Fixture {
             "elicit-url" => Ok(elicit_url(&request, argument(&arguments, "text"))),
             "elicit-legacy" => elicit_legacy(&context).await,
             "needs-page" => Err(needs_page(argument(&arguments, "text"))),
+            "summary" => {
+                let mut result = CallToolResult::success(vec![
+                    ContentBlock::text("Found 1 user."),
+                    ContentBlock::embedded_text("fixture://note", "A note"),
+                ]);
+                result.structured_content = Some(json!([{"id": "1", "name": "Alice"}]));
+                Ok(result.into())
+            }
             "ask" => Ok(CallToolResponse::InputRequired(
                 InputRequiredResult::from_request_state("state-1"),
             )),

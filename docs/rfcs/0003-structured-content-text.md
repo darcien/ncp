@@ -1,5 +1,5 @@
 ---
-state: accepted
+state: committed
 supersedes: []
 ---
 

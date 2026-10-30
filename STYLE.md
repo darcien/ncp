@@ -272,11 +272,13 @@ c.", "The form has no field."). It has no labels and no backticks (see
   sentences.
 - Content that `ncp` does not show gets a placeholder in brackets, for
   example "[image image/png, 4 bytes as base64]". A placeholder is not a
-  sentence.
+  sentence. A text block with the same data as `structuredContent` does
+  not show, and it gets no placeholder.
 - A JSON value and the text of a server are not sentences. `ncp` does not
   change their words, but it escapes control characters and invisible
   characters. The exception is `resource read` in a pipe (see
-  `docs/command-development.md`, "Streams and formats").
+  `docs/command-development.md`, "Streams and formats"). `tool call`
+  shows `structuredContent` without its `{"result": ...}` wrapper.
 - A yes or no question is "QUESTION? [y/N] ". It names its object: "Trust
   this file? [y/N] ". The capital letter marks the default, which is no.
   An empty line then never gives a trust.

@@ -226,6 +226,47 @@ fn input_required_result_goes_to_stdout_with_exit_5() {
 }
 
 #[test]
+fn text_of_a_call_shows_the_structured_content_after_the_blocks() {
+    let home = Home::new("call-structured");
+    home.configure(&json!({"fx": stdio("modern")}));
+    let run = home.run_with_default_format(&["tool", "call", "fx", "summary"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(
+        run.stdout_text(),
+        "Found 1 user.\n[resource fixture://note]\nA note\n[{\"id\":\"1\",\"name\":\"Alice\"}]\n"
+    );
+    let home = home.set("NCP_TEST_STDOUT_TTY", "1");
+    let run = home.run_with_default_format(&["tool", "call", "fx", "summary"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(
+        run.stdout_text()
+            .ends_with("A note\n[\n  {\n    \"id\": \"1\",\n    \"name\": \"Alice\"\n  }\n]\n"),
+        "{}",
+        run.describe()
+    );
+}
+
+#[test]
+fn text_of_an_input_required_result_is_one_line_in_a_pipe() {
+    let home = Home::new("call-input-required-text");
+    home.configure(&json!({"fx": stdio("modern")}));
+    for command in [
+        ["tool", "call", "fx", "ask"],
+        ["resource", "read", "fx", "fixture://ask"],
+        ["prompt", "get", "fx", "ask"],
+    ] {
+        let run = home.run_with_default_format(&command);
+        assert_eq!(run.code(), 5, "{}", run.describe());
+        let stdout = run.stdout_text();
+        assert_eq!(stdout.lines().count(), 1, "{stdout}");
+        assert!(
+            stdout.contains(r#""resultType":"input_required""#),
+            "{stdout}"
+        );
+    }
+}
+
+#[test]
 fn joined_server_and_tool_name_gives_the_two_word_command() {
     let home = Home::new("joined");
     let run = home.run(&["tool", "call", "github.search_issues", "q=x"]);

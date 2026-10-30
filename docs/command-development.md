@@ -46,9 +46,10 @@ a pipe or a file.
 - When stdout is a TTY, `ncp` indents the JSON value on stdout. In a pipe,
   the value is on one line, because a program reads it and the indent adds
   no data. A TTY on stdout changes nothing else in the JSON output.
-- In the text output, `ncp` indents a JSON value on its own lines, also in
-  a pipe. A JSON value in a line with other text stays on one line, for
-  example `Default: 5` in `tool show`.
+- In the text output, a JSON value on its own lines has the layout and the
+  escapes of the JSON value on stdout in the JSON output. A JSON value in
+  a line with other text stays on one line, for example `Default: 5` in
+  `tool show`.
 - `resource read` is the one command that writes other data in a pipe than
   on a TTY. In a pipe, it writes the contents with no change and no escapes:
   the text, or the bytes of a blob. Thus

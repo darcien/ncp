@@ -799,9 +799,10 @@ fn input_required(
     result: &rmcp::model::InputRequiredResult,
 ) -> Result<(), Failure> {
     let value = serde_json::to_value(result).unwrap_or(Value::Null);
-    context
-        .ui
-        .result(|| format!("{}\n", render::pretty(&value)), || value.clone())?;
+    context.ui.result(
+        || ui::json_text(&value, context.ui.stdout),
+        || value.clone(),
+    )?;
     Err(Failure::new(
         Exit::InputRequired,
         format!(
@@ -1040,9 +1041,10 @@ fn print_response(
     match response {
         CallToolResponse::Complete(result) => {
             let value = serde_json::to_value(&result).unwrap_or(Value::Null);
-            context
-                .ui
-                .result(|| render::call_result(&value), || value.clone())?;
+            context.ui.result(
+                || render::call_result(&value, context.ui.stdout),
+                || value.clone(),
+            )?;
             if result.is_error == Some(true) {
                 failure(
                     Exit::Tool,
@@ -1057,9 +1059,10 @@ fn print_response(
         }
         CallToolResponse::InputRequired(result) => {
             let value = serde_json::to_value(&result).unwrap_or(Value::Null);
-            context
-                .ui
-                .result(|| format!("{}\n", render::pretty(&value)), || value.clone())?;
+            context.ui.result(
+                || ui::json_text(&value, context.ui.stdout),
+                || value.clone(),
+            )?;
             failure(
                 Exit::InputRequired,
                 format!(

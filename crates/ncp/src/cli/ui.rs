@@ -112,13 +112,7 @@ impl Ui {
     ) -> Result<(), Failure> {
         match self.format {
             Format::Text => write_stdout(&printable(&text())),
-            // The TTY sets only the layout of JSON. A person reads JSON on a
-            // TTY, so it is pretty. A program reads it in a pipe, so it is
-            // one line.
-            Format::Json if self.stdout == Stdout::Terminal => {
-                write_stdout(&format!("{}\n", escape_raw_controls(pretty_json(&json()))))
-            }
-            Format::Json => write_stdout(&json_line(&json())),
+            Format::Json => write_stdout(&json_text(&json(), self.stdout)),
         }
     }
 
@@ -343,6 +337,18 @@ fn stderr(text: &str) {
 
 fn pretty_json(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_default()
+}
+
+/// A JSON value on its own lines, in the JSON output and in the text
+/// output. The TTY sets only the layout. A person reads JSON on a TTY, so
+/// it is indented. A program or an agent reads it in a pipe, so it is one
+/// line: the indent adds no data.
+#[must_use]
+pub fn json_text(value: &Value, stdout: Stdout) -> String {
+    match stdout {
+        Stdout::Terminal => format!("{}\n", escape_raw_controls(pretty_json(value))),
+        Stdout::Pipe => json_line(value),
+    }
 }
 
 /// One JSON value on one line. `serde_json` leaves DEL and the C1 control

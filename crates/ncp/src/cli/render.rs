@@ -12,7 +12,7 @@ use std::{
 use rmcp::model::{JsonObject, Tool};
 use serde_json::Value;
 
-use super::tool_args;
+use super::{tool_args, ui, ui::Stdout};
 use crate::{
     config::UnexpandedEntry,
     config::{Server, Target, Transport},
@@ -584,50 +584,117 @@ pub fn server_show(show: &JsonObject) -> String {
 }
 
 /// A tool result for people. Text blocks show as they are. Other blocks
-/// show as one summary line each. With no content, the structured content
-/// shows as JSON.
+/// show as a summary line, and an embedded resource also shows its text.
+/// The payload of the structured content comes after the blocks. A text
+/// block with the same data as the structured content does not show, so
+/// that the reader gets the data one time. A text block that is not a copy
+/// shows, because it can hold data that the structured content does not
+/// have, for example a summary.
 #[must_use]
-pub fn call_result(result: &Value) -> String {
+pub fn call_result(result: &Value, stdout: Stdout) -> String {
     let content = result
         .get("content")
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_default();
-    if content.is_empty() {
-        return result
-            .get("structuredContent")
-            .map(|value| format!("{}\n", pretty(value)))
-            .unwrap_or_default();
-    }
-    content.iter().map(content_line).collect()
+    let Some(structured) = result.get("structuredContent") else {
+        return content.iter().map(content_line).collect();
+    };
+    let payload = payload(structured);
+    // Each text block with its JSON value, parsed one time.
+    let texts: Vec<Option<(&str, Option<Value>)>> = content
+        .iter()
+        .map(|block| text_of(block).map(|text| (text, serde_json::from_str(text).ok())))
+        .collect();
+    // A server can write one text block for each element of a list.
+    let all_copies = payload.as_array().is_some_and(|items| {
+        items.len() == texts.iter().flatten().count()
+            && texts
+                .iter()
+                .flatten()
+                .zip(items)
+                .all(|((text, json), item)| matches(text, json.as_ref(), item))
+    });
+    let is_copy = |text: &Option<(&str, Option<Value>)>| {
+        text.as_ref().is_some_and(|(text, json)| {
+            all_copies
+                || matches(text, json.as_ref(), structured)
+                || matches(text, json.as_ref(), payload)
+        })
+    };
+    let blocks: String = content
+        .iter()
+        .zip(&texts)
+        .filter(|(_, text)| !is_copy(text))
+        .map(|(block, _)| content_line(block))
+        .collect();
+    let payload = match payload {
+        Value::String(text) => line(text),
+        other => ui::json_text(other, stdout),
+    };
+    blocks + &payload
 }
 
-// One content block as a line: text as it is, other kinds as a summary.
+// The data of the structured content. Some servers put data that is not
+// an object into `{"result": ...}`. The data shows with no wrapper, so that
+// it can match the text block that holds it.
+fn payload(structured: &Value) -> &Value {
+    match structured.as_object() {
+        Some(map) if map.len() == 1 => map.get("result").unwrap_or(structured),
+        _ => structured,
+    }
+}
+
+fn text_of(block: &Value) -> Option<&str> {
+    match block.get("type").and_then(Value::as_str) {
+        Some("text") => block.get("text").and_then(Value::as_str),
+        _ => None,
+    }
+}
+
+// True when the text holds the data: as JSON, or as the string itself.
+// The same data in another JSON layout, for example indented, is a copy.
+// A text with other words is not a copy, because it can hold more data.
+fn matches(text: &str, json: Option<&Value>, data: &Value) -> bool {
+    data.as_str() == Some(text) || json == Some(data)
+}
+
+// One content block as a line: text as it is, other kinds as a summary. An
+// embedded resource also shows its text, so that the reader needs no
+// second request for it.
 fn content_line(block: &Value) -> String {
     let field = |key: &str| block.get(key).and_then(Value::as_str).unwrap_or("?");
-    let line = match field("type") {
-        "text" => field("text").to_string(),
-        "image" | "audio" => format!(
+    match field("type") {
+        "text" => line(field("text")),
+        "image" | "audio" => line(&format!(
             "[{} {}, {} bytes as base64]",
             field("type"),
             field("mimeType"),
             field("data").len()
-        ),
-        "resource" => format!(
-            "[resource {}]",
-            block
-                .get("resource")
+        )),
+        "resource" => {
+            let resource = block.get("resource");
+            let uri = resource
                 .and_then(|resource| resource.get("uri"))
                 .and_then(Value::as_str)
-                .unwrap_or("?")
-        ),
-        "resource_link" => format!("[resource link {}]", field("uri")),
-        other => format!("[{other} content]"),
-    };
-    if line.ends_with('\n') {
-        line
+                .unwrap_or("?");
+            let text = resource
+                .and_then(|resource| resource.get("text"))
+                .and_then(Value::as_str)
+                .map(line)
+                .unwrap_or_default();
+            format!("[resource {uri}]\n{text}")
+        }
+        "resource_link" => line(&format!("[resource link {}]", field("uri"))),
+        other => line(&format!("[{other} content]")),
+    }
+}
+
+fn line(text: &str) -> String {
+    if text.ends_with('\n') {
+        text.to_string()
     } else {
-        format!("{line}\n")
+        format!("{text}\n")
     }
 }
 
@@ -757,11 +824,6 @@ pub fn prompt_messages(result: &Value) -> String {
             let _ = write!(text, "{role}: {content}");
             text
         })
-}
-
-#[must_use]
-pub fn pretty(value: &Value) -> String {
-    serde_json::to_string_pretty(value).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -942,17 +1004,153 @@ mod tests {
             {"type": "text", "text": "hello"},
             {"type": "image", "mimeType": "image/png", "data": "AAAA"},
             {"type": "resource_link", "uri": "file:///a", "name": "a"},
-            {"type": "resource", "resource": {"uri": "file:///b", "text": "b"}}
+            {"type": "resource", "resource": {"uri": "file:///b", "blob": "AA=="}}
         ]});
         assert_eq!(
-            call_result(&result),
+            call_result(&result, Stdout::Pipe),
             "hello\n[image image/png, 4 bytes as base64]\n[resource link file:///a]\n[resource file:///b]\n"
         );
     }
 
     #[test]
-    fn call_result_with_no_content_shows_structured_content() {
+    fn embedded_resource_shows_its_text_after_its_uri() {
+        let result = json!({"content": [
+            {"type": "text", "text": "Returning:"},
+            {"type": "resource", "resource": {"uri": "demo://r/1", "text": "Resource 1"}},
+            {"type": "text", "text": "Done"}
+        ]});
+        assert_eq!(
+            call_result(&result, Stdout::Pipe),
+            "Returning:\n[resource demo://r/1]\nResource 1\nDone\n"
+        );
+        let prompt = json!({"messages": [{"role": "user", "content":
+            {"type": "resource", "resource": {"uri": "file:///notes.txt", "text": "Notes."}}}]});
+        assert_eq!(
+            prompt_messages(&prompt),
+            "user: [resource file:///notes.txt]\nNotes.\n"
+        );
+    }
+
+    #[test]
+    fn structured_content_shows_after_a_summary() {
+        let result = json!({
+            "content": [{"type": "text", "text": "Found 2 users."}],
+            "structuredContent": [{"id": "1", "name": "Alice"}, {"id": "2", "name": "Bob"}]
+        });
+        assert_eq!(
+            call_result(&result, Stdout::Pipe),
+            "Found 2 users.\n[{\"id\":\"1\",\"name\":\"Alice\"},{\"id\":\"2\",\"name\":\"Bob\"}]\n"
+        );
+        assert_eq!(
+            call_result(&result, Stdout::Terminal),
+            "Found 2 users.\n[\n  {\n    \"id\": \"1\",\n    \"name\": \"Alice\"\n  },\n  \
+             {\n    \"id\": \"2\",\n    \"name\": \"Bob\"\n  }\n]\n"
+        );
+    }
+
+    #[test]
+    fn json_copy_of_the_structured_content_does_not_show() {
+        let indented = json!({
+            "content": [{"type": "text", "text": "{\n  \"id\": 7,\n  \"state\": \"open\"\n}"}],
+            "structuredContent": {"id": 7, "state": "open"}
+        });
+        assert_eq!(
+            call_result(&indented, Stdout::Pipe),
+            "{\"id\":7,\"state\":\"open\"}\n"
+        );
+        let wrapped = json!({
+            "content": [{"type": "text", "text": "[1,2]"}],
+            "structuredContent": {"result": [1, 2]}
+        });
+        assert_eq!(call_result(&wrapped, Stdout::Pipe), "[1,2]\n");
+        let whole = json!({
+            "content": [{"type": "text", "text": "{\"result\": [1, 2]}"}],
+            "structuredContent": {"result": [1, 2]}
+        });
+        assert_eq!(call_result(&whole, Stdout::Pipe), "[1,2]\n");
+    }
+
+    #[test]
+    fn string_payload_shows_one_time_as_text() {
+        let result = json!({
+            "content": [{"type": "text", "text": "# Report\nAll good."}],
+            "structuredContent": {"result": "# Report\nAll good."}
+        });
+        assert_eq!(call_result(&result, Stdout::Pipe), "# Report\nAll good.\n");
+    }
+
+    #[test]
+    fn one_text_block_for_each_element_does_not_show() {
+        let result = json!({
+            "content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}],
+            "structuredContent": {"result": ["a", "b"]}
+        });
+        assert_eq!(call_result(&result, Stdout::Pipe), "[\"a\",\"b\"]\n");
+        let shorter = json!({
+            "content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}],
+            "structuredContent": {"result": ["a"]}
+        });
+        assert_eq!(call_result(&shorter, Stdout::Pipe), "a\nb\n[\"a\"]\n");
+        let mixed = json!({
+            "content": [
+                {"type": "text", "text": "a"},
+                {"type": "image", "mimeType": "image/png", "data": "AAAA"},
+                {"type": "text", "text": "b"}
+            ],
+            "structuredContent": {"result": ["a", "b"]}
+        });
+        assert_eq!(
+            call_result(&mixed, Stdout::Pipe),
+            "[image image/png, 4 bytes as base64]\n[\"a\",\"b\"]\n"
+        );
+    }
+
+    #[test]
+    fn text_that_is_not_a_copy_shows_with_the_payload() {
+        let error = json!({
+            "content": [{"type": "text", "text": "Rate limit. Retry in 30 s"}],
+            "structuredContent": {"code": 429},
+            "isError": true
+        });
+        assert_eq!(
+            call_result(&error, Stdout::Pipe),
+            "Rate limit. Retry in 30 s\n{\"code\":429}\n"
+        );
+        let table = json!({
+            "content": [{"type": "text", "text": "| id |\n|---|\n| 7 |"}],
+            "structuredContent": {"id": 7}
+        });
+        assert_eq!(
+            call_result(&table, Stdout::Pipe),
+            "| id |\n|---|\n| 7 |\n{\"id\":7}\n"
+        );
+        // An integer and a float are not equal data.
+        let float = json!({
+            "content": [{"type": "text", "text": "5"}],
+            "structuredContent": {"result": 5.0}
+        });
+        assert_eq!(call_result(&float, Stdout::Pipe), "5\n5.0\n");
+    }
+
+    #[test]
+    fn structured_content_with_no_blocks_shows_the_payload() {
         let result = json!({"content": [], "structuredContent": {"a": 1}});
-        assert_eq!(call_result(&result), "{\n  \"a\": 1\n}\n");
+        assert_eq!(call_result(&result, Stdout::Pipe), "{\"a\":1}\n");
+        assert_eq!(call_result(&result, Stdout::Terminal), "{\n  \"a\": 1\n}\n");
+        let wrapped = json!({"content": [], "structuredContent": {"result": "x"}});
+        assert_eq!(call_result(&wrapped, Stdout::Pipe), "x\n");
+        // A present null is data, so it shows.
+        let null =
+            json!({"content": [{"type": "text", "text": "Done"}], "structuredContent": null});
+        assert_eq!(call_result(&null, Stdout::Pipe), "Done\nnull\n");
+    }
+
+    #[test]
+    fn payload_has_the_escapes_of_the_json_output() {
+        let result = json!({"content": [], "structuredContent": {"a": "x\u{200b}\u{9b}\u{7f}"}});
+        assert_eq!(
+            call_result(&result, Stdout::Pipe),
+            "{\"a\":\"x\\u200b\\u009b\\u007f\"}\n"
+        );
     }
 }
