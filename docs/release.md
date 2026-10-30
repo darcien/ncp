@@ -72,9 +72,17 @@ publishes the release on GitHub. Only the maintainer does these steps, on this M
 ### Version rule
 
 A release keeps the commands, the options, the configuration files, the
-stored credentials and the JSON output of an earlier release valid. When a
-change makes old input or stored data not valid, `ncp` accepts the old form
-too, or migrates the data. When neither is possible, the change is a
+stored credentials and the JSON output of an earlier release valid:
+
+- The keys and the types of the JSON objects that `ncp` makes stay. MCP
+  objects pass as rmcp reads them (see `docs/command-development.md`, "MCP
+  objects").
+- The text output can change. In the JSON output, the message, the causes
+  and the hints of a diagnostic, and the text of a log line, can change
+  too.
+
+When a change makes old input or stored data not valid, `ncp` accepts the
+old form too, or migrates the data. When neither is possible, the change is a
 breaking change, and its release notes give the steps for the user.
 
 Versions follow SemVer 2.0.0. At `0.y`, as in uv, a breaking change gives

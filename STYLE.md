@@ -3,7 +3,7 @@
 This document holds the rules for all text of `ncp`: output text (help,
 errors, causes, warnings, hints, prompts, text on stdout for people, and
 the lines of `-v` and `-vv`), documents, code comments and commit
-messages. It is permanent. People and agents obey it in the same way.
+messages. People and agents obey it in the same way.
 
 The code and its tests hold each sentence. This document holds the rules.
 A rule has a reason, so that a reader can decide a new case. An example
@@ -11,10 +11,10 @@ comes from the current code.
 
 ## Changing output text
 
-- Change a text only in one of these cases: the text breaks a rule of this
-  document, of CONTRIBUTING.md or a MUST rule of `docs/requirements.md`,
-  the text is false for the code, or a change of behavior makes the text
-  false.
+- Change a text only in one of these cases:
+  - The text breaks a rule (see CONTRIBUTING.md, "Documents").
+  - The text is false for the code.
+  - A change of behavior makes the text false.
 - A text that obeys the rules stays, also when another wording seems
   better. Each unneeded change makes work for the next reader and starts
   a new sweep.
@@ -22,11 +22,10 @@ comes from the current code.
   existing text is a text of the same kind (error, hint, prompt, help line
   or line on stdout) in the same file. If the file has none, it is a text of
   the same kind in the same module directory.
-- To change a rule, change this document first, after the maintainer
-  agrees. Put a rule change and the changes of the texts that it makes
-  false in one commit.
-- A review uses only this document, CONTRIBUTING.md and the MUST rules of
-  `docs/requirements.md`. A review does not make or use another rule list.
+- To change a rule, change the document of the rule first, after the
+  maintainer agrees. Put a rule change and the changes of the texts that it
+  makes false in one commit.
+- A review does not make or use a rule list of its own.
 
 ## Language
 
@@ -105,16 +104,12 @@ meaning, so the table cannot reserve them.
 | HTTP server | In a sentence. Write `http` only as the value of `type`. |
 | directory | Never "folder". |
 
-## Streams and formats
-
-The streams and the formats of the output are in CONTRIBUTING.md, "Command-line
-principles".
-
 ## Stderr lines
 
 A diagnostic is an error, a warning, or a standalone hint. A log line is a
 line of `-v` or `-vv`. These are the kinds of line that `ncp` writes to
-stderr. In JSON, each line is one object with the key of the kind.
+stderr. In the JSON output, each line of these kinds is one object with
+the key of the kind.
 
 A log line is `debug: ` or `trace: ` and then, for a server, `server NAME: `.
 It is not a sentence.
@@ -130,7 +125,7 @@ It is not a sentence.
 | progress | `progress: server NAME: ` | `progress` |
 | timings (`--timings`) | `timings: ` | `timings` |
 | login URL block | none. The first line is "Open this URL in a browser to log in to NAME:" | `login` |
-| line of a server | none. The line passes as the server wrote it, with control characters as escapes | `serverLog` |
+| line of a server | none. The line passes as the server wrote it, with control characters and invisible characters as escapes | `serverLog` |
 
 Interactive text (a prompt, "Type y, n or c.") also goes to stderr. It has no
 prefix and no JSON key (see "Plain text").
@@ -142,17 +137,17 @@ of a server can start with any text, because it passes with no change.
 
 ## Diagnostics
 
-Text and JSON of a diagnostic come from the same parts, so a test can
-compare them. Each string in JSON is the same as in text, with no label and
-no indent.
+The text output and the JSON output of a diagnostic come from the same
+parts, so a test can compare them. Each string in the JSON output is the
+same as in the text output, with no label and no indent.
 
 ### Parts and layout
 
 - Labels: `error: `, `warning: `, `hint: ` and `  cause: `. A label is a
   lowercase word, a colon and one space. There is no `note:` label.
 - Order: the message line, then data lines, then `cause:` lines, then
-  `hint:` lines. In text, one empty line comes before each hint of an
-  error or a warning. A standalone hint has no empty line before it.
+  `hint:` lines. In the text output, one empty line comes before each hint
+  of an error or a warning. A standalone hint has no empty line before it.
 - Indent: a `cause:` line starts with 2 spaces. A second line of a cause
   starts with 9 spaces. A data line under an error starts with 7 spaces,
   and under a warning with 9 spaces. A hint is one line. Only a label or
@@ -213,13 +208,12 @@ no indent.
     the command again."
   - "Did you mean `NAME`?" With more names: "Did you mean `a` or `b`?",
     "Did you mean `a`, `b` or `c`?".
-- In JSON, a hint can have the field `command`. Text shows only the
-  sentence. A hint has `command` only when the command is an `ncp`
-  command, is the whole fix, has no placeholder, and only reads state or
-  starts a login. An agent can run such a command with no review. A
-  command that stores, deletes, removes, changes trust or calls a tool,
-  other than `ncp auth login`, has
-  no `command`.
+- In the JSON output, a hint can have the field `command`. The text output
+  shows only the sentence. A hint has `command` only when the command is an
+  `ncp` command, is the whole fix, has no placeholder, and only reads
+  state or starts a login. An agent can run such a command with no review.
+  A command that stores, deletes, removes, changes trust or calls a tool,
+  other than `ncp auth login`, has no `command`.
 
 ### Backticks
 
@@ -256,10 +250,10 @@ no indent.
 - `-q` hides warnings with their causes and hints, standalone hints and
   progress. An error always shows with its causes and hints. `-qq` is
   the same as `-q`.
-- A usage error of clap keeps the format of clap in text. In JSON, the
-  message is "The command line is not valid", the clap lines up to
-  `Usage:` (with no empty line and no `tip:` line) are one cause, and a
-  suggestion of clap becomes "Did you mean `X`?".
+- A usage error of clap keeps the format of clap in the text output. In
+  the JSON output, the message is "The command line is not valid", the
+  clap lines up to `Usage:` (with no empty line and no `tip:` line) are one
+  cause, and a suggestion of clap becomes "Did you mean `X`?".
 
 ## Plain text
 
@@ -279,6 +273,10 @@ c.", "The form has no field."). It has no labels and no backticks (see
 - Content that `ncp` does not show gets a placeholder in brackets, for
   example "[image image/png, 4 bytes as base64]". A placeholder is not a
   sentence.
+- A JSON value and the text of a server are not sentences. `ncp` does not
+  change their words, but it escapes control characters and invisible
+  characters. The exception is `resource read` in a pipe (see
+  `docs/command-development.md`, "Streams and formats").
 - A yes or no question is "QUESTION? [y/N] ". It names its object: "Trust
   this file? [y/N] ". The capital letter marks the default, which is no.
   An empty line then never gives a trust.

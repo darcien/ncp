@@ -1,7 +1,8 @@
 # AGENTS.md
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) and [STYLE.md](STYLE.md) before any
-work. They apply to agents too. This file adds the rules for agents only.
+Before any work, read [CONTRIBUTING.md](CONTRIBUTING.md) and the documents
+that it names for the task. They apply to agents too. This file adds the
+rules for agents only.
 
 ## Workflow
 
@@ -12,9 +13,9 @@ work. They apply to agents too. This file adds the rules for agents only.
   a message, get an adversarial review from a subagent. Do 3 rounds at
   most. Put the findings that remain in the backlog, and tell the
   maintainer about each high finding.
-- When you brief a subagent, give it the paths of `STYLE.md` and
-  `CONTRIBUTING.md`. Do not give it a rule list of your own. Two rule
-  lists give two answers for one text.
+- When you brief a subagent, give it the paths of `STYLE.md`,
+  `CONTRIBUTING.md` and the documents of its task. Do not give it a rule
+  list of your own. Two rule lists give two answers for one text.
 
 ## Stop and ask
 

@@ -70,22 +70,7 @@ cargo install --locked --path crates/ncp
 
 ## Development
 
-Install the tools and the git hook:
-
-```
-mise install
-hk install --mise
-```
-
-Do the static checks and the tests:
-
-```
-mise run check
-mise run test
-```
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md) and [STYLE.md](STYLE.md) before you
-change the project.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before you change the project.
 
 ## License
 
