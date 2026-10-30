@@ -885,17 +885,27 @@ fn ctrl_c_stops_the_wait_for_the_lock() {
     std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
     let held = std::fs::File::create(&lock).unwrap();
     held.lock().unwrap();
+    let stderr_file = home.root.join("stderr");
     let child = std::process::Command::new(common::NCP)
-        .args(["server", "add", "web", WEB, "--global"])
+        .args(["-v", "server", "add", "web", WEB, "--global"])
         .env_clear()
         .envs(home.env.iter().cloned())
         .current_dir(&home.cwd)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stderr(std::fs::File::create(&stderr_file).unwrap())
         .spawn()
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(700));
+    // The handler of Ctrl-C is in place before the first log line. Before
+    // it, SIGINT stops `ncp` with no exit code.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !std::fs::read_to_string(&stderr_file)
+        .unwrap()
+        .contains("debug: configuration file:")
+    {
+        assert!(std::time::Instant::now() < deadline, "no log line");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     let sent = std::process::Command::new("kill")
         .args(["-INT", &child.id().to_string()])
         .status()
@@ -903,7 +913,8 @@ fn ctrl_c_stops_the_wait_for_the_lock() {
     assert!(sent.success());
     let started = std::time::Instant::now();
     let run = common::Run(child.wait_with_output().unwrap());
-    assert_eq!(run.code(), 130, "{}", run.describe());
+    let stderr = std::fs::read_to_string(&stderr_file).unwrap();
+    assert_eq!(run.code(), 130, "{}\nstderr: {stderr}", run.describe());
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
     assert!(!home.config_path().exists());
     drop(held);

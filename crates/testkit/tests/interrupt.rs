@@ -205,11 +205,13 @@ fn ctrl_c_during_a_question_exits_130() {
 }
 
 // Another process holds the lock of the tokens of `web`. Runs `ncp -v ARGS`,
-// and sends SIGINT during the wait for the lock. Gives the exit code, the
-// time to the exit, stdout and stderr.
+// and sends SIGINT during the wait for the lock. `ready` examines the
+// configuration file: it is true when the next wait of `ncp` is the wait for
+// the lock. Gives the exit code, the time to the exit, stdout and stderr.
 fn interrupt_the_wait_for_the_tokens_lock(
     home: &Home,
     args: &[&str],
+    ready: impl Fn(&str) -> bool,
 ) -> (i32, Duration, String, String) {
     home.configure(&json!({"web": {"type": "http", "url": "http://127.0.0.1:9/mcp"}}));
     let state = home.path(".local/state/ncp");
@@ -232,6 +234,7 @@ fn interrupt_the_wait_for_the_tokens_lock(
     wait_for(&stderr_file, |text| {
         text.contains("debug: configuration file:")
     });
+    wait_for(&home.path("config/ncp/mcp.json"), ready);
     let (code, elapsed, _) = interrupt(child);
     (
         code,
@@ -247,8 +250,9 @@ const LOCK_INTERRUPTED: &str =
 #[test]
 fn ctrl_c_during_the_wait_for_the_tokens_lock_exits_130() {
     let home = Home::new("tokens-lock");
+    // `auth logout` waits for no other thing after the log line.
     let (code, elapsed, _, stderr) =
-        interrupt_the_wait_for_the_tokens_lock(&home, &["auth", "logout", "web"]);
+        interrupt_the_wait_for_the_tokens_lock(&home, &["auth", "logout", "web"], |_| true);
     assert_eq!(code, 130, "{stderr}");
     assert!(stderr.contains(LOCK_INTERRUPTED), "{stderr}");
     assert!(elapsed < Duration::from_secs(6), "{elapsed:?}");
@@ -257,8 +261,12 @@ fn ctrl_c_during_the_wait_for_the_tokens_lock_exits_130() {
 #[test]
 fn ctrl_c_during_the_wait_for_the_tokens_lock_of_server_remove_reports_the_removed_entry() {
     let home = Home::new("remove-lock");
+    // Before the remove of the entry, `ncp` waits for the lock of the
+    // configuration file. A Ctrl-C in that wait stops the remove.
     let (code, elapsed, stdout, stderr) =
-        interrupt_the_wait_for_the_tokens_lock(&home, &["server", "remove", "web"]);
+        interrupt_the_wait_for_the_tokens_lock(&home, &["server", "remove", "web"], |config| {
+            !config.contains("web")
+        });
     assert_eq!(code, 130, "{stderr}");
     assert!(stderr.contains(LOCK_INTERRUPTED), "{stderr}");
     assert!(elapsed < Duration::from_secs(6), "{elapsed:?}");
