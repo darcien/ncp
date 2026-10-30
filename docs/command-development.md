@@ -1,9 +1,8 @@
 # Command development
 
 This document gives the rules for the commands, the options, the output
-and the secrets of `ncp`. [STYLE.md](../STYLE.md) gives the rules for the
-text. [docs/release.md](release.md), "Version rule", gives the parts that a
-release keeps.
+and the secrets of `ncp`. It also gives the version rule.
+[STYLE.md](../STYLE.md) gives the rules for the text.
 
 ## Order of choice
 
@@ -100,3 +99,29 @@ value shows as empty.
 
 A change to this scope, or to how `ncp` stores or handles secrets, needs
 the maintainer to agree first.
+
+## Version rule
+
+A breaking change makes one of these parts of an earlier release not
+valid:
+
+- The commands and the options.
+- The configuration files and the stored credentials.
+- The keys and the types of the JSON objects that `ncp` makes.
+
+These changes are not breaking changes:
+
+- A change to the text output.
+- A change to the message, the causes or the hints of a diagnostic in the
+  JSON output.
+- A change to the text of a log line.
+- A change to an MCP object. `ncp` gives each MCP object as rmcp reads it.
+  See [MCP objects](#mcp-objects).
+
+If old input or stored data becomes not valid, `ncp` accepts the old form
+or migrates the data. If neither is possible, the change is a breaking
+change. The release notes of a breaking change give the steps for the
+user.
+
+Versions obey SemVer 2.0.0. At `0.y`, a breaking change gives the next
+minor version. A feature or a fix gives the next patch version.

@@ -149,9 +149,8 @@ a dependency that `deny.toml` does not accept, ask the maintainer.
 ## Commits
 
 - Commit in small working chunks.
-- Obey the version rule of `docs/release.md`. A breaking change needs an
-  `accepted` RFC, and its `BREAKING CHANGE` footer gives the steps for the
-  user.
+- Mark a breaking change (`docs/command-development.md`, "Version rule")
+  with a `BREAKING CHANGE` footer that gives the steps for the user.
 - Before a push, fold a fix of an unpushed commit into that commit, so that
   the history has no fix-up commits.
 - Use [Conventional Commits](https://www.conventionalcommits.org/):
