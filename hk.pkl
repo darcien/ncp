@@ -62,10 +62,17 @@ steps {
       effect = "write"
     }
   }
+  // The clean runs before the builds. Thus the build output of the hook
+  // stays for the next edit.
+  ["prune"] {
+    glob = buildInputs
+    exclude = markdown
+    check = reads("mise run prune")
+  }
   ["cargo-clippy"] {
     glob = (buildInputs) { "clippy.toml" }
     exclude = markdown
-    depends = fixers
+    depends = (fixers) { "prune" }
     check = reads("mise run check:clippy")
   }
   ["cargo-deny"] {
@@ -81,7 +88,7 @@ steps {
       "harness/conformance/report.test.mjs"
     }
     exclude = "crates/**/*.md"
-    depends = fixers
+    depends = (fixers) { "prune" }
     check = reads("mise run test")
   }
   // One step for all Linux tasks, so that mise builds the image one time.

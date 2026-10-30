@@ -59,6 +59,32 @@ du -sh "$data_dir"
 df -Ph "$data_dir" | awk 'NR == 2 { print $4 " free on " $6 }'
 """
 
+# Cargo does not remove old build output. On macOS, each workspace unit
+# keeps its object files in target/debug/deps for the debug info. A change
+# to Cargo.lock or to the features gives each unit a new hash, and the old
+# files stay. rustc reads all of this directory at each start, so each build
+# becomes slower. The clean of the workspace keeps the dependencies, so the
+# next build is short. The full clean also removes the old dependencies. Its
+# limit is the same as the limit of the Linux volumes.
+[tasks.prune]
+description = "Clean the host build output when it is larger than the limits"
+run = """
+limit_gb=16
+limit_entries=50000
+deps=target/debug/deps
+[ -d "$deps" ] || exit 0
+size_gb=$(($(du -sk target | cut -f1) / 1024 / 1024))
+entries=$(($(find "$deps" -mindepth 1 -maxdepth 1 | wc -l)))
+echo "target ${size_gb}GB, $deps $entries entries" >&2
+if [ "$size_gb" -gt "$limit_gb" ]; then
+	echo "prune: target is larger than ${limit_gb}GB. Running cargo clean." >&2
+	cargo clean
+elif [ "$entries" -gt "$limit_entries" ]; then
+	echo "prune: $deps has more than $limit_entries entries. Running cargo clean --workspace." >&2
+	cargo clean --workspace
+fi
+"""
+
 [tasks.check]
 description = "Run all static checks"
 depends = ["check:fmt", "check:clippy", "check:deny", "check:typos", "check:shellcheck"]
