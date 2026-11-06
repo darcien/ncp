@@ -1,7 +1,7 @@
 # Rust itself is pinned in rust-toolchain.toml (rustup). mise pins the other tools.
 [tools]
 # The official MCP conformance suite runs on Node (harness/conformance).
-node = "22.23.3"
+node = "24.22.2"
 cargo-deny = "0.20.2"
 typos = "1.50.3"
 hk = "2.5.0"
