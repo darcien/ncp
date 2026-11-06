@@ -9,6 +9,7 @@ on:
       - Cargo.lock
       - rust-toolchain.toml
       - mise.toml
+      - mise.lock
       - harness/conformance/**
       - .github/workflows/conformance.yaml
   workflow_dispatch:
@@ -28,6 +29,7 @@ jobs:
       # The suite needs only Node from mise. mise run does not install the
       # other tools of mise.toml, because mise builds some of them from source.
       MISE_AUTO_INSTALL: "false"
+      MISE_LOCKED: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -35,7 +37,7 @@ jobs:
       - run: rustup toolchain install
       - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
-          version: 2026.10.17
+          version: 2026.11.2
           install_args: node
           cache: false
       - run: mise run conformance:install
