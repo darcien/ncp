@@ -69,6 +69,10 @@ All that leads to starting something based on my preference:
 
 </details>
 
+## Limitations
+
+- `ncp` has no daemon, so each command starts a new session. A stdio server
+  stops after each command and loses its state.
 
 ## Install
 
