@@ -12,9 +12,11 @@ pnpm = "12.10.1"
 "cargo:git-cliff" = "2.14.2"
 "cargo:cargo-release" = "1.1.6"
 
-# mise builds the cargo tools from crates.io, and downloads no binaries.
 [settings]
+# mise builds the `cargo:` tools from crates.io, and downloads no binaries.
 cargo.binstall = false
+lockfile = true
+lockfile_platforms = ["macos-arm64", "linux-x64"]
 
 # `hk install` then runs the hooks through `mise x`, so that the hooks use
 # the pinned tools.
