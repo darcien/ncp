@@ -13,6 +13,9 @@ targets = [
 [advisories]
 version = 2
 yanked = "deny"
+unused-ignored-advisory = "deny"
+# Check the unsound advisories of all crates, not only of the workspace crates.
+unsound = "all"
 # RustSec marks zvariant, zbus_names and zvariant_derive as unmaintained,
 # because their code moved into zbus 6. secret-service and
 # zbus-secret-service-keyring-store still need zbus 5, which needs these
