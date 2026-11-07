@@ -48,9 +48,11 @@ impl fmt::Debug for Secret {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SecretName(String);
 
+/// The error does not hold the text: a user can type a value in the place
+/// of a name by mistake.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("The name {} is not a secret name", crate::text::code(.0))]
-pub struct SecretNameError(String);
+#[error("The word is not a valid secret name")]
+pub struct SecretNameError;
 
 impl SecretName {
     /// # Errors
@@ -60,7 +62,7 @@ impl SecretName {
         if is_variable_name(text) {
             Ok(Self(text.to_string()))
         } else {
-            Err(SecretNameError(text.to_string()))
+            Err(SecretNameError)
         }
     }
 

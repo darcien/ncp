@@ -545,11 +545,38 @@ fn secret_set_rejects_a_bad_name_and_an_empty_value() {
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert_eq!(
         run.error()["message"],
-        "The name `A-B` is not a secret name"
+        "The word for `<NAME>` is not a valid secret name"
     );
     let run = home.run_with_stdin(&["secret", "set", "A", "--credential-store", "file"], "\n");
     assert_eq!(run.code(), 2, "{}", run.describe());
     assert_eq!(run.error()["message"], "The value of `A` is empty");
+}
+
+#[test]
+fn secret_set_and_delete_do_not_show_a_word_that_is_not_a_secret_name() {
+    let home = Home::new("secret-word-not-shown");
+    for word in ["sk-live-abc", "API_KEY=sk-live-abc"] {
+        for args in [
+            ["secret", "set", word, "--credential-store", "file"].as_slice(),
+            ["secret", "delete", word].as_slice(),
+        ] {
+            for format in ["json", "text"] {
+                let args = [&["--output-format", format], args].concat();
+                let run = home.run_with_stdin(&args, "x");
+                assert_eq!(run.code(), 2, "{}", run.describe());
+                assert!(!run.stderr_text().contains("sk-live"), "{}", run.describe());
+            }
+        }
+    }
+    let run = home.run(&["secret", "delete", "sk-live-abc"]);
+    assert_eq!(
+        run.error()["message"],
+        "The word for `<NAME>` is not a valid secret name"
+    );
+    assert_eq!(
+        run.hints(),
+        ["Use letters, digits and `_`, and do not start with a digit"]
+    );
 }
 
 #[test]

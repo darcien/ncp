@@ -101,9 +101,13 @@ pub(super) async fn call<T: Send + 'static>(
     interruptible(context, blocking).await
 }
 
+// The NAME of `secret set` and `secret delete`. The error does not show the
+// word: a user can type the value there by mistake.
 pub(super) fn secret_name(name: &str) -> Result<SecretName, Failure> {
-    SecretName::parse(name)
-        .map_err(|error| Failure::usage(error.to_string()).hint(super::fixes::secret_name_hint()))
+    SecretName::parse(name).map_err(|_| {
+        Failure::usage("The word for `<NAME>` is not a valid secret name")
+            .hint(super::fixes::secret_name_hint())
+    })
 }
 
 // A destination in a message: an origin in backticks, or "stdio servers".
@@ -220,10 +224,12 @@ async fn values_of(
         return Ok((values, Vec::new()));
     }
     let destination = destination.map_err(|error| not_literal(server, &missing, &error))?;
+    // Each name comes from `Template::names`, which gives only variable
+    // names. A secret name has the same rule, so no name drops out here.
     let names = missing
         .iter()
-        .map(|name| secret_name(name))
-        .collect::<Result<Vec<_>, Failure>>()?;
+        .filter_map(|name| SecretName::parse(name).ok())
+        .collect();
     // The time of the store reads, also when they fail: a slow or locked
     // store is the reason to measure.
     let started = std::time::Instant::now();
