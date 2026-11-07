@@ -63,15 +63,20 @@ AI agents also read [AGENTS.md](AGENTS.md).
 
 ## RFCs
 
-An `ncp` RFC records a design that the maintainer must accept: a new or
-removed command, a new configuration key, a new format of stored data, a
-breaking change, or a change to a MUST rule of `docs/requirements.md`. A
-smaller choice needs only the reason in the commit body.
+An `ncp` RFC records the reasoning and the design of a change before the
+build. Write one for a medium or large change that needs deeper
+reasoning to reach a whole solution. A small change needs only the
+reason in the commit body.
 
 - Path: `docs/rfcs/NNNN-slug.md`. Use the next free number. Do not use a
   number again.
 - Front matter: `state` (`proposed`, `accepted`, `committed` or
   `abandoned`) and `supersedes` (a list of numbers).
+- Sections, in the style of an Oxide RFD: Background, Problems,
+  Determinations, Alternatives, Tests and Compatibility. Alternatives
+  gives each design that the RFC does not choose, with the reason from
+  the order of choice (`docs/command-development.md`). A draft can also
+  have Open questions. The maintainer answers them before acceptance.
 - Write a new RFC with `state: proposed`. Only the maintainer accepts or
   abandons an RFC. Set `state: accepted` or `state: abandoned` only after
   the maintainer says so.
@@ -81,9 +86,9 @@ smaller choice needs only the reason in the commit body.
   commit, the RFC is frozen.
 - Do not change a `committed` or `abandoned` RFC. A new design is a new
   RFC with `supersedes`.
-- Do not start to build a change of this list before its RFC has
-  `state: accepted`. Write the RFC first. If you are not sure that a
-  change is on the list, ask the maintainer.
+- Do not start to build a change that needs an RFC before its RFC has
+  `state: accepted`. If you are not sure that a change needs one, ask
+  the maintainer.
 - A change to a MUST rule of `docs/requirements.md`, or to the order of the
   work, needs the maintainer to agree first.
 

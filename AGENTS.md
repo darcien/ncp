@@ -1,21 +1,57 @@
 # AGENTS.md
 
 Before any work, read [CONTRIBUTING.md](CONTRIBUTING.md) and the documents
-that it names for the task. They apply to agents too. This file adds the
-rules for agents only.
+that it names for the task.
 
 ## Workflow
 
-- The backlog is in `.scratch/backlog/` (not tracked by git). Do the item
-  that the maintainer names. Do not choose the next item yourself.
-- Keep notes in `.scratch/` (not tracked by git).
-- Before you commit a change to a command, an option, an output field or
-  a message, get an adversarial review from a subagent. Do 3 rounds at
-  most. Put the findings that remain in the backlog, and tell the
-  maintainer about each high finding.
-- When you brief a subagent, give it the paths of `STYLE.md`,
-  `CONTRIBUTING.md` and the documents of its task. Do not give it a rule
-  list of your own. Two rule lists give two answers for one text.
+### Start from the problem
+
+A backlog item is a rough issue. It can name a symptom and not the
+problem, propose a fix too early, or be out of date. Before you write
+code:
+
+1. Show the problem with evidence, for example a failing test, the
+   output of a command, or the code. If you cannot show it, tell the
+   maintainer.
+2. Find the cause and all the places that it affects: other commands,
+   texts, documents and tests. A fix in one place can leave the problem
+   in another.
+3. List the fair solutions. Do not take the fix in the item as given.
+   Compare the solutions with the order of choice.
+4. Decide if the change needs an RFC. If you are not sure, ask.
+5. Tell the maintainer the problem, the cause and the path that you
+   chose.
+
+### Write an RFC
+
+1. Put the chosen solution in Determinations and the others in
+   Alternatives.
+2. For prior art, run uv and mise, and quote their output with the
+   version. Help text changes between versions, so memory is not a
+   source.
+3. Save each revision as `.scratch/rfcNNNN/draft-N.md`, so that a
+   reviewer can compare two revisions.
+4. Get reviews (see "Reviews").
+5. Give the maintainer your recommendation. Name each choice that does
+   not follow uv and mise, because the maintainer must decide it.
+6. When the maintainer accepts or abandons the RFC, set its `state`.
+
+### Reviews
+
+- Get an adversarial review from a subagent for an RFC before the
+  maintainer decides. Do the same for a change to a command, an option,
+  an output field or a message before you commit it.
+- Use a new subagent for each round, so that it reads the work fresh.
+  Give it the paths of `STYLE.md`, `CONTRIBUTING.md` and the documents
+  of its task. Do not summarize the rules for it, because a summary can
+  differ from the rules.
+- Ask for findings with a severity, the evidence and a fix. Problems
+  that a user meets, and false facts, come before the wording.
+- Stop when a round finds no high or medium finding, or after 3 rounds,
+  unless the maintainer asks for more.
+- After you shorten a draft, ask a reviewer to compare it with the
+  previous revision, so that no fact is lost.
 
 ## Stop and ask
 
