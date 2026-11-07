@@ -21,27 +21,42 @@ rules for agents only.
 
 Stop and ask before you:
 
-- Add a network destination other than crates.io, the Rust toolchain, and
-  pinned packages from the MCP organization. A pinned package includes the
-  dependencies that its lock file pins.
+- Add a network destination to `ncp`, its build, its tests or its
+  tools, other than crates.io, the Rust toolchain, and pinned packages
+  from the MCP organization. A pinned package includes the dependencies
+  that its lock file pins.
 - Run code that does not come from these sources.
 
-These rules apply to `ncp` and to the development on this machine. The
-settings of the CI platform control the network of the CI.
+The settings of the CI platform control the network of the CI.
+
+To read a public page for research or a citation, for example a spec,
+an RFD or the documentation of a tool, you do not need to ask.
 
 ## Secrets
 
 Do not propose a detection of secrets. Do not ask the maintainer about it
 again.
 
-## Host credential stores
+## Commands that use the Keychain
 
-These commands use the Keychain of the maintainer: `ncp secret`,
-`ncp auth`, `ncp server add --secret`, `ncp server remove` for an HTTP
-server, `security`, and a command for a server that asks for a login or has
-a `${NAME}` that is not in the environment. They can open a dialog that
-only a person can answer. To test them, use the test build `ncp-cli`
-(`crates/testkit/src/bin/ncp-cli.rs`). It has a fake Keychain.
+Run `ncp` for your work. The commands below are the exception. They can
+read or change the Keychain of the maintainer:
+
+- `ncp secret`
+- `ncp auth`
+- `ncp server add --secret`
+- `ncp server remove` for an HTTP server
+- `security`
+- A command for a server that asks for a login or has a `${NAME}` that
+  is not in the environment
+
+The Keychain can open a dialog that only a person can answer. The command
+waits until the person answers.
+
+- If the task needs the real Keychain, run the command with `ncp`. Before
+  you run it, tell the maintainer that a dialog can open.
+- If the task is a test of the code, run the command with the test build
+  `ncp-cli` (`crates/testkit/src/bin/ncp-cli.rs`). It has a fake Keychain.
 
 ## Commits
 
