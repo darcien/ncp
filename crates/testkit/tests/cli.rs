@@ -266,32 +266,271 @@ fn text_of_an_input_required_result_is_one_line_in_a_pipe() {
     }
 }
 
-#[test]
-fn joined_server_and_tool_name_gives_the_two_word_command() {
-    let home = Home::new("joined");
-    let run = home.run(&["tool", "call", "github.search_issues", "q=x"]);
+// The usage error of a command in the JSON output. The text output has the
+// same message and hints.
+fn usage_error(home: &Home, args: &[&str]) -> Value {
+    let run = home.run(args);
     assert_eq!(run.code(), 2, "{}", run.describe());
     let error = run.error();
+    let text = home.run_with_default_format(args);
+    assert_eq!(text.code(), 2, "{}", text.describe());
+    let stderr = text.stderr_text();
+    let message = error["message"].as_str().unwrap();
+    assert!(
+        stderr.starts_with(&format!("error: {message}\n")),
+        "{stderr}"
+    );
+    for hint in common::hints(&error) {
+        assert!(stderr.contains(&format!("\nhint: {hint}\n")), "{stderr}");
+    }
+    error
+}
+
+// Two command lines give the same exit code, result and error.
+fn same_output(home: &Home, args: &[&str], other: &[&str]) {
+    let (run, other) = (home.run(args), home.run(other));
+    assert_eq!(run.code(), other.code(), "{}", run.describe());
+    assert_eq!(run.stdout_text(), other.stdout_text(), "{}", run.describe());
+    if run.code() != 0 {
+        assert_eq!(run.error(), other.error(), "{}", run.describe());
+    }
+}
+
+fn not_configured(home: &Home, word: &str) -> String {
+    format!(
+        "No server `{word}` is configured in `{}`",
+        home.config_path().display()
+    )
+}
+
+const SERVER_LIST: &str = "To see the configured servers, run `ncp server list`";
+
+#[test]
+fn joined_server_and_tool_name_runs_as_two_words() {
+    let home = Home::new("joined");
+    home.configure(&json!({"github": stdio("modern")}));
+    let run = home.run(&["tool", "call", "github.echo", "text=hi"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(text_of(&run.stdout()), "hi");
+    let run = home.run_with_stdin(
+        &["tool", "call", "github/echo", "-"],
+        r#"{"text": "piped"}"#,
+    );
+    assert_eq!(text_of(&run.stdout()), "piped");
+    let run = home.run(&["tool", "call", "github.echo", r#"{"text": "json"}"#]);
+    assert_eq!(text_of(&run.stdout()), "json");
+    for args in [
+        ["tool", "show", "github:echo"].as_slice(),
+        &["tool", "call", "github.echo", "--help"],
+    ] {
+        let run = home.run(args);
+        assert_eq!(run.code(), 0, "{}", run.describe());
+        assert_eq!(
+            run.stdout(),
+            home.run(&["tool", "show", "github", "echo"]).stdout()
+        );
+    }
+}
+
+#[test]
+fn joined_server_and_prompt_name_runs_as_two_words() {
+    let home = Home::new("joined-prompt");
+    home.configure(&json!({"loc": stdio("modern")}));
+    let run = home.run(&["prompt", "get", "loc.greet", "name=Ada"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert_eq!(
+        run.stdout()["messages"][0]["content"]["text"],
+        "Hello, Ada!"
+    );
+    for (joined, two) in [
+        ["loc.review"].as_slice(),
+        &["loc.review", "k=v"],
+        &["loc.a=b"],
+    ]
+    .into_iter()
+    .zip([
+        ["loc", "review"].as_slice(),
+        &["loc", "review", "k=v"],
+        &["loc", "a=b"],
+    ]) {
+        same_output(
+            &home,
+            &[["prompt", "get"].as_slice(), joined].concat(),
+            &[["prompt", "get"].as_slice(), two].concat(),
+        );
+    }
+    let error = home.run(&["prompt", "get", "loc.a=b"]).error();
+    assert_eq!(error["message"], "The server `loc` refused `prompts/get`");
+    assert_eq!(error["causes"], json!(["no prompt a=b"]));
+}
+
+#[test]
+fn prompt_word_in_a_form_of_the_tool_arguments_is_the_prompt_name() {
+    let home = Home::new("prompt-forms");
+    home.configure(&json!({"loc": stdio("modern")}));
+    for prompt in ["-", r#"{"a":1}"#] {
+        let error = usage_error(&home, &["prompt", "get", "loc", prompt]);
+        assert_eq!(error["message"], "The server `loc` refused `prompts/get`");
+        assert_eq!(error["causes"], json!([format!("no prompt {prompt}")]));
+        assert_eq!(
+            common::hints(&error),
+            ["To see the prompts of the server, run `ncp prompt list loc`"]
+        );
+    }
+}
+
+#[test]
+fn joined_word_with_another_next_word_names_the_list_of_the_server() {
+    let home = Home::new("joined-next");
+    home.configure(&json!({"loc": stdio("modern")}));
+    for (args, what) in [
+        (["tool", "call", "loc.search", "query"].as_slice(), "tool"),
+        (&["tool", "show", "loc.search", "extra"], "tool"),
+        (&["prompt", "get", "loc.review", "x"], "prompt"),
+        (&["prompt", "get", "loc.review", "-"], "prompt"),
+        (&["prompt", "get", "loc.review", r#"{"a":1}"#], "prompt"),
+    ] {
+        let error = usage_error(&home, args);
+        assert_eq!(
+            error["message"],
+            format!("`{}` joins a server name and a {what} name", args[2])
+        );
+        assert_eq!(
+            error["hints"],
+            json!([{"message": format!("To see the {what}s of the server, run `ncp {what} list loc`"),
+                "command": format!("ncp {what} list loc")}])
+        );
+    }
+}
+
+#[test]
+fn joined_word_in_another_command_names_the_server_part() {
+    let home = Home::new("joined-other");
+    home.configure(&json!({"loc": stdio("modern")}));
+    for command in [["server", "show"], ["resource", "list"], ["prompt", "list"]] {
+        let error = usage_error(&home, &[command[0], command[1], "loc.search"]);
+        assert_eq!(error["message"], not_configured(&home, "loc.search"));
+        assert_eq!(common::hints(&error), ["Did you mean `loc`?", SERVER_LIST]);
+    }
+    let error = usage_error(&home, &["tool", "show", "nope.search"]);
+    assert_eq!(error["message"], not_configured(&home, "nope.search"));
+    assert_eq!(common::hints(&error), [SERVER_LIST]);
+}
+
+#[test]
+fn key_of_an_entry_from_another_client_gives_the_error_of_the_entry() {
+    let home = Home::new("entry-key");
+    let key = "io.github.github/github-mcp-server";
+    home.configure(&json!({key: {"type": "http", "url": "https://api.example/mcp/"}}));
+    let error = usage_error(&home, &["tool", "list", key]);
     assert_eq!(
         error["message"],
-        "`github.search_issues` joins a server name and a tool name"
+        format!(
+            "The entry of the server `{key}` in `{}` is not valid",
+            home.config_path().display()
+        )
+    );
+}
+
+#[test]
+fn url_in_place_of_a_server_name_gives_only_the_hint_to_list_the_servers() {
+    let home = Home::new("url");
+    home.configure(&json!({"loc": {"type": "http", "url": "http://127.0.0.1:9/mcp"}}));
+    for url in [
+        "https://mcp.example/mcp",
+        "http://127.0.0.1:9/mcp",
+        "https://x.example/mcp",
+        "HTTPS://x.example/mcp",
+    ] {
+        for args in [
+            ["tool", "list", url].as_slice(),
+            &["tool", "call", url, "q=x"],
+            &["prompt", "get", url],
+            &["server", "remove", url],
+            &["auth", "login", url],
+        ] {
+            let error = usage_error(&home, args);
+            assert_eq!(error["message"], not_configured(&home, url));
+            assert_eq!(
+                error["hints"],
+                json!([{"message": SERVER_LIST, "command": "ncp server list"}]),
+                "{args:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn server_add_with_the_url_first_names_the_order() {
+    let home = Home::new("add-swapped");
+    let error = usage_error(&home, &["server", "add", "https://x.example/mcp", "foo"]);
+    assert_eq!(
+        error["message"],
+        "ncp cannot add the server `https://x.example/mcp`"
     );
     assert_eq!(
         error["hints"],
-        json!([{"message": "To give the server and the tool as two words, run \
-            `ncp tool call github search_issues q=x`"}])
+        json!([{"message": "If `foo` is the server name, give it before the URL"}])
     );
-    let run = home.run(&["tool", "show", "github.search_issues"]);
+    // A URL that `server add` refuses, or a next word that is not a server
+    // name, gets no hint.
+    for args in [
+        ["server", "add", "http://x.example/mcp", "foo"],
+        ["server", "add", "https://x.example/mcp", "f o"],
+    ] {
+        assert_eq!(usage_error(&home, &args)["hints"], json!([]));
+    }
+}
+
+#[test]
+fn tool_call_help_with_a_joined_word_loads_the_configuration_first() {
+    let home = Home::new("joined-help");
+    std::fs::create_dir_all(home.config_path().parent().unwrap()).unwrap();
+    std::fs::write(home.config_path(), "{").unwrap();
+    let error = usage_error(&home, &["tool", "call", "nope.search", "--help"]);
     assert_eq!(
-        run.error()["hints"],
-        json!([{"message": "To see the tool, run `ncp tool show github search_issues`",
-            "command": "ncp tool show github search_issues"}])
+        error["message"],
+        format!(
+            "The configuration file `{}` is not valid",
+            home.config_path().display()
+        )
+    );
+    for word in ["https://x.example/mcp", "nope"] {
+        let run = home.run(&["tool", "call", word, "--help"]);
+        assert_eq!(run.code(), 0, "{}", run.describe());
+        assert!(
+            run.stdout_text().starts_with("Call a tool"),
+            "{}",
+            run.describe()
+        );
+    }
+    home.configure(&json!({"loc": stdio("modern")}));
+    let run = home.run(&["tool", "call", "nope.search", "--help"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(
+        run.stdout_text().starts_with("Call a tool"),
+        "{}",
+        run.describe()
+    );
+}
+
+#[test]
+fn tool_call_help_with_the_key_of_an_entry_shows_the_help() {
+    let home = Home::new("key-help");
+    home.configure(&json!({"loc": stdio("modern"), "loc.search": stdio("modern")}));
+    let run = home.run(&["tool", "call", "loc.search", "--help"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(
+        run.stdout_text().starts_with("Call a tool"),
+        "{}",
+        run.describe()
     );
 }
 
 #[test]
 fn argument_in_place_of_the_tool_gives_missing_tool_name() {
     let home = Home::new("missing-tool");
+    home.configure(&json!({"github": stdio("modern")}));
     let run = home.run(&["tool", "call", "github", "q=x"]);
     assert_eq!(run.code(), 2, "{}", run.describe());
     let error = run.error();
@@ -301,6 +540,63 @@ fn argument_in_place_of_the_tool_gives_missing_tool_name() {
         json!(["The word `q=x` is a tool argument"])
     );
     assert_eq!(error["hints"][0]["command"], "ncp tool list github");
+}
+
+#[test]
+fn argument_joined_in_place_of_the_tool_gives_missing_tool_name() {
+    let home = Home::new("joined-argument");
+    home.configure(&json!({"loc": stdio("modern")}));
+    let helps: [&[&str]; 2] = [&[], &["--help"]];
+    for help in helps {
+        let joined = [["tool", "call", "loc.a=b"].as_slice(), help].concat();
+        let error = usage_error(&home, &joined);
+        assert_eq!(error["message"], "The command line has no tool name");
+        assert_eq!(
+            error["causes"],
+            json!(["The word `a=b` is a tool argument"])
+        );
+        same_output(
+            &home,
+            &joined,
+            &[["tool", "call", "loc", "a=b"].as_slice(), help].concat(),
+        );
+    }
+}
+
+#[test]
+fn prompt_get_with_no_prompt_name_names_the_prompt_list() {
+    let home = Home::new("missing-prompt");
+    home.configure(&json!({"loc": stdio("modern")}));
+    let error = usage_error(&home, &["prompt", "get", "loc"]);
+    assert_eq!(error["message"], "The command line has no prompt name");
+    assert_eq!(
+        error["hints"],
+        json!([{"message": "To see the prompts of the server, run `ncp prompt list loc`",
+            "command": "ncp prompt list loc"}])
+    );
+    let run = home.run(&["prompt", "get", "--help"]);
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(
+        run.stdout_text().contains(" <SERVER> [PROMPT] "),
+        "{}",
+        run.describe()
+    );
+}
+
+#[test]
+fn unknown_server_comes_before_the_checks_of_the_command_line() {
+    let home = Home::new("lookup-first");
+    home.configure(&json!({"loc": stdio("modern")}));
+    for args in [
+        ["tool", "call", "nope"].as_slice(),
+        &["prompt", "get", "nope"],
+        &["prompt", "get", "nope", "review", "bad"],
+        &["tool", "call", "nope", "search", "bad"],
+    ] {
+        let error = usage_error(&home, args);
+        assert_eq!(error["message"], not_configured(&home, "nope"), "{args:?}");
+        assert_eq!(common::hints(&error), [SERVER_LIST]);
+    }
 }
 
 #[test]

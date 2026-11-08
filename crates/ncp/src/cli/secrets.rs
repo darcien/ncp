@@ -24,6 +24,7 @@ use super::{
     outcome::{Exit, Failure, Hint, Warning},
     project_file::ProjectFile,
     render,
+    server_word::Word,
     session::{self, Context},
 };
 use crate::{
@@ -550,7 +551,7 @@ fn set_target<'a>(
     several_hint: Option<Hint>,
 ) -> Result<Target<'a>, Failure> {
     let servers: Vec<&Server> = match only {
-        Some(word) => vec![session::select(loaded, word, context.ui)?],
+        Some(word) => vec![session::select(loaded, Word::server(word), context.ui)?.server],
         None => loaded.config.servers().collect(),
     };
     let uses = binding::uses(servers.iter().copied(), name.as_str());
@@ -645,7 +646,7 @@ async fn set(
     place: CredentialPlace,
 ) -> Result<(), Failure> {
     let name = secret_name(name)?;
-    let loaded = session::load(context, only).await?;
+    let loaded = session::load(context, only.map(Word::server)).await?;
     let target = set_target(context, &loaded, &name, only, None)?;
     let destination = &target.destination;
     let key = CredentialKey::Secret {
@@ -1329,7 +1330,7 @@ async fn chosen(
         Removal::Server(word) => {
             // The configuration first: a usage error must not wait for the
             // native store.
-            let loaded = session::load(context, Some(&word)).await?;
+            let loaded = session::load(context, Some(Word::server(&word))).await?;
             let several_hint = Hint::run_text(
                 &format!("delete all items of {}", code(name.as_str())),
                 &format!("ncp secret delete {name} --all"),

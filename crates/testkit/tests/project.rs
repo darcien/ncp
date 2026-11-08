@@ -149,6 +149,72 @@ fn yes_at_the_question_trusts_the_file_and_runs_the_entry() {
 }
 
 #[test]
+fn joined_word_asks_for_the_file_of_its_server_part() {
+    let home = Home::new("p-joined")
+        .project("app", &json!({"fx": fixture()}))
+        .set("NCP_TEST_TTY", "1");
+    let run = home.run_with_stdin(&["tool", "call", "fx.echo", "text=hi"], "y\n");
+    assert_eq!(run.code(), 0, "{}", run.describe());
+    assert!(
+        run.stderr_text().contains("Trust this file? [y/N]"),
+        "{}",
+        run.describe()
+    );
+    assert_eq!(run.stdout()["content"][0]["text"], "hi");
+}
+
+#[test]
+fn joined_word_that_does_not_run_asks_no_trust_question() {
+    let home = Home::new("p-joined-stop")
+        .project("app", &json!({"pj": fixture()}))
+        .set("NCP_TEST_TTY", "1");
+    for (args, message) in [
+        (
+            ["server", "show", "pj.search"].as_slice(),
+            "No server `pj.search` is configured",
+        ),
+        (
+            &["tool", "show", "pj.search", "extra"],
+            "`pj.search` joins a server name and a tool name",
+        ),
+    ] {
+        let run = home.run_with_stdin(args, "y\n");
+        assert_eq!(run.code(), 2, "{}", run.describe());
+        assert!(
+            !run.stderr_text().contains("Trust this file?"),
+            "{}",
+            run.describe()
+        );
+        let error = run.error();
+        assert!(
+            error["message"].as_str().unwrap().starts_with(message),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn server_word_asks_the_trust_question_before_the_usage_error() {
+    let home = Home::new("p-usage")
+        .project("app", &json!({"pj": fixture()}))
+        .set("NCP_TEST_TTY", "1");
+    let run = home.run_with_stdin(&["tool", "call", "pj", "q=x"], "y\n");
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    let stderr = run.stderr_text();
+    let question = stderr.find("Trust this file? [y/N]");
+    let error = stderr.find("The command line has no tool name");
+    assert!(question.is_some() && question < error, "{stderr}");
+}
+
+#[test]
+fn an_untrusted_entry_is_a_near_name() {
+    let home = Home::new("p-near").project("app", &json!({"pj": fixture()}));
+    let run = home.run(&["tool", "list", "pk"]);
+    assert_eq!(run.code(), 2, "{}", run.describe());
+    assert_eq!(run.hints()[0], "Did you mean `pj`?");
+}
+
+#[test]
 fn no_at_the_question_ignores_the_file_until_ncp_trust() {
     let home = Home::new("p-no")
         .project("app", &json!({"fx": fixture()}))

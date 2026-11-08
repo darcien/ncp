@@ -141,6 +141,12 @@ ncp tool show cloudflare-docs search_cloudflare_documentation
 ncp tool call cloudflare-docs search_cloudflare_documentation query="Workers KV"
 ```
 
+You can also join the server name and the tool name with `.`, `:` or `/`:
+
+```sh
+ncp tool call cloudflare-docs.search_cloudflare_documentation query="Workers KV"
+```
+
 Example for scripts:
 
 ```sh

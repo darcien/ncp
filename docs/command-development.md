@@ -33,7 +33,10 @@ a pipe or a file.
   commands that the script runs write to stdout too. Their output is not a
   result, so it is the same in both output formats: a person or a shell
   reads it. `tool call --help` with no tool name writes the help text.
-  `tool call SERVER TOOL --help` shows the tool, which is a result.
+  `tool call SERVER TOOL --help` and `tool call SERVER.TOOL --help` show
+  the tool, which is a result. If the server word is not a URL and has
+  `.`, `:` or `/` between two names, ncp first loads the configuration.
+  Thus a load error or a trust question can come first.
 - All other output goes to stderr. With no command or no subcommand, the
   text output writes the help text as a usage error on stderr.
 - One CLI for people and agents. `ncp` has two output formats: the text

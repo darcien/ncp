@@ -20,6 +20,7 @@ use super::{
     diagnostics,
     outcome::{Exit, Failure, Hint, Warning},
     secrets,
+    server_word::Word,
     session::{self, Context},
 };
 use crate::{
@@ -88,7 +89,7 @@ pub(super) async fn command(context: &Context<'_>, command: AuthCommand) -> Resu
             .about(server.as_str())
             .hint(session::wait_longer());
             let notes = crate::client::http::ConnectNotes::default();
-            let loaded = session::load(context, Some(&server)).await?;
+            let loaded = session::load(context, Some(Word::server(&server))).await?;
             let name = limited(
                 context,
                 limit,
@@ -1258,8 +1259,8 @@ async fn select<'a>(
     loaded: &'a session::Loaded,
     word: &str,
 ) -> Result<&'a Server, Failure> {
-    let failure = match session::select(loaded, word, context.ui) {
-        Ok(server) => return Ok(server),
+    let failure = match session::select(loaded, Word::server(word), context.ui) {
+        Ok(selected) => return Ok(selected.server),
         Err(failure) => failure,
     };
     // A name that the gate stops gets no lookup of its issuer.
@@ -1501,8 +1502,9 @@ async fn wait_for_redirect(
 }
 
 async fn logout(context: &Context<'_>, word: &str) -> Result<(), Failure> {
+    let word = Word::server(word);
     let loaded = session::load(context, Some(word)).await?;
-    let server = session::select(&loaded, word, context.ui)?;
+    let server = session::select(&loaded, word, context.ui)?.server;
     let name = server.name.as_str();
     remote(server)?;
     let key = CredentialKey::OAuthTokens(server.name.clone());
@@ -1705,7 +1707,7 @@ async fn status(context: &Context<'_>, word: Option<&str>) -> Result<(), Failure
     let loaded = session::load(context, None).await?;
     let servers: Vec<&Server> = match word {
         Some(word) => {
-            let server = session::select(&loaded, word, context.ui)?;
+            let server = session::select(&loaded, Word::server(word), context.ui)?.server;
             remote(server)?;
             vec![server]
         }

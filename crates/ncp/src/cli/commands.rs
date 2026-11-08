@@ -16,6 +16,7 @@ use super::{
     outcome::{Exit, Failure, Hint, Warning},
     render,
     schema_check::{self, Outcome},
+    server_word::{self, Kind, Word, list_hint},
     session::{self, Context, Loaded},
     tool_args::{self, Input, Resolved},
     ui,
@@ -53,7 +54,7 @@ pub async fn prompt(context: &Context<'_>, command: PromptCommand) -> Result<(),
             server,
             prompt,
             arguments,
-        } => prompt_get(context, &server, &prompt, &arguments).await,
+        } => prompt_get(context, &server, prompt.as_deref(), &arguments).await,
     }
 }
 
@@ -128,30 +129,6 @@ fn list_rows(loaded: &Loaded) -> Vec<render::Row> {
     servers.chain(invalid).chain(waiting).collect()
 }
 
-// A joined word gives the fix.
-fn select<'a>(
-    context: &Context<'_>,
-    loaded: &'a Loaded,
-    word: &str,
-    fix: impl FnOnce(&str, &str) -> Hint,
-) -> Result<&'a Server, Failure> {
-    if let Some((server, tool)) = session::split_joined(word) {
-        return Err(session::joined_failure(word, fix(server, tool)));
-    }
-    session::select(loaded, word, context.ui)
-}
-
-fn show_fix(server: &str, tool: &str) -> Hint {
-    Hint::run(
-        "see the tool",
-        format!(
-            "ncp tool show {} {}",
-            render::shell_word(server),
-            render::shell_word(tool)
-        ),
-    )
-}
-
 // Always closes the connection. A server can let a connect with no token
 // in and answer `401` to a request. Then `work` runs once more on a
 // connection with the stored login. This is safe, because the server did
@@ -205,8 +182,9 @@ fn asked<T>(
 }
 
 async fn server_show(context: &Context<'_>, word: &str) -> Result<(), Failure> {
+    let word = Word::server(word);
     let loaded = session::load(context, Some(word)).await?;
-    let server = select(context, &loaded, word, show_fix)?;
+    let server = session::select(&loaded, word, context.ui)?.server;
     let info = with_connection(context, server, async |connection| {
         Ok(connection.server_info())
     })
@@ -330,8 +308,9 @@ fn cached_list(context: &Context<'_>, server: &Server) -> Option<list_cache::Cac
 }
 
 async fn tool_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
+    let word = Word::server(word);
     let loaded = session::load(context, Some(word)).await?;
-    let server = select(context, &loaded, word, show_fix)?;
+    let server = session::select(&loaded, word, context.ui)?.server;
     let cached = cached_list(context, server).map(|cached| (cached.tools, cached.has_instructions));
     let (tools, has_instructions) = match cached {
         Some(cached) => cached,
@@ -365,8 +344,10 @@ async fn tool_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
 }
 
 fn find_tool(server: &str, tools: Vec<Tool>, name: &str) -> Result<Tool, Failure> {
-    let near = super::near::nearest(name, tools.iter().map(|tool| tool.name.as_ref()))
-        .map(|near| Hint::text(format!("Did you mean {}?", code(near))));
+    let near = server_word::did_you_mean(super::near::nearest(
+        name,
+        tools.iter().map(|tool| tool.name.as_ref()),
+    ));
     tools
         .into_iter()
         .find(|tool| tool.name == name)
@@ -377,25 +358,38 @@ fn find_tool(server: &str, tools: Vec<Tool>, name: &str) -> Result<Tool, Failure
                 code(name)
             ))
             .about(server)
-            .with_hints(near.into_iter().chain([tools_hint(server)]))
+            .with_hints(near.into_iter().chain([list_hint("tool", server)]))
         })
 }
 
-fn tools_hint(server: &str) -> Hint {
-    Hint::run(
-        "see the tools of the server",
-        format!("ncp tool list {}", render::shell_word(server)),
-    )
+// The name after the server and the words after that name. A joined word
+// gives the name, so the next word is the first argument.
+fn name_and_arguments<'a>(
+    joined: Option<&'a str>,
+    next: Option<&'a str>,
+    rest: &[String],
+) -> (Option<&'a str>, Vec<String>) {
+    match joined {
+        Some(name) => (
+            Some(name),
+            next.map(str::to_string)
+                .into_iter()
+                .chain(rest.iter().cloned())
+                .collect(),
+        ),
+        None => (next, rest.to_vec()),
+    }
 }
 
 // The tool word, or the failure that names the fix. A word in a form of the
 // tool arguments (`key=value`, `{...}` or `-`) means that the tool name is
 // missing.
 fn tool_word<'a>(server: &str, tool: Option<&'a str>) -> Result<&'a str, Failure> {
-    let missing = || Failure::usage("The command line has no tool name").hint(tools_hint(server));
+    let missing =
+        || Failure::usage("The command line has no tool name").hint(list_hint("tool", server));
     match tool {
         None => Err(missing()),
-        Some(word) if word.contains('=') || word.starts_with('{') || word == "-" => {
+        Some(word) if tool_args::is_argument(word) => {
             Err(missing().cause(format!("The word {} is a tool argument", code(word))))
         }
         Some(word) => Ok(word),
@@ -456,10 +450,15 @@ fn show_tool(context: &Context<'_>, server: &str, tool: &Tool) -> Result<(), Fai
 }
 
 async fn tool_show(context: &Context<'_>, word: &str, tool: Option<&str>) -> Result<(), Failure> {
+    let word = Word {
+        text: word,
+        kind: Kind::ToolShow(tool),
+    };
     let loaded = session::load(context, Some(word)).await?;
-    let server = select(context, &loaded, word, show_fix)?;
+    let selected = session::select(&loaded, word, context.ui)?;
+    let server = selected.server;
     let name = server.name.as_str();
-    let tool_name = tool_word(name, tool)?;
+    let tool_name = tool_word(name, selected.joined.or(tool))?;
     // A cached list that misses the tool gets a live list: the server can
     // change within the time of the list.
     let cached =
@@ -477,54 +476,45 @@ async fn tool_show(context: &Context<'_>, word: &str, tool: Option<&str>) -> Res
 }
 
 async fn tool_call(context: &Context<'_>, call: CallArgs) -> Result<(), Failure> {
-    let word = match (call.server.as_deref(), call.tool.as_deref(), call.help) {
-        (None, _, true) | (Some(_), None, true) => return print_call_help(),
-        (None, _, false) => {
-            return Err(Failure::usage("The command line has no server name")
-                .hint(Hint::run("see the configured servers", "ncp server list")));
+    let Some(text) = call.server.as_deref() else {
+        if call.help {
+            return print_call_help();
         }
-        (Some(word), _, _) => word,
+        return Err(Failure::usage("The command line has no server name")
+            .hint(Hint::run("see the configured servers", "ncp server list")));
     };
-    let call_fix = |server: &str, tool: &str| {
-        std::iter::once(format!(
-            "ncp tool call {} {}",
-            render::shell_word(server),
-            render::shell_word(tool)
-        ))
-        .chain(
-            call.tool
-                .iter()
-                .chain(&call.arguments)
-                .map(|w| render::shell_word(w)),
-        )
-        .collect::<Vec<_>>()
-        .join(" ")
+    let word = Word {
+        text,
+        kind: Kind::ToolCall(call.tool.as_deref()),
     };
-    if let Some((server, tool)) = session::split_joined(word) {
-        return Err(session::joined_failure(
-            word,
-            Hint::run_text(
-                "give the server and the tool as two words",
-                &call_fix(server, tool),
-            ),
-        ));
+    // With no tool word, `--help` shows the help before the load. Only a
+    // joined word can name the tool, so only a word that splits loads the
+    // configuration first.
+    let help_only = call.help && call.tool.is_none();
+    if help_only && server_word::split_joined(text).is_none() {
+        return print_call_help();
     }
-    let tool_name = tool_word(word, call.tool.as_deref())?;
+    let loaded = session::load(context, Some(word)).await?;
+    if help_only && loaded.joined(word).is_none() {
+        return print_call_help();
+    }
+    let selected = session::select(&loaded, word, context.ui)?;
+    let server = selected.server;
+    let name = server.name.as_str();
+    let (tool, arguments) =
+        name_and_arguments(selected.joined, call.tool.as_deref(), &call.arguments);
+    let tool_name = tool_word(name, tool)?;
     let input = if call.help {
         Input::Pairs(Vec::new())
     } else {
-        tool_args::parse(&call.arguments)
-            .map_err(|error| arguments_failure(&error, Arguments::Tool))?
+        tool_args::parse(&arguments).map_err(|error| arguments_failure(&error, Arguments::Tool))?
     };
-    let loaded = session::load(context, Some(word)).await?;
-    let server = session::select(&loaded, word, context.ui)?;
     let input = match input {
         Input::Stdin => Resolved::Object(read_stdin_object(context).await?),
         Input::Pairs(pairs) => Resolved::Pairs(pairs),
         Input::Object(object) => Resolved::Object(object),
     };
     let needs_tool = call.help || !call.no_validate || tool_args::needs_schema(&input);
-    let name = server.name.as_str();
     with_connection(context, server, async |connection| {
         // rmcp mirrors parameters only for a tool that it listed in this
         // session, so that case lists again. In other cases, a fresh cache
@@ -640,8 +630,9 @@ fn empty_when_missing<T>(result: Result<Vec<T>, RequestError>) -> Result<Vec<T>,
 }
 
 async fn resource_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
+    let word = Word::server(word);
     let loaded = session::load(context, Some(word)).await?;
-    let server = select(context, &loaded, word, show_fix)?;
+    let server = session::select(&loaded, word, context.ui)?.server;
     let name = server.name.as_str();
     let found = with_connection(context, server, async |connection| {
         if !offers(connection, |capabilities| capabilities.resources.is_some()) {
@@ -699,18 +690,16 @@ fn named_failure(server: &Server, method: &str, error: &RequestError, list: &str
             ))
             .about(name)
             .cause(data.message.as_ref())
-            .hint(Hint::run(
-                &format!("see the {list}s of the server"),
-                format!("ncp {list} list {}", render::shell_word(name)),
-            ))
+            .hint(list_hint(list, name))
         }
         _ => session::request_failure(server, method, error),
     }
 }
 
 async fn resource_read(context: &Context<'_>, word: &str, uri: &str) -> Result<(), Failure> {
+    let word = Word::server(word);
     let loaded = session::load(context, Some(word)).await?;
-    let server = select(context, &loaded, word, show_fix)?;
+    let server = session::select(&loaded, word, context.ui)?.server;
     let name = server.name.as_str();
     let answer = with_connection(context, server, async |connection| {
         super::ask::with_rounds(context, name, async |continuation| {
@@ -814,8 +803,9 @@ fn input_required(
 }
 
 async fn prompt_list(context: &Context<'_>, word: &str) -> Result<(), Failure> {
+    let word = Word::server(word);
     let loaded = session::load(context, Some(word)).await?;
-    let server = select(context, &loaded, word, show_fix)?;
+    let server = session::select(&loaded, word, context.ui)?.server;
     let name = server.name.as_str();
     let prompts = with_connection(context, server, async |connection| {
         if !offers(connection, |capabilities| capabilities.prompts.is_some()) {
@@ -866,13 +856,22 @@ fn prompt_arguments(words: &[String]) -> Result<JsonObject, Failure> {
 async fn prompt_get(
     context: &Context<'_>,
     word: &str,
-    prompt: &str,
+    prompt: Option<&str>,
     words: &[String],
 ) -> Result<(), Failure> {
-    let arguments = prompt_arguments(words)?;
+    let word = Word {
+        text: word,
+        kind: Kind::PromptGet(prompt),
+    };
     let loaded = session::load(context, Some(word)).await?;
-    let server = select(context, &loaded, word, show_fix)?;
+    let selected = session::select(&loaded, word, context.ui)?;
+    let server = selected.server;
     let name = server.name.as_str();
+    let (prompt, words) = name_and_arguments(selected.joined, prompt, words);
+    let prompt = prompt.ok_or_else(|| {
+        Failure::usage("The command line has no prompt name").hint(list_hint("prompt", name))
+    })?;
+    let arguments = prompt_arguments(&words)?;
     let answer = with_connection(context, server, async |connection| {
         super::ask::with_rounds(context, name, async |continuation| {
             connection
@@ -934,7 +933,7 @@ fn call_failure(server: &Server, tool: &str, listed: bool, error: &RequestError)
                     ),
                 )
             } else {
-                tools_hint(name)
+                list_hint("tool", name)
             };
             Failure::usage(format!(
                 "The server {} refused the call of the tool {}",

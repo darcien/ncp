@@ -141,6 +141,21 @@ pub fn build(name: &str, request: &Request) -> Result<Entry, AddError> {
     })
 }
 
+/// True when `server add` accepts the URL for an entry with no other
+/// field.
+#[must_use]
+pub fn accepts_url(url: &str) -> bool {
+    let request = Request {
+        form: Form::Remote {
+            url: url.to_string(),
+        },
+        headers: Vec::new(),
+        env: Vec::new(),
+        secret: None,
+    };
+    build("server", &request).is_ok()
+}
+
 fn remote_fields(url: &str, request: &Request) -> Result<Vec<(String, Value)>, AddError> {
     if !request.env.is_empty() {
         return Err(AddError::EnvOnRemote);

@@ -15,6 +15,7 @@ use super::{
     diagnostics,
     outcome::{Exit, Failure, Hint, Warning},
     project_file::{self, Change, ProjectFile},
+    server_word::{self, Resolution, Word},
     timings::Timings,
     ui::{Ui, Verbosity},
 };
@@ -137,6 +138,42 @@ impl Loaded {
         self.project_of(name)
             .map_or(self.path.as_path(), |project| project.file.as_path())
     }
+
+    /// The names that `ncp server list` shows: the valid entries, the
+    /// entries that are not valid, and the entries of a project file that
+    /// is not trusted.
+    pub fn known_names(&self) -> impl Iterator<Item = &str> {
+        let waiting = self
+            .project
+            .project()
+            .filter(|project| project.trust != Trust::Trusted)
+            .into_iter()
+            .flat_map(|project| project.entries.iter().map(|entry| entry.name.as_str()));
+        self.config
+            .servers()
+            .map(|server| server.name.as_str())
+            .chain(self.config.invalid().map(|(name, _)| name))
+            .chain(waiting)
+    }
+
+    /// True when `ncp server list` shows the name.
+    #[must_use]
+    pub fn knows(&self, name: &str) -> bool {
+        self.known_names().any(|known| known == name)
+    }
+
+    /// The server part and the second name of a joined word that runs as
+    /// two words.
+    #[must_use]
+    pub fn joined<'w>(&self, word: Word<'w>) -> Option<(&'w str, &'w str)> {
+        if self.knows(word.text) {
+            return None;
+        }
+        match server_word::resolve(word, self) {
+            Resolution::Joined { server, name } => Some((server, name)),
+            Resolution::Failed(_) => None,
+        }
+    }
 }
 
 /// Reads the global file and searches for the project file. A missing
@@ -214,13 +251,15 @@ fn trusted(loaded: Loaded, env: &Env) -> Result<Loaded, Failure> {
 ///
 /// Returns the failures of `load_config`, a failure when `ncp` cannot write a
 /// record, and exit 130 at Ctrl-C.
-pub async fn load(context: &Context<'_>, named: Option<&str>) -> Result<Loaded, Failure> {
+pub async fn load(context: &Context<'_>, named: Option<Word<'_>>) -> Result<Loaded, Failure> {
     let loaded = context.timed(
         |record, elapsed| record.config = Some(elapsed),
         || load_config(&context.paths, context.env, !context.named_config),
     )?;
     report_files(context, &loaded);
-    let Some(project) = named.and_then(|name| loaded.blocked_by(name)) else {
+    // A joined word that runs asks for the file of its server part.
+    let name = named.map(|word| loaded.joined(word).map_or(word.text, |(server, _)| server));
+    let Some(project) = name.and_then(|name| loaded.blocked_by(name)) else {
         return Ok(loaded);
     };
     if !context.interactive || project.trust == Trust::Ignored {
@@ -280,59 +319,55 @@ fn report_files(context: &Context<'_>, loaded: &Loaded) {
     }
 }
 
-/// A word that joins a server name and a tool name, for example
-/// `github.search`. A server name cannot contain `.`, `:` or `/`, so the
-/// first of them splits the word.
-#[must_use]
-pub fn split_joined(word: &str) -> Option<(&str, &str)> {
-    let index = word.find(['.', ':', '/'])?;
-    let (server, tool) = (&word[..index], &word[index + 1..]);
-    (!server.is_empty() && !tool.is_empty()).then_some((server, tool))
+/// The server of a command, and the second name of a joined word that
+/// runs as two words.
+#[derive(Debug, Clone, Copy)]
+pub struct Selected<'a, 'w> {
+    pub server: &'a Server,
+    pub joined: Option<&'w str>,
 }
 
-/// The failure for a joined word, with the command to use instead.
-#[must_use]
-pub fn joined_failure(word: &str, fix: Hint) -> Failure {
-    Failure::usage(format!(
-        "{} joins a server name and a tool name",
-        code(word)
-    ))
-    .hint(fix)
-}
-
-/// Selects a server and shows the warnings of its entry.
+/// Selects a server and shows the warnings of its entry. The lookup of the
+/// whole word comes first, so a known word never splits.
 ///
 /// # Errors
 ///
 /// Returns a usage failure for an unknown server or an entry that is not valid.
-pub fn select<'a>(loaded: &'a Loaded, name: &str, ui: Ui) -> Result<&'a Server, Failure> {
+pub fn select<'a, 'w>(
+    loaded: &'a Loaded,
+    word: Word<'w>,
+    ui: Ui,
+) -> Result<Selected<'a, 'w>, Failure> {
+    if let Some(server) = lookup(loaded, word.text, ui)? {
+        return Ok(Selected {
+            server,
+            joined: None,
+        });
+    }
+    match server_word::resolve(word, loaded) {
+        Resolution::Joined { server, name } => {
+            let selected = select(loaded, Word::server(server), ui)?;
+            Ok(Selected {
+                joined: Some(name),
+                ..selected
+            })
+        }
+        Resolution::Failed(failure) => Err(failure),
+    }
+}
+
+// The entry of the name, or `None` when no file has the name.
+fn lookup<'a>(loaded: &'a Loaded, name: &str, ui: Ui) -> Result<Option<&'a Server>, Failure> {
     if let Some(project) = loaded.blocked_by(name) {
         return Err(blocked(name, project, loaded.config.has(name)));
     }
-    let server = loaded.config.server(name).map_err(|error| match error {
-        LookupError::NotFound(_) => {
-            let shown = |path: &Path| path_code(path);
-            let place = match (&loaded.project, loaded.exists) {
-                (ProjectFile::Read(project), _) if project.trust == Trust::Trusted => {
-                    format!(" in {} or {}", shown(&loaded.path), shown(&project.file))
-                }
-                (_, true) => format!(" in {}", shown(&loaded.path)),
-                (_, false) => format!(", because {} does not exist", shown(&loaded.path)),
-            };
-            let names = loaded
-                .config
-                .servers()
-                .map(|server| server.name.as_str())
-                .chain(loaded.config.invalid().map(|(name, _)| name));
-            let failure = Failure::usage(format!("No server {} is configured{place}", code(name)));
-            let failure = match super::near::nearest(name, names) {
-                Some(near) => failure.hint(format!("Did you mean {}?", code(near))),
-                None => failure,
-            };
-            failure.hint(Hint::run("see the configured servers", "ncp server list"))
+    let server = match loaded.config.server(name) {
+        Ok(server) => server,
+        Err(LookupError::NotFound(_)) => return Ok(None),
+        Err(LookupError::Invalid { error, .. }) => {
+            return Err(entry_failure(name, &error, loaded.file_of(name)));
         }
-        LookupError::Invalid { error, .. } => entry_failure(name, &error, loaded.file_of(name)),
-    })?;
+    };
     if let Transport::Sse(_) = server.transport {
         return Err(Failure::usage(format!(
             "The server {} has the type `sse` in {}. ncp connects only to `stdio` and `http` servers.",
@@ -347,7 +382,7 @@ pub fn select<'a>(loaded: &'a Loaded, name: &str, ui: Ui) -> Result<&'a Server, 
         .iter()
         .filter(|warning| warning.server.as_deref() == Some(name))
         .for_each(|warning| ui.warn(&unknown_key(warning, loaded)));
-    Ok(server)
+    Ok(Some(server))
 }
 
 // The failure shows the entries of the file, so that the user or an agent
@@ -1175,16 +1210,6 @@ mod tests {
     }
 
     #[test]
-    fn finds_joined_server_and_tool_names() {
-        assert_eq!(split_joined("github.search"), Some(("github", "search")));
-        assert_eq!(split_joined("github:a.b"), Some(("github", "a.b")));
-        assert_eq!(split_joined("github/search"), Some(("github", "search")));
-        assert_eq!(split_joined("github"), None);
-        assert_eq!(split_joined(".x"), None);
-        assert_eq!(split_joined("x."), None);
-    }
-
-    #[test]
     fn unset_variable_gives_a_hint_to_set_it() {
         let failure = entry_failure(
             "gh",
@@ -1220,7 +1245,7 @@ mod tests {
         assert_eq!(loaded.config.servers().count(), 0);
         let failure = select(
             &loaded,
-            "gh",
+            Word::server("gh"),
             Ui::new(
                 super::super::ui::Format::Json,
                 super::super::ui::Verbosity::Normal,

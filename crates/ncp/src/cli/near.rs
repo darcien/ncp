@@ -1,5 +1,7 @@
 //! The near name for an unknown name, for the hint "Did you mean ...?".
 
+use crate::text::code;
+
 // The edit distance (Levenshtein) of two names, in characters.
 fn distance(a: &str, b: &str) -> usize {
     let b: Vec<char> = b.chars().collect();
@@ -39,6 +41,17 @@ pub fn nearest<'a>(unknown: &str, known: impl IntoIterator<Item = &'a str>) -> O
         .map(|(_, name)| name)
 }
 
+/// "Did you mean ...?" with the names in their order, or `None` with no
+/// name.
+#[must_use]
+pub fn did_you_mean<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    let names: Vec<String> = names.into_iter().map(code).collect();
+    match names.split_last()? {
+        (last, []) => Some(format!("Did you mean {last}?")),
+        (last, rest) => Some(format!("Did you mean {} or {last}?", rest.join(", "))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -58,5 +71,15 @@ mod tests {
         assert_eq!(nearest("Create_Issue", tools), Some("create_issue"));
         assert_eq!(nearest("deploy", tools), None);
         assert_eq!(nearest("gh", ["gl", "github"]), Some("gl"));
+    }
+
+    #[test]
+    fn did_you_mean_lists_the_names_with_or_before_the_last() {
+        assert_eq!(did_you_mean([]), None);
+        assert_eq!(did_you_mean(["a"]).as_deref(), Some("Did you mean `a`?"));
+        assert_eq!(
+            did_you_mean(["a", "b", "c"]).as_deref(),
+            Some("Did you mean `a`, `b` or `c`?")
+        );
     }
 }

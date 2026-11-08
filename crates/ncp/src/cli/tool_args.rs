@@ -46,6 +46,13 @@ pub enum ArgumentError {
     NotObject(#[source] crate::config::ParserText),
 }
 
+/// True for a word in a form of the arguments: `key=value`, a JSON object
+/// or `-`. A tool name has none of these forms.
+#[must_use]
+pub fn is_argument(word: &str) -> bool {
+    word.contains('=') || word.starts_with('{') || word == "-"
+}
+
 /// # Errors
 ///
 /// Returns an error for a word that is not an argument form, a repeated

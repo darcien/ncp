@@ -1,9 +1,10 @@
 //! The command-line grammar.
 //!
-//! The server and the tool are two words. The tool word is optional in the
-//! grammar, so that `ncp` can give a better error than "missing argument".
-//! Examples are a joined `server.tool` word, or `key=value` in the place of
-//! the tool.
+//! The server and the tool are two words, or one joined word such as
+//! `server.tool`. The same is true for the server and the prompt. The tool
+//! word and the prompt word are optional in the grammar, so that a joined
+//! word can run, and so that `ncp` can give a better error than "missing
+//! argument", for example for `key=value` in the place of the tool.
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
@@ -182,10 +183,11 @@ pub enum PromptCommand {
     /// Give the arguments as key=value pairs. Each value is text, because MCP
     /// gives prompt arguments as text.
     Get {
-        /// The server name from the configuration
+        /// The server name from the configuration. In front of a prompt name,
+        /// join them with ., : or /.
         server: String,
         /// The prompt name
-        prompt: String,
+        prompt: Option<String>,
         /// The prompt arguments: key=value pairs
         arguments: Vec<String>,
     },
@@ -373,7 +375,8 @@ pub enum ToolCommand {
     },
     /// Show one tool: its arguments, output and an example call.
     Show {
-        /// The server name from the configuration
+        /// The server name from the configuration. In front of a tool name, join
+        /// them with ., : or /.
         server: String,
         /// The tool name
         tool: Option<String>,
@@ -390,7 +393,8 @@ pub enum ToolCommand {
 
 #[derive(Debug, Args)]
 pub struct CallArgs {
-    /// The server name from the configuration
+    /// The server name from the configuration. In front of a tool name, join
+    /// them with ., : or /.
     pub server: Option<String>,
     /// The tool name
     pub tool: Option<String>,

@@ -88,9 +88,9 @@ const SERVER_COMMANDS: [(&str, &str); 12] = [
     ("auth", "status"),
 ];
 
-/// The help text of the server argument, as clap writes it in the zsh
-/// script.
-const ZSH_SERVER: &str = "server -- The server name from the configuration:";
+/// The start of the help text of the server argument, as clap writes it
+/// in the zsh script. Some commands add a sentence after it.
+const ZSH_SERVER: &str = "server -- The server name from the configuration";
 
 /// The help text of the tool argument, as clap writes it in the zsh script.
 const ZSH_TOOL: &str = "tool -- The tool name:";
@@ -136,15 +136,19 @@ pub fn with_dynamic_names(shell: CompletionShell, script: &str) -> String {
         // function comes first, because zsh can run the script as an
         // autoload function at its end.
         CompletionShell::Zsh => {
-            let script = script
-                .replace(
-                    &format!("{ZSH_SERVER}_default"),
-                    &format!("{ZSH_SERVER}_ncp_servers"),
-                )
-                .replace(
-                    &format!("{ZSH_TOOL}_default"),
-                    &format!("{ZSH_TOOL}_ncp_tools"),
-                );
+            let script: String = script
+                .split_inclusive('\n')
+                .map(|line| {
+                    let action = if line.contains(ZSH_SERVER) {
+                        "_ncp_servers"
+                    } else if line.contains(ZSH_TOOL) {
+                        "_ncp_tools"
+                    } else {
+                        return line.to_string();
+                    };
+                    line.replace(":_default'", &format!(":{action}'"))
+                })
+                .collect();
             let function = format!(
                 "_ncp_servers() {{\n    local -a servers\n    servers=(${{(f)\"$({SERVERS})\"}})\n    _describe 'server' servers\n}}\n\n_ncp_tools() {{\n    local -a tools\n    tools=(${{(f)\"$(ncp __complete-tools \"${{line[1]}}\" 2>/dev/null)\"}})\n    _describe 'tool' tools\n}}\n\n"
             );

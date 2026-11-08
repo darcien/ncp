@@ -8,8 +8,8 @@ supersedes: []
 ## Background
 
 A placeholder is a word that the user replaces with a value, for example
-`SERVER` in `ncp tool list <SERVER>`. The CLI and the README have these
-placeholders now:
+`SERVER` in `ncp tool list <SERVER>`. The CLI and the README had these
+placeholders before RFC 0004:
 
 | Place | Examples | Source |
 |---|---|---|
@@ -57,7 +57,8 @@ The test build `ncp-cli` and the README show these problems.
      scheme, host and port" for the origin of a URL.
    - Claude Code 2.1.319 writes `claude [options] [command] [prompt]`,
      where `prompt` is the text for the model. An agent can give such
-     text to `prompt get <SERVER> <PROMPT>`.
+     text to `prompt get <SERVER> <PROMPT>`, the usage line before RFC
+     0004.
 6. **The usage line of `server add` is not correct.** It is
    `<SERVER> [URL] [-- <COMMAND>...]`, so `ncp server add web` looks
    valid. The code needs a URL or a command, but not both.
@@ -141,8 +142,10 @@ that name obeys these rules. These are all the words:
 - `--env <ENV_VAR[=VALUE]>`, with the help "ENV_VAR writes ${ENV_VAR},
   and ENV_VAR=VALUE writes VALUE with no change". The after-help of
   `server add` changes in the same way.
-- `prompt get [OPTIONS] <SERVER> <PROMPT_NAME> [KEY=VALUE]...`, with a
+- `prompt get [OPTIONS] <SERVER> [PROMPT_NAME] [KEY=VALUE]...`, with a
   `value_name` on both arguments, because `prompt get` takes only pairs.
+  The prompt word is optional in the grammar after RFC 0004, as `[TOOL]`
+  is.
 - `key=value` becomes `KEY=VALUE` in the help and the diagnostics. "A
   key=value value is text" becomes "The VALUE of KEY=VALUE is text".
   `key="$(cat FILE)"` becomes `KEY="$(cat PATH)"`. The after-help of
@@ -214,7 +217,8 @@ practice of uv and mise, the simplest design.
 
 - **`<SERVER_NAME>` and `<TOOL_NAME>`**, as the README has now. uv and
   mise use the noun. The help already says "The server name", and RFC
-  0004 gives a hint for a URL in place of a server name.
+  0004 tells a user who gives a URL that no server of that name is
+  configured.
 - **`<PROMPT>`**, with the help "The prompt name, from ncp prompt list".
   An agent reads the usage line first, and problem 5 shows another
   meaning. Ease of use comes before the practice of uv and mise. `TOOL`

@@ -14,6 +14,7 @@ mod render;
 mod schema_check;
 pub mod secrets;
 mod server_edit;
+mod server_word;
 mod session;
 mod timings;
 mod tool_args;
@@ -443,11 +444,7 @@ fn suggestion(error: &clap::Error) -> Option<String> {
             ContextValue::Strings(names) => Some(names.clone()),
             _ => None,
         })?;
-    let names: Vec<String> = names.iter().map(|name| code(name)).collect();
-    match names.split_last()? {
-        (last, []) => Some(format!("Did you mean {last}?")),
-        (last, rest) => Some(format!("Did you mean {} or {last}?", rest.join(", "))),
-    }
+    near::did_you_mean(names.iter().map(String::as_str))
 }
 
 // The subcommands in the words of the command line, for example `tool`

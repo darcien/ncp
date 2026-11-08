@@ -20,6 +20,7 @@ use super::{
     project_file::{self, Change, ProjectFile},
     render,
     secrets::{self, SecretRow},
+    server_word::{self, Word},
     session::{self, Context, Loaded},
 };
 use crate::{
@@ -141,7 +142,8 @@ pub async fn add(context: &Context<'_>, args: AddArgs) -> Result<(), Failure> {
     }
     let name = args.server.as_str();
     let request = request(&args)?;
-    let entry = add_entry::build(name, &request).map_err(|error| add_failure(name, &error))?;
+    let entry = add_entry::build(name, &request)
+        .map_err(|error| add_failure(name, args.url.as_deref(), &error))?;
     let loaded = session::load(context, None).await?;
     let target = add_target(context, &loaded, args.global).await?;
     // Another entry of the name stops the add before `ncp` reads a value.
@@ -204,10 +206,11 @@ fn request(args: &AddArgs) -> Result<Request, Failure> {
     })
 }
 
-fn add_failure(name: &str, error: &AddError) -> Failure {
+fn add_failure(name: &str, next: Option<&str>, error: &AddError) -> Failure {
     let failure = Failure::usage(format!("ncp cannot add the server {}", code(name)))
         .about(name)
-        .caused_by(error);
+        .caused_by(error)
+        .with_hints(swapped_hint(name, next));
     match error {
         AddError::CredentialHeader(header) => failure.hint(format!(
             "Give the header as {}",
@@ -218,6 +221,19 @@ fn add_failure(name: &str, error: &AddError) -> Failure {
         AddError::Entry(error) => super::fixes::with_entry_hints(failure, error),
         _ => failure,
     }
+}
+
+// A URL in the place of the name and a server name after it: the words
+// are in the wrong order. The hint has no command, because a command that
+// drops an option such as `--global` can write to another file.
+fn swapped_hint(name: &str, next: Option<&str>) -> Option<Hint> {
+    let next = next.filter(|next| ServerName::parse(next).is_ok())?;
+    (server_word::is_url(name) && add_entry::accepts_url(name)).then(|| {
+        Hint::text(format!(
+            "If {} is the server name, give it before the URL",
+            code(next)
+        ))
+    })
 }
 
 fn two_files() -> Failure {
@@ -847,7 +863,7 @@ fn report_removed(
 
 // The failure of a name that no file has, with the nearest name.
 fn not_found(context: &Context<'_>, loaded: &Loaded, name: &str) -> Failure {
-    session::select(loaded, name, context.ui)
+    session::select(loaded, Word::server(name), context.ui)
         .err()
         .unwrap_or_else(|| {
             Failure::usage(format!(
