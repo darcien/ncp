@@ -4111,10 +4111,11 @@ fn each_part_of_an_error_hides_a_value_of_the_server_url() {
 #[test]
 fn errors_and_traces_hide_a_header_value_that_the_server_echoes() {
     // The server echoes the `${KEY}` value of a custom header and the
-    // token of a literal `Authorization` header in its error body.
+    // token of a literal `Authorization` header in its error body. rmcp
+    // keeps the body of a `4xx` text error, but not of a `5xx`.
     let body = "bad key k3y-from-env for Bearer lit3ral-t0ken";
     let (url, _) = raw_server(format!(
-        "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     ));
     let home = Home::new("redact-echo").set("KEY", "k3y-from-env");
