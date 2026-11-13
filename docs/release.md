@@ -7,8 +7,8 @@ workflow builds, attests and publishes the release.
 
 1. Pull `main` and the tags from GitHub: `git pull --ff-only --tags`.
 2. Run the live tests: `mise run live`.
-3. Do a dry run: `mise run release:tag`. It shows the next version and
-   the release notes.
+3. Do a dry run: `mise run release:tag`. It runs `cargo deny`, then shows
+   the next version and the release notes.
 4. Publish: `mise run release:tag --execute`.
 
 To use a different version, give it in steps 3 and 4. Example:

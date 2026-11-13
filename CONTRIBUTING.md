@@ -142,8 +142,10 @@ a dependency that `deny.toml` does not accept, ask the maintainer.
 
 ## Checks
 
-- The git pre-commit hook runs the checks. All must pass. Do not skip the
-  hook.
+- The git pre-commit hook runs the checks. Do not skip the hook.
+- Only the advisory check can fail without stopping a commit, because the
+  RustSec database can change independently of the staged files.
+  `mise run check` and `mise run release:tag` stop on an advisory.
 - The hook runs only the checks that the staged files can affect. For
   example, a change to the docs does not start the Rust builds. When a new
   kind of file can change the build or the tests, add it to the globs in

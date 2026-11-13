@@ -37,7 +37,8 @@ run = "cargo clippy --workspace --all-targets --locked -- -D warnings"
 
 [tasks."check:deny"]
 description = "Check dependency licenses, advisories, bans and sources"
-run = "cargo deny --locked check"
+usage = 'arg "[check]..." help="advisories, bans, licenses or sources" var=#true'
+run = 'cargo deny --locked check ${usage_check:-}'
 
 [tasks."check:typos"]
 description = "Check spelling in code and docs"
@@ -136,6 +137,7 @@ run = "git-cliff --unreleased --bump"
 
 # cargo-release runs git-cliff, commits, tags and pushes (release.toml).
 [tasks."release:tag"]
+depends = ["check:deny"]
 description = "Set the next version, add its section to CHANGELOG.md, commit, tag and push. Without --execute, do a dry run"
 usage = """
 arg "[version]" help="The new version. Default: the next version from the commits"

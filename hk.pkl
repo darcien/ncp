@@ -18,6 +18,7 @@ local buildInputs = List(
   "site/public/oauth/client-metadata.json",
 )
 local linuxInputs = (buildInputs) { "harness/linux/**" }
+local denyInputs = List("**/Cargo.toml", "Cargo.lock", "deny.toml", "mise.toml")
 // No crate reads a Markdown file, except the test that reads STYLE.md.
 local markdown = "**/*.md"
 
@@ -76,8 +77,13 @@ steps {
     check = reads("mise run check:clippy")
   }
   ["cargo-deny"] {
-    glob = List("**/Cargo.toml", "Cargo.lock", "deny.toml", "mise.toml")
-    check = reads("mise run check:deny")
+    glob = denyInputs
+    check = reads("mise run check:deny bans licenses sources")
+  }
+  ["cargo-deny-advisories"] {
+    glob = denyInputs
+    check = reads("mise run check:deny advisories || echo 'cargo-deny-advisories: the commit continues. Correct the advisory before a release.' >&2")
+    output_summary = "stderr"
   }
   // A test reads STYLE.md, the word list of the output text. The task `test`
   // also runs the test of report.mjs.
