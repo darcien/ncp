@@ -37,12 +37,12 @@ use rmcp::{
     ErrorData, RoleServer, ServerHandler,
     model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, DiscoverResult,
-        ErrorCode, GetPromptRequestParams, GetPromptResponse, GetPromptResult, InputRequiredResult,
-        JsonObject, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult,
-        ListToolsResult, PaginatedRequestParams, ProgressNotificationParam, Prompt, PromptArgument,
-        PromptMessage, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
-        ReadResourceResult, Resource, ResourceContents, ResourceTemplate, Role, ServerCapabilities,
-        ServerConfig, Tool,
+        ErrorCode, GetPromptRequestParams, GetPromptResponse, GetPromptResult, Implementation,
+        InputRequiredResult, JsonObject, ListPromptsResult, ListResourceTemplatesResult,
+        ListResourcesResult, ListToolsResult, PaginatedRequestParams, ProgressNotificationParam,
+        Prompt, PromptArgument, PromptMessage, ProtocolVersion, ReadResourceRequestParams,
+        ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, ResourceTemplate,
+        Role, ServerCapabilities, ServerConfig, Tool,
     },
     service::{MaybeSendFuture, RequestContext},
     transport::streamable_http_server::{
@@ -316,7 +316,9 @@ impl ServerHandler for Fixture {
                 .enable_prompts()
                 .build()
         };
-        ServerConfig::new(capabilities).with_instructions("Fixture server for the tests of ncp.")
+        ServerConfig::new(capabilities)
+            .with_server_info(Implementation::new("fixture-server", "1.0.0"))
+            .with_instructions("Fixture server for the tests of ncp.")
     }
 
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {

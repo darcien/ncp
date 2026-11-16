@@ -6,11 +6,15 @@
 use std::{
     collections::BTreeMap,
     process::Command,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use ncp::{
-    client::{self, ConnectError, Connection, Launch, Phase, RequestError, RequestLimits},
+    client::{
+        self, ConnectError, Connection, Launch, Phase, RequestError, RequestLimits,
+        observe::{Direction, Event, Observer},
+    },
     config::{Expanded, RemoteServer, Server, StdioServer, Transport, Values},
     expand::{Env, Template},
     protocol_version::ProtocolVersion,
@@ -70,6 +74,7 @@ struct Setup {
     probe_timeout: Duration,
     connect_limit: Duration,
     cancel: CancellationToken,
+    messages: Arc<Mutex<Vec<(Direction, serde_json::Value)>>>,
 }
 
 impl Setup {
@@ -82,6 +87,7 @@ impl Setup {
             probe_timeout: Duration::from_secs(5),
             connect_limit: client::CONNECT_LIMIT,
             cancel: CancellationToken::new(),
+            messages: Arc::default(),
         }
     }
 
@@ -97,13 +103,82 @@ impl Setup {
             connect_limit: self.connect_limit,
             server_log: &client::stdio::ServerLog::Inherit,
             cancel: &self.cancel,
-            observer: &client::observe::Observer::default(),
+            observer: &Observer::new({
+                let messages = self.messages.clone();
+                move |event| {
+                    if let Event::Message { direction, message } = event {
+                        messages
+                            .lock()
+                            .unwrap()
+                            .push((*direction, (*message).clone()));
+                    }
+                }
+            }),
             authorized: None,
             progress: &client::ProgressSink::default(),
             elicitor: None,
         })
         .await
     }
+}
+
+fn assert_handshake_metadata(setup: &Setup, connection: &Connection, modern: bool) {
+    let messages = setup.messages.lock().unwrap();
+    let request = |method| {
+        &messages
+            .iter()
+            .find(|(direction, message)| {
+                *direction == Direction::Sent && message["method"] == method
+            })
+            .unwrap()
+            .1
+    };
+    let response = |request: &serde_json::Value| {
+        &messages
+            .iter()
+            .skip_while(|(_, message)| message != request)
+            .skip(1)
+            .find(|(direction, message)| {
+                *direction == Direction::Received && message["id"] == request["id"]
+            })
+            .unwrap()
+            .1
+    };
+    let client_identity = serde_json::json!({
+        "name": "ncp",
+        "version": env!("CARGO_PKG_VERSION"),
+    });
+    let server_identity = serde_json::json!({"name": "fixture-server", "version": "1.0.0"});
+    let discover = request("server/discover");
+    assert_eq!(
+        discover["params"]["_meta"]["io.modelcontextprotocol/clientInfo"],
+        client_identity
+    );
+    if modern {
+        assert_eq!(
+            response(discover)["result"]["_meta"]["io.modelcontextprotocol/serverInfo"],
+            server_identity
+        );
+        let method = if matches!(setup.server.transport, Transport::Stdio(_)) {
+            "tools/call"
+        } else {
+            "tools/list"
+        };
+        assert_eq!(
+            request(method)["params"]["_meta"]["io.modelcontextprotocol/clientInfo"],
+            client_identity
+        );
+    } else {
+        assert_eq!(response(discover)["error"]["code"], -32601);
+        let initialize = request("initialize");
+        assert_eq!(initialize["params"]["clientInfo"], client_identity);
+        assert_eq!(
+            response(initialize)["result"]["serverInfo"],
+            server_identity
+        );
+    }
+    let peer = serde_json::to_value(&*connection.server_info().unwrap()).unwrap();
+    assert_eq!(peer["serverInfo"], server_identity);
 }
 
 fn version(text: &str) -> ProtocolVersion {
@@ -168,23 +243,27 @@ fn process_is_alive(pid: u32) -> bool {
 
 #[tokio::test]
 async fn finds_modern_era_of_stdio_server_with_discover() {
-    let connection = Setup::new(stdio(&["modern"], &[])).connect().await.unwrap();
+    let setup = Setup::new(stdio(&["modern"], &[]));
+    let connection = setup.connect().await.unwrap();
     assert_eq!(connection.protocol_version(), &modern());
     assert_eq!(
         call_text(&connection, "echo", serde_json::json!({"text": "hi"})).await,
         "hi"
     );
+    assert_handshake_metadata(&setup, &connection, true);
     connection.close().await;
 }
 
 #[tokio::test]
 async fn falls_back_to_initialize_when_stdio_server_rejects_discover() {
-    let connection = Setup::new(stdio(&["legacy"], &[])).connect().await.unwrap();
+    let setup = Setup::new(stdio(&["legacy"], &[]));
+    let connection = setup.connect().await.unwrap();
     assert_eq!(connection.protocol_version(), &legacy());
     assert_eq!(
         call_text(&connection, "echo", serde_json::json!({"text": "hi"})).await,
         "hi"
     );
+    assert_handshake_metadata(&setup, &connection, false);
     connection.close().await;
 }
 
@@ -214,31 +293,29 @@ async fn connects_to_modern_only_stdio_server() {
 #[tokio::test]
 async fn finds_modern_era_of_http_server() {
     let fixture = serve_http(Mode::Modern).await.unwrap();
-    let connection = Setup::new(http_server(&fixture.url, &[]))
-        .connect()
-        .await
-        .unwrap();
+    let setup = Setup::new(http_server(&fixture.url, &[]));
+    let connection = setup.connect().await.unwrap();
     assert_eq!(connection.protocol_version(), &modern());
     let tools = connection
         .list_tools(limits(&CancellationToken::new()))
         .await
         .unwrap();
     assert_eq!(tools.len(), 14);
+    assert_handshake_metadata(&setup, &connection, true);
     connection.close().await;
 }
 
 #[tokio::test]
 async fn falls_back_to_initialize_when_http_server_rejects_discover() {
     let fixture = serve_http(Mode::Legacy).await.unwrap();
-    let connection = Setup::new(http_server(&fixture.url, &[]))
-        .connect()
-        .await
-        .unwrap();
+    let setup = Setup::new(http_server(&fixture.url, &[]));
+    let connection = setup.connect().await.unwrap();
     assert_eq!(connection.protocol_version(), &legacy());
     assert_eq!(
         call_text(&connection, "echo", serde_json::json!({"text": "hi"})).await,
         "hi"
     );
+    assert_handshake_metadata(&setup, &connection, false);
     connection.close().await;
 }
 
