@@ -30,8 +30,11 @@ code:
 2. For prior art, run uv and mise, and quote their output with the
    version. Help text changes between versions, so memory is not a
    source.
-3. Save each revision as `.scratch/rfcNNNN/draft-N.md`, so that a
-   reviewer can compare two revisions.
+3. Edit the tracked RFC directly.
+   Save the initial draft as `.scratch/rfcNNNN/draft-1.md`.
+   Before substantial changes, use a prior Git revision or saved draft as the checkpoint.
+   If neither preserves the current design, save `.scratch/rfcNNNN/draft-N.md` before the change.
+   Compare the checkpoint with the current tracked RFC, without a separate after-copy.
 4. Get reviews (see "Reviews").
 5. Give the maintainer your recommendation. Name each choice that does
    not follow uv and mise, because the maintainer must decide it.
@@ -50,8 +53,8 @@ code:
   that a user meets, and false facts, come before the wording.
 - Stop when a round finds no high or medium finding, or after 3 rounds,
   unless the maintainer asks for more.
-- After you shorten a draft, ask a reviewer to compare it with the
-  previous revision, so that no fact is lost.
+- Review substantial design changes together before the next maintainer decision.
+  For major rewrites or substantial shortening, compare the checkpoint with the current RFC for lost facts.
 
 ## Stop and ask
 

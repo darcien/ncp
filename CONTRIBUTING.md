@@ -81,11 +81,14 @@ reason in the commit body.
   abandons an RFC. Set `state: accepted` or `state: abandoned` only after
   the maintainer says so.
 - Only an `accepted` RFC gives direction. A `proposed` RFC is a draft.
-- The commit that completes the build also sets `state: committed`, and
-  changes the documents that the build affects. After that
-  commit, the RFC is frozen.
-- Do not change a `committed` or `abandoned` RFC. A new design is a new
-  RFC with `supersedes`.
+- An RFC on a separate branch stays editable until its completed
+  implementation lands on `main`. A local commit does not freeze it.
+  Keep its state `proposed` or `accepted`, as the maintainer decides.
+- When the completed implementation lands on `main`, set
+  `state: committed`. Update the affected documents in the same change.
+  The RFC is then frozen.
+- Do not change a frozen or `abandoned` RFC. A new design after that
+  needs a new RFC with `supersedes`.
 - Do not start to build a change that needs an RFC before its RFC has
   `state: accepted`. If you are not sure that a change needs one, ask
   the maintainer.
