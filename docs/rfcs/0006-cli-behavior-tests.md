@@ -1,5 +1,5 @@
 ---
-state: accepted
+state: committed
 supersedes: []
 ---
 
@@ -10,8 +10,6 @@ supersedes: []
 This RFC proposes inline snapshots of command behavior with [`insta`][insta].
 A snapshot holds expected text in the Rust test source. A failed assertion
 produces new text for review.
-
-This RFC stays editable until its completed implementation lands on `main`.
 
 The black-box tests run `ncp-cli` with a temporary `HOME` and a clean
 environment. They use local servers, `ncp-fixture`, a fake browser,
@@ -293,6 +291,18 @@ Record the successful run URL and commit SHA as the baseline.
 The workflow file alone does not establish that pass.
 This baseline separates existing failures from snapshot problems.
 
+After the baseline, CI tests only Linux glibc on x86_64.
+Each commit that adds or changes a build input starts the test steps of the hook.
+The hook runs `mise run test` on the macOS arm64 host and
+`mise run linux:test` in the musl container. Thus a macOS CI job is not
+necessary for these commits. It can only repeat `mise run check` and
+`mise run test` on the same platform, from a clean checkout.
+
+The hook runs no tests for a merge, a rebase, a cherry-pick, a revert,
+a commit that only removes files, or a commit with `HK=0` or `--no-verify`.
+No macOS test runs for these commits until the next test of the hook or
+a manual `mise run test`.
+
 The helper, filter tests and pending-file support come before new command
 coverage. Coverage proceeds by command group, with trust and auth early
 because prompts and login flows need distinct capture paths.
@@ -336,6 +346,8 @@ The choices below retain the established order of choice.
 | Symlink for the `ncp` program name | `arg0` needs no additional file. |
 | `INSTA_UPDATE=no` for read-only runs | Stale pending files can still cause writes. A container-local pending directory handles them. |
 | Add a new runner or cache now | Neither resolves the coverage or snapshot correctness problems. |
+| macOS CI on each push | The hook already runs `mise run test` on macOS arm64. Completed macOS jobs waited 0 to 10 minutes for a runner, and one job got no runner in 15 minutes. uv 0.13.7 runs `cargo test` on macOS only on `main`, for a label and for a release build. On each change to code, it builds the macOS binaries and runs a smoke test on macOS. uv builds and tests on a Namespace macOS runner. Only its smoke test uses a GitHub-hosted runner. mise v2026.11.3 tests macOS on each push to `main`, `mise` and `release`, and on each tag. It also tests macOS on each pull request to `main` that changes more than the docs. Its trusted runs use a Namespace runner. Both projects accept pull requests from many contributors. `ncp` has one contributor and no pull requests. The maintainer pushes each change without a review by another person. |
+| Linux glibc in a local container instead of CI | Each commit then needs a third `cargo test` build. The host emulates amd64 slowly, so the local run tests only arm64. No run starts from a clean checkout. |
 
 ## Tests
 
@@ -375,7 +387,8 @@ The implementation must retain or add these checks:
 - A valid stale host `.pending-snap` beside a test source with inline
   assertions that run during `mise run linux:test`. The source stays
   read-only, and passing assertions must still pass.
-- The prerequisite CI baseline and later snapshots on macOS, musl and glibc.
+- The prerequisite CI baseline. Later snapshots on macOS and musl in the
+  hook, and on glibc in CI.
 
 ## Compatibility
 
@@ -387,7 +400,8 @@ identities remain intact.
 Implementation affects `crates/testkit/`, dependency and tool lockfiles,
 snapshot-ignore rules, container pending-file support and contributor guidance.
 Narrow whitespace exclusions can also affect source-cleanup configuration.
-The CI baseline remains a separate prerequisite.
+The CI baseline remains a separate prerequisite. After the baseline,
+`.github/workflows/ci.yaml` tests only Linux glibc.
 
 [insta]: https://docs.rs/insta/1.49.0/insta/
 [uv-snapshot]: https://github.com/astral-sh/uv/blob/0.13.7/crates/uv-test/src/lib.rs#L2691
