@@ -1,0 +1,40 @@
+name: ci
+
+# A document change can break the test that reads STYLE.md, so no path
+# filter limits these checks.
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  # CI tests macOS and Linux glibc. The git hook also tests Linux musl.
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      # mise run does not install the other tools of mise.toml, because
+      # mise builds some of them from source.
+      MISE_AUTO_INSTALL: "false"
+      MISE_LOCKED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      # mise.lock pins a release archive of each of these tools.
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.11.2
+          install_args: node cargo-deny typos shellcheck
+          cache: false
+      - run: mise run check
+      - run: mise run test
