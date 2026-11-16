@@ -33,4 +33,6 @@ tokio-util = "0.7"
 url = "2"
 
 [dev-dependencies]
+insta = { version = "1.49", features = ["filters"] }
+regex = "1"
 reqwest = { version = "0.13", default-features = false }

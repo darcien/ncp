@@ -11,6 +11,8 @@ pnpm = "12.10.1"
 # The release tools (docs/release.md).
 "cargo:git-cliff" = "2.14.2"
 "cargo:cargo-release" = "1.1.6"
+# Updates inline snapshots (CONTRIBUTING.md, "Command snapshots").
+"cargo:cargo-insta" = "1.49.0"
 
 [settings]
 # mise builds the `cargo:` tools from crates.io, and downloads no binaries.

@@ -61,6 +61,9 @@ build_image() {
 # output does not mix with the macOS target directory. The build output has
 # one volume for each platform, because the build scripts are different.
 # --init reaps the child processes that the tests start.
+#
+# INSTA_PENDING_DIR keeps the insta pending files in the container. A stale
+# pending file of the host can cause a write after a passing assertion.
 run_cargo() {
 	network="$1"
 	command="$2"
@@ -73,6 +76,7 @@ run_cargo() {
 		--platform "$platform" \
 		--user "$(id -u):$(id -g)" \
 		--env HOME=/tmp \
+		--env INSTA_PENDING_DIR=/tmp/insta-pending \
 		--volume "$root:/work:ro" \
 		--volume ncp-harness-cargo-registry:/usr/local/cargo/registry \
 		--volume "ncp-harness-target-$name:/target" \
@@ -89,6 +93,7 @@ run_secret_service() {
 		--platform "$platform" \
 		--user "$(id -u):$(id -g)" \
 		--env HOME=/tmp \
+		--env INSTA_PENDING_DIR=/tmp/insta-pending \
 		--volume "$root:/work:ro" \
 		--volume ncp-harness-cargo-registry:/usr/local/cargo/registry \
 		--volume "ncp-harness-target-$name:/target" \

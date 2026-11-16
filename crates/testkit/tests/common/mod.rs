@@ -1,21 +1,43 @@
 //! Helpers for the tests that run the `ncp` binary.
 //!
 //! Each test runs the binary with a clean environment, its own `HOME` and
-//! XDG directories, and no proxy. stdout is a pipe. The output is JSON,
-//! because `Home::run` adds `--output-format json`.
+//! XDG directories, and no proxy. stdout is a pipe. `Home::ncp` keeps the
+//! default text output. `Home::run` adds `--output-format json`.
 
 // Each test file uses only some of the helpers.
 #![allow(dead_code)]
 
 use std::{
+    ffi::OsStr,
+    os::unix::process::CommandExt as _,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
+    sync::LazyLock,
 };
 
+use regex::{Captures, Regex};
 use serde_json::{Value, json};
 
 pub const NCP: &str = env!("CARGO_BIN_EXE_ncp-cli");
 const FAKE_SECURITY: &str = env!("CARGO_BIN_EXE_fake-security");
+
+/// Compares the filtered transcript of one run with the inline snapshot.
+/// Returns the run.
+#[allow(unused_macros)]
+macro_rules! ncp_snapshot {
+    ($filters:expr, $command:expr, @$snapshot:literal) => {{
+        let (snapshot, run) = $crate::common::run_and_format($command, &$filters, "");
+        ::insta::assert_snapshot!(snapshot, @$snapshot);
+        run
+    }};
+    ($filters:expr, $command:expr, input = $input:expr, @$snapshot:literal) => {{
+        let (snapshot, run) = $crate::common::run_and_format($command, &$filters, $input);
+        ::insta::assert_snapshot!(snapshot, @$snapshot);
+        run
+    }};
+}
+#[allow(unused_imports)]
+pub(crate) use ncp_snapshot;
 
 /// A temporary home for one test.
 pub struct Home {
@@ -24,6 +46,7 @@ pub struct Home {
     /// The current directory of each run. The home directory by default, where
     /// the search for a project file stops.
     pub cwd: PathBuf,
+    filters: Vec<(String, String)>,
 }
 
 impl Home {
@@ -51,10 +74,34 @@ impl Home {
             ("NO_PROXY".into(), "*,127.0.0.1,::1".into()),
         ];
         Self {
+            filters: standard_filters(&root),
             cwd: root.clone(),
             root,
             env,
         }
+    }
+
+    /// The path filters, then the filters of measured values.
+    pub fn filters(&self) -> Vec<(&str, &str)> {
+        self.filters
+            .iter()
+            .map(|(pattern, replacement)| (pattern.as_str(), replacement.as_str()))
+            .collect()
+    }
+
+    /// The command with text output and `ncp` as its program name.
+    pub fn ncp<I, S>(&self, args: I) -> Command
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let mut command = self.command(Path::new(NCP));
+        command.arg0("ncp").args(args);
+        command
+    }
+
+    pub fn read(&self, relative_path: &str) -> String {
+        std::fs::read_to_string(self.root.join(relative_path)).unwrap()
     }
 
     /// Writes `.mcp.json` with the servers in the directory (relative to the
@@ -169,21 +216,217 @@ impl Home {
     }
 
     fn spawn(&self, program: &Path, args: &[&str], stdin: &str) -> Run {
-        use std::io::Write as _;
-        let mut child = self
-            .command(program)
-            .args(args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        // A command can exit before it reads stdin, for example after a
-        // usage error. The write then fails with a broken pipe, which is
-        // not a test failure.
-        let _ = child.stdin.take().unwrap().write_all(stdin.as_bytes());
-        Run(child.wait_with_output().unwrap())
+        let mut command = self.command(program);
+        command.args(args);
+        Run(output_of(command, stdin))
     }
+}
+
+fn output_of(mut command: Command, stdin: &str) -> Output {
+    use std::io::Write as _;
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Usage errors can close stdin before the write.
+    let _ = child.stdin.take().unwrap().write_all(stdin.as_bytes());
+    child.wait_with_output().unwrap()
+}
+
+pub fn run_and_format(command: Command, filters: &[(&str, &str)], stdin: &str) -> (String, Run) {
+    let reports_version = reports_cli_version(&command);
+    let output = output_of(command, stdin);
+    let transcript = transcript(&output);
+    eprintln!("----- transcript with no filter -----\n{transcript}");
+    let transcript = if reports_version {
+        apply_filters(transcript, &[CLI_VERSION_FILTER])
+    } else {
+        transcript
+    };
+    (
+        apply_filters(normalize_timings(&transcript), filters),
+        Run(output),
+    )
+}
+
+/// Replaces each number on a `--timings` line, in text and JSON output, so
+/// the count of times stays visible. A filter pair cannot do this: without
+/// lookaround, a regex cannot limit a match to the numbers of one line.
+pub fn normalize_timings(text: &str) -> String {
+    static LINE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?m)^(?:timings: [^\n]*|\{"timings":\{[^{}\n]*\}\})$"#).unwrap()
+    });
+    static TIME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\d+(?:\.\d+)?(?: ms)?").unwrap());
+    LINE.replace_all(text, |line: &Captures| {
+        TIME.replace_all(&line[0], "[TIME]").into_owned()
+    })
+    .into_owned()
+}
+
+/// The version line of `ncp --version` and of each subcommand, for example
+/// `ncp-server 1.2.3`. Only a `--version` run gets this filter, so a tool
+/// result with the same text stays exact.
+const CLI_VERSION_FILTER: (&str, &str) = (
+    r"(?m)(^----- stdout -----\nncp(?:-[a-z]+)* )\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*(\n|$)",
+    "${1}[VERSION]${2}",
+);
+
+fn reports_cli_version(command: &Command) -> bool {
+    command.get_program() == OsStr::new(NCP)
+        && command
+            .get_args()
+            .take_while(|arg| *arg != "--")
+            .any(|arg| arg == "--version" || arg == "-V")
+}
+
+/// The exit status and each nonempty stream, without changes to whitespace.
+pub fn transcript(output: &Output) -> String {
+    let outcome = if output.status.success() {
+        "success"
+    } else {
+        "failure"
+    };
+    let mut text = match output.status.code() {
+        Some(code) => format!("exit_code: {code} ({outcome})\n"),
+        None => format!(
+            "exit_code: -1 ({outcome})\nexit_status: {}\n",
+            output.status
+        ),
+    };
+    let mut has_stream = false;
+    for (name, bytes) in [("stdout", &output.stdout), ("stderr", &output.stderr)] {
+        if !bytes.is_empty() {
+            if has_stream {
+                text.push_str(if text.ends_with('\n') { "\n" } else { "\n\n" });
+            }
+            text.push_str("----- ");
+            text.push_str(name);
+            text.push_str(" -----\n");
+            text.push_str(&String::from_utf8_lossy(bytes));
+            has_stream = true;
+        }
+    }
+    text
+}
+
+/// Applies each regex once, in order.
+pub fn apply_filters(text: String, filters: &[(&str, &str)]) -> String {
+    filters.iter().fold(text, |text, (pattern, replacement)| {
+        Regex::new(pattern)
+            .unwrap_or_else(|error| panic!("the filter {pattern:?} is not a regex: {error}"))
+            .replace_all(&text, *replacement)
+            .into_owned()
+    })
+}
+
+/// Normalizes missing-file messages only. A path or a cause before the
+/// message stays, and other OS errors stay exact.
+pub fn missing_file_filters() -> Vec<(&'static str, &'static str)> {
+    vec![(
+        r#"(?m)(^|: |")[^:"\n]* \(os error [23]\)"#,
+        "${1}[OS ERROR 2]",
+    )]
+}
+
+/// Normalizes the native refused-connection causes on supported systems.
+pub fn connection_refused_filters() -> Vec<(&'static str, &'static str)> {
+    vec![(
+        r"(?:Connection refused \(os error (?:61|111)\)|No connection could be made because the target machine actively refused it\. \(os error 10061\))",
+        "[CONNECTION REFUSED]",
+    )]
+}
+
+fn standard_filters(home: &Path) -> Vec<(String, String)> {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .unwrap();
+    let mut paths = [
+        (Path::new(NCP), "NCP", false),
+        (
+            Path::new(env!("CARGO_BIN_EXE_ncp-fixture")),
+            "FIXTURE",
+            false,
+        ),
+        (Path::new(FAKE_SECURITY), "FAKE_SECURITY", false),
+        (
+            Path::new(env!("CARGO_BIN_EXE_ncp-blocked-store")),
+            "BLOCKED_STORE",
+            false,
+        ),
+        (home, "HOME", true),
+        (workspace, "WORKSPACE", true),
+    ]
+    .into_iter()
+    .map(|(path, name, directory)| path_filters(path, name, directory))
+    .collect::<Vec<_>>();
+    // Longest paths first, so that a parent or an alias cannot replace part
+    // of a longer path.
+    paths.sort_by_key(|group| {
+        std::cmp::Reverse(
+            group
+                .iter()
+                .map(|(pattern, _)| pattern.len())
+                .max()
+                .unwrap(),
+        )
+    });
+    let mut filters = paths.into_iter().flatten().collect::<Vec<_>>();
+    filters.push((r"\b127\.0\.0\.1:[0-9]+\b".into(), "[LOCALHOST]".into()));
+    filters.extend([
+        (
+            r"(?m)^(trace: server [^\n]+: [A-Z]+ https?://\S+ \[[^\n]*\]: [^\n]* in )\d+(?:\.\d+)? ms$",
+            "${1}[TIME]",
+        ),
+        (
+            r#"(?m)^(\{"trace":\{"http":\{"headers":\{[^{}\n]*\},"method":"[A-Z]+","ms":)\d+(?:\.\d+)?"#,
+            "${1}[TIME]",
+        ),
+        (
+            r#"(?m)^((?:debug: server [^\n]+: |\{"debug":\{"message":")tools from the list cache, )\d+ s old"#,
+            "${1}[N] s old",
+        ),
+        (
+            r#"(?m)^((?:trace: server [^\n]+: sent |\{"trace":\{"sent":)\{(?:"id":(?:\d+|"[^"]+"),)?"jsonrpc":"2\.0","method":"[^"]+","params":\{"_meta":\{(?:"io\.modelcontextprotocol/clientCapabilities":\{[^\n]*?\},)?"io\.modelcontextprotocol/clientInfo":\{"name":"ncp","version":")[^"]+(")"#,
+            "${1}[VERSION]${2}",
+        ),
+        (
+            r#"(?m)^((?:trace: server [^\n]+: sent |\{"trace":\{"sent":)\{(?:"id":(?:\d+|"[^"]+"),)?"jsonrpc":"2\.0","method":"initialize","params":\{"capabilities":\{[^\n]*?\},"clientInfo":\{"name":"ncp","version":")[^"]+(")"#,
+            "${1}[VERSION]${2}",
+        ),
+    ].into_iter().map(|(pattern, replacement)| (pattern.into(), replacement.into())));
+    filters
+}
+
+/// Replaces the real path and the given path with `[NAME]`. The delimiters
+/// around each match stay.
+pub fn path_filters(path: &Path, name: &str, directory: bool) -> Vec<(String, String)> {
+    let real = std::fs::canonicalize(path).unwrap();
+    let mut paths = vec![real];
+    if paths[0] != path {
+        paths.push(path.to_path_buf());
+    }
+    paths
+        .into_iter()
+        .flat_map(|path| {
+            let boundary = if directory {
+                r#"(/|[\s"'`,;:)\]}>]|$)"#
+            } else {
+                r#"([\s"'`,;:)\]}>]|$)"#
+            };
+            let filter = (
+                format!(
+                    r#"(?m)(^|[\s"'`=(:,\[<]){}{boundary}"#,
+                    regex::escape(&path.to_string_lossy())
+                ),
+                format!("${{1}}[{name}]${{2}}"),
+            );
+            // A match consumes its delimiters. The second pass covers adjacent paths.
+            [filter.clone(), filter]
+        })
+        .collect()
 }
 
 impl Drop for Home {

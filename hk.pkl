@@ -34,7 +34,11 @@ local fixers = List("newlines", "trailing-whitespace", "mixed-line-ending", "car
 
 steps {
   ["newlines"] = Builtins.newlines
-  ["trailing-whitespace"] = Builtins.trailing_whitespace
+  ["trailing-whitespace"] = (Builtins.trailing_whitespace) {
+    // Help and prompt snapshots retain intentional spaces, including
+    // whitespace-only lines.
+    exclude = List("crates/testkit/tests/snapshot.rs", "crates/testkit/tests/trust_snapshots.rs")
+  }
   ["mixed-line-ending"] = Builtins.mixed_line_ending
   ["check-added-large-files"] = Builtins.check_added_large_files
   ["check-case-conflict"] = Builtins.check_case_conflict

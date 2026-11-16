@@ -162,7 +162,9 @@ boundaries. An accepted snapshot can also contain a secret.
 
 Filters replace changing values, not behavior that the test must protect.
 `home.filters()` supplies home and workspace paths, local ports,
-measured times and the narrowly scoped client-version contexts below.
+measured times and outgoing client-version metadata. `ncp_snapshot!` itself
+filters CLI version results when the `ncp` binary runs with `--version`
+or `-V` before `--`.
 Snapshots must remain stable across build locations and distinguish different
 executables, servers and other values whose identity matters.
 
