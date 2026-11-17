@@ -8,6 +8,10 @@ on:
 
 permissions: {}
 
+# The release does not use the Actions cache, so that each release builds
+# from scratch and contains no build output from an earlier run.
+cache-mode: none
+
 # A second run for the same tag waits, so that it does not cancel the job
 # publish of the first run.
 concurrency:

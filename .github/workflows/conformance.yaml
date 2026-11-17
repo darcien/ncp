@@ -25,6 +25,9 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+    # This job can read but not write the Actions cache, so the suite cannot
+    # change the Rust cache of the job check in ci.yaml.
+    cache-mode: read
     env:
       # The suite needs only Node from mise. mise run does not install the
       # other tools of mise.toml, because mise builds some of them from source.
@@ -35,6 +38,14 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install
+      # The job check in ci.yaml saves this cache. The key of this step must be
+      # the same as in check: the same shared key, toolchain steps and Rust and
+      # Cargo variables. The tests of check turn on more features of some
+      # dependencies, so these dependencies build again here.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: check-${{ hashFiles('Cargo.toml') }}
+          save-if: false
       - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
           version: 2026.11.2

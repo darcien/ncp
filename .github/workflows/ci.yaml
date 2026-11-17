@@ -27,6 +27,16 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install
+      # The cache keeps the compiled dependencies and the Cargo downloads, but
+      # not the workspace crates. Its key contains the version of each installed
+      # Rust toolchain, so install the toolchain first. The action does not hash
+      # the root Cargo.toml, which holds the profiles, so this step adds its
+      # hash to the shared key. Only main saves the cache. Other branches and
+      # the job conformance in conformance.yaml use the cache of main.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: check-${{ hashFiles('Cargo.toml') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # mise.lock pins a release archive of each of these tools.
       - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
