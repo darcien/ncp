@@ -16,11 +16,19 @@ yanked = "deny"
 unused-ignored-advisory = "deny"
 # Check the unsound advisories of all crates, not only of the workspace crates.
 unsound = "all"
-# RustSec marks zvariant, zbus_names and zvariant_derive as unmaintained,
-# because their code moved into zbus 6. secret-service and
-# zbus-secret-service-keyring-store still need zbus 5, which needs these
-# crates. Remove these entries when both use zbus 6.
-ignore = ["RUSTSEC-2026-0370", "RUSTSEC-2026-0371", "RUSTSEC-2026-0372"]
+ignore = [
+  # RustSec marks zvariant, zbus_names and zvariant_derive as unmaintained,
+  # because their code moved into zbus 6. secret-service and
+  # zbus-secret-service-keyring-store still need zbus 5, which needs these
+  # crates. Remove these entries when both use zbus 6.
+  "RUSTSEC-2026-0370",
+  "RUSTSEC-2026-0371",
+  "RUSTSEC-2026-0372",
+  # The maintainer of chrono stopped its maintenance and recommends jiff
+  # (chronotope/chrono#1768). rmcp needs chrono, also through oauth2.
+  # Remove this entry when rmcp does not need chrono.
+  "RUSTSEC-2026-0543",
+]
 
 [licenses]
 version = 2
