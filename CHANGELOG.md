@@ -4,6 +4,23 @@ All notable changes to `ncp` are in this file. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and `ncp` uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.2 - 2026-11-17
+
+This release corrects RUSTSEC-2026-0457. A hostile server can no longer send
+the OAuth requests of `ncp` to a service in your network or on your computer.
+If the authorization server of a server is in a private network, set
+`oauth.allowPrivateAddresses` to `true` in the entry of the server.
+
+### Added
+
+- cli: Run a joined server and tool name, and look up the server first
+- oauth: Check the address of each OAuth request and add oauth.allowPrivateAddresses
+
+### Fixed
+
+- cli: Show no word that is not a secret name
+- deps: Update rmcp to 3.10.0 and rustix to 1.1.6
+
 ## 0.2.1 - 2026-10-30
 
 ### Added
