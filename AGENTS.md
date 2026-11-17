@@ -61,15 +61,32 @@ code:
 Stop and ask before you:
 
 - Add a network destination to `ncp`, its build, its tests or its
-  tools, other than crates.io, the Rust toolchain, and pinned packages
-  from the MCP organization. A pinned package includes the dependencies
-  that its lock file pins.
+  tools. These destinations need no question:
+  - crates.io and the Rust toolchain.
+  - A pinned package from the MCP organization, with the dependencies
+    that its lock file pins.
+  - An action that the repository settings permit, with the
+    destinations that it reaches.
 - Run code that does not come from these sources.
-
-The settings of the CI platform control the network of the CI.
 
 To read a public page for research or a citation, for example a spec,
 an RFD or the documentation of a tool, you do not need to ask.
+
+### GitHub Actions
+
+The repository settings are the only list of permitted actions. Do not
+copy the list into a file, because a copy becomes stale. To see the
+settings, run:
+
+```sh
+gh api repos/{owner}/{repo}/actions/permissions
+gh api repos/{owner}/{repo}/actions/permissions/selected-actions
+```
+
+- Pin each action to a full commit SHA, with the version tag in a
+  comment. The settings stop a workflow with a tag or a branch.
+- To use an action that the settings do not permit, ask the maintainer.
+  The maintainer must change the settings first.
 
 ## Secrets
 
