@@ -86,11 +86,7 @@ steps {
   }
   ["cargo-deny"] {
     glob = denyInputs
-    check = reads("mise run check:deny bans licenses sources")
-  }
-  ["cargo-deny-advisories"] {
-    glob = denyInputs
-    check = reads("mise run check:deny advisories || echo 'cargo-deny-advisories: the commit continues. Correct the advisory before a release.' >&2")
+    check = reads("mise run check:deny")
     output_summary = "stderr"
   }
   // A test reads STYLE.md, the word list of the output text. The task `test`
