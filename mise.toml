@@ -134,8 +134,14 @@ usage = 'arg "<tag>" help="The release tag, for example v0.1.0"'
 run = 'harness/release.sh check "$usage_tag"'
 
 [tasks.changelog]
-description = "Show the next version and its new section for CHANGELOG.md, from the commits after the last release tag"
-run = "git-cliff --unreleased --bump"
+description = "Show the next version and its new section for CHANGELOG.md, from the commits after the last release tag and RELEASE_NOTE.md"
+run = """
+set -- --unreleased --bump
+if [ -f RELEASE_NOTE.md ]; then
+	set -- "$@" --with-tag-message "$(cat RELEASE_NOTE.md)"
+fi
+git-cliff "$@"
+"""
 
 # cargo-release runs git-cliff, commits, tags and pushes (release.toml).
 [tasks."release:tag"]
