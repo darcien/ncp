@@ -153,10 +153,13 @@ pub fn is_loopback(host: &Host<&str>) -> bool {
     }
 }
 
-/// The rule for each URL that `ncp` sends a request to or opens: HTTPS,
-/// or HTTP to a loopback host. This is an `ncp` rule. Tokens, headers and
-/// form values must not go over the network in plain text. A loopback host
-/// does not leave the machine, so local servers and tests can use HTTP.
+/// The rule for a URL of the MCP connection and for a page that `ncp`
+/// opens: HTTPS, or HTTP to a loopback host. This is an `ncp` rule. Tokens,
+/// headers and form values must not go over the network in plain text. A
+/// loopback host does not leave the machine, so local servers and tests
+/// can use HTTP. The OAuth requests have their own rule
+/// (`oauth::address::check_url`), which also takes each name under
+/// `.localhost` as a loopback host.
 #[must_use]
 pub fn is_secure_url(url: &Url) -> bool {
     match (url.scheme(), url.host()) {

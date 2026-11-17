@@ -25,6 +25,7 @@ use super::observe::{
 use crate::{
     config::{Expanded, RemoteServer},
     expand::Env,
+    oauth::address::SafetyStop,
     text::code,
 };
 
@@ -122,6 +123,11 @@ pub struct Notes {
     /// A TLS connection failed: the certificate of the server has an
     /// issuer that no trusted root names.
     pub unknown_issuer: bool,
+    /// The last OAuth request that the address policy stopped. rmcp keeps
+    /// only the text of an OAuth error, so the failure reads the stop from
+    /// here. An OAuth request that completes clears it, because a later
+    /// step then failed for another reason.
+    pub oauth_stop: Option<SafetyStop>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -132,6 +138,10 @@ impl ConnectNotes {
         if let Ok(mut notes) = self.0.lock() {
             change(&mut notes);
         }
+    }
+
+    pub fn set_oauth_stop(&self, stop: Option<SafetyStop>) {
+        self.update(|notes| notes.oauth_stop = stop);
     }
 
     #[must_use]
@@ -198,23 +208,29 @@ where
 }
 
 // True when the error or a cause is the rustls error for a certificate of
-// an unknown issuer. An `io::Error` hides its inner error from `source`,
-// so the search goes into it.
+// an unknown issuer.
 fn is_unknown_issuer(error: &(dyn std::error::Error + 'static)) -> bool {
-    std::iter::successors(Some(error), |error| {
-        error
-            .downcast_ref::<std::io::Error>()
-            .and_then(std::io::Error::get_ref)
-            .map(|inner| inner as &(dyn std::error::Error + 'static))
-            .or_else(|| error.source())
-    })
-    .any(|error| {
+    causes(error).any(|error| {
         matches!(
             error.downcast_ref::<rustls::Error>(),
             Some(rustls::Error::InvalidCertificate(
                 rustls::CertificateError::UnknownIssuer
             ))
         )
+    })
+}
+
+/// The error and each error under it. An `io::Error` hides its inner error
+/// from `source`, so the walk goes into it.
+pub fn causes<'a>(
+    error: &'a (dyn std::error::Error + 'static),
+) -> impl Iterator<Item = &'a (dyn std::error::Error + 'static)> {
+    std::iter::successors(Some(error), |error| {
+        error
+            .downcast_ref::<std::io::Error>()
+            .and_then(std::io::Error::get_ref)
+            .map(|inner| inner as &(dyn std::error::Error + 'static))
+            .or_else(|| error.source())
     })
 }
 
@@ -227,10 +243,30 @@ fn is_unknown_issuer(error: &(dyn std::error::Error + 'static)) -> bool {
 /// Returns an error when the file in `SSL_CERT_FILE` gives no root
 /// certificate.
 pub fn configured(env: &Env, observer: &Observer) -> Result<reqwest::ClientBuilder, HttpError> {
+    resolving_with(env, observer, Arc::new(observed_lookup(observer)))
+}
+
+#[must_use]
+pub fn observed_lookup(observer: &Observer) -> ObservedResolver {
+    ObservedResolver {
+        observer: observer.clone(),
+    }
+}
+
+/// [`configured`] with another DNS resolver, for a client that must
+/// connect only to some addresses.
+///
+/// # Errors
+///
+/// Returns an error when the file in `SSL_CERT_FILE` gives no root
+/// certificate.
+pub fn resolving_with(
+    env: &Env,
+    observer: &Observer,
+    resolver: Arc<dyn reqwest::dns::Resolve>,
+) -> Result<reqwest::ClientBuilder, HttpError> {
     let builder = builder()
-        .dns_resolver(std::sync::Arc::new(ObservedResolver {
-            observer: observer.clone(),
-        }))
+        .dns_resolver(resolver)
         .connector_layer(ObservedConnectLayer {
             observer: observer.clone(),
         });

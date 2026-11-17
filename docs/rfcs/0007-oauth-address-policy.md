@@ -1,5 +1,5 @@
 ---
-state: accepted
+state: committed
 supersedes: []
 ---
 
@@ -191,6 +191,22 @@ Thus a host list, configuration trust and network restrictions have
 different scopes. Neither this list nor uv's TLS exception proves that
 `ncp` needs an origin list for SSRF protection.
 
+#### Address filters and their stops
+
+Observed CLI: uv 0.13.8 (Homebrew 2026-11-12) and mise 2026.11.9
+(2026-11-16).
+`uv help pip install`, `uv help sync` and `uv help auth login` have no
+text for private addresses, loopback addresses, SSRF, `198.18.0.0/15` or
+exit codes. `mise settings ls --all` lists no setting with `private`,
+`address`, `loopback` or `ssrf` in its name. Its network settings are
+`http_timeout`, `http_retries`, `offline` and similar values.
+
+Thus the observed help and settings show no address filter for
+server-selected requests. They give no prior art for the loopback rule of
+the configured host, the hint for a DNS proxy, or the exit code of a
+safety stop. These choices of the RFC do not follow uv and mise, because
+the observed tools show no such case.
+
 ## Problems
 
 The code shows each problem. A test cannot show problems 1 and 2 with a
@@ -269,6 +285,20 @@ There is no exemption for the configured origin. A public-looking MCP
 host name that resolves privately needs private-address permission for
 OAuth, even when all OAuth endpoints share that origin.
 The MCP connection itself keeps its current rules.
+
+The same rule applies to the loopback class. A configured host name that
+resolves to a loopback address, for example through `/etc/hosts`, gets no
+loopback permission. A direct OAuth request to that host stops.
+No entry key grants this permission. `oauth.allowPrivateAddresses` adds
+only the private class. A loopback IP literal in the URL changes the TLS
+name and the virtual host, so it is not an equivalent fix.
+A configured proxy can work, subject to its DNS, route and destination policy.
+The stop names the entry (part 6), so that the user can see the cause.
+
+rmcp 3.10.0 has the same rule. Its
+[`metadata_resolver.rs`](https://docs.rs/rmcp/3.10.0/src/rmcp/transport/auth/metadata_resolver.rs.html)
+module documentation says: "The base host's DNS answers never widen the
+policy" and "The base URL's own host is filtered too".
 
 Classification uses `IpAddr` from the URL parser or DNS lookup.
 It does not parse address text manually.
@@ -438,12 +468,27 @@ Manual redirects with a fresh route check remain an alternative.
 ### 6. Safety stops
 
 Record each stopped request in `ConnectNotes`: URL, host, address and
-reason. Error paths read that record before the text-only SDK error.
+reason. The record also says whether the stopped host is the host of the
+configured MCP URL. The client compares the `host_str()` values of the two
+URLs. Thus `app.test.`, with a trailing dot, does not match `app.test`.
+Error paths read that record before the text-only SDK error.
 These paths include `auth_failure`, `session::stored_login`,
 `connect_failure` and `request_failure`.
 An OAuth request that completes clears the old record.
 
 An error names the server and says that `ncp` stopped on purpose.
+
+A loopback stop for a DNS answer of the configured host names the entry:
+
+```
+cause: The host `app.test` of the entry resolves to `127.0.0.1`, which is a loopback address. No key of the entry permits a loopback address for a host name.
+```
+
+Other loopback stops keep their text. The `-vv` line of the stop has the
+same text, without backticks. The stop has no hint. The text does not
+suggest `oauth.allowPrivateAddresses`, a certificate bypass or an IP
+literal in the URL, because none of them is an equivalent fix.
+
 A private-address stop can give this conditional hint:
 
 ```
@@ -457,8 +502,35 @@ A scheme stop has no address-permission hint.
 A remote proxy route for loopback HTTP gets the existing `NO_PROXY`
 hint.
 
+Some DNS proxies give an address in `198.18.0.0/15` for each host name.
+The range stays blocked (see Alternatives), but a blocked stop for such a
+DNS answer gives this hint:
+
+```
+hint: DNS proxies can use `198.18.0.0/15` for synthetic addresses. If your DNS proxy provides an HTTP proxy, set `HTTPS_PROXY` to its URL. Make sure that `NO_PROXY` does not match the OAuth hostname.
+```
+
+The hint uses the embedded IPv4 address of an IPv6 answer, as the
+classification does. Thus a DNS64 answer such as `64:ff9b::c612:2a` gets
+the hint. Local-use NAT64 (`64:ff9b:1::/48`) is blocked as a whole and
+gets no hint. A localhost name with such an answer and an IP literal in
+the range from the metadata get no hint.
+The stop reports one answer, chosen by the priority of the classes. If
+another answer of the same DNS proxy wins, for example a private ULA
+address, the stop shows the hint of that answer.
+On the proxy route, certificate checks stay. The proxy must enforce
+destination restrictions, because the address policy of `ncp` does not
+check them. When the DNS proxy has only a TUN interface, the hint gives
+no fix.
+
 Hints that change permission have no JSON `command` field.
-The exit code remains an authentication error.
+A scheme stop and a URL that does not parse are protocol errors (exit
+code 3, JSON `code` `protocol`). A new login cannot repair an insecure
+or broken endpoint, so the stop is not an authentication error. This
+applies to discovery, registration, token exchange, refresh and the
+initial browser URL.
+The other safety stops are authentication errors (exit code 4, JSON
+`code` `auth`).
 `-vv` shows the stopped request and its reason, with known secrets hidden.
 
 ### 7. Authority and enforcement limits
@@ -616,6 +688,30 @@ The proposal favors one visible entry and one content-bound approval over separa
 - **A variable.** It applies across entries, and `ncp` reads no
   `NCP_*` variables. A per-entry key has a smaller scope.
 
+### Permit loopback for the configured origin
+
+An entry option, for example `oauth.allowLoopbackOnConfiguredOrigin`, can
+permit a configured host name that resolves to a loopback address.
+The design defers it until a user reports a real setup that needs it.
+Such an option has these constraints:
+
+- It covers only the scheme, host name and effective port of the
+  configured URL, for all OAuth requests to that origin.
+- The resolver must receive the origin, not only the host name, to
+  enforce the port.
+- Project trust approves it and shows it.
+
+A permission for the whole loopback class also permits unrelated local
+origins, so it is not a substitute.
+A hint for the stop has no fix to give, because no key grants this
+permission. The cause names the entry instead (part 6).
+
+rmcp refuses this setup too. The reviewed
+[Python SDK client](https://github.com/modelcontextprotocol/python-sdk/blob/2118f14f8a19bc158d8a1cf90af58d85d187f849/src/mcp/shared/_httpx_utils.py#L30-L62)
+and [TypeScript SDK client](https://github.com/modelcontextprotocol/typescript-sdk/blob/951fe5603a7ec0b2dcb6a0b95d92cd86f93ad9e5/packages/core-internal/src/shared/transport.ts#L77-L98)
+have no equivalent address filter.
+That shows compatibility, not a safe exception.
+
 ### Use a stricter IANA classifier
 
 A classifier based on the
@@ -633,8 +729,22 @@ Classification parity remains separate from class-wide versus origin permission.
 Treating `198.18.0.0/15` as private can support DNS proxies that return
 benchmark addresses for every hostname.
 That changes a blocked range into a general private-network exception.
-The proposal keeps it blocked, as rmcp does.
+It also widens each existing `oauth.allowPrivateAddresses` grant.
+An entry option for the range does not help either: the address alone
+cannot tell a synthetic route from a real benchmark destination.
+The proposal keeps the range blocked, as rmcp does (`is_disallowed_metadata_ipv4`).
 A configured proxy route can still work because the proxy resolves the resource hostname.
+The stop gives a hint for that route (part 6).
+
+### Classify a scheme stop as an authentication error
+
+One exit code for all safety stops is simpler.
+But a new login cannot repair an insecure endpoint or a URL that does not
+parse, so the stop is not an authentication error. `check_https` gave a
+protocol error for these endpoints before. The
+[`InsecureTokenEndpointError` of the TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk/blob/951fe5603a7ec0b2dcb6a0b95d92cd86f93ad9e5/packages/client/src/client/authErrors.ts#L141-L164)
+makes the same distinction: "re-authorizing cannot fix it".
+It defines no CLI exit code.
 
 ### Other connection checks
 
@@ -697,12 +807,27 @@ The test build `ncp-cli` uses the fake credential store.
   A remote proxy receives no loopback HTTP request.
 - Redirect cases cover same-origin discovery through a new policy
   check, a registration `307` with no second request, and token stops.
+  A login through a same-origin discovery redirect succeeds.
+  A negative case uses the SDK discovery with the custom resolver: the
+  DNS answer of the authorization host changes before the redirected
+  request. Discovery fails at the first candidate URL, the stop names
+  the redirected URL, and the receiver gets no redirected request.
 - Browser cases cover initial URL literals and localhost names.
   They do not claim control over browser DNS or later redirects.
 - Configuration cases cover the boolean, its type error, the project
   trust display and the JSON row.
   A diagnostic hint changes no permission automatically.
   Error paths preserve and clear the safety-stop record correctly.
+  A loopback DNS answer of the configured host name marks the stop as on
+  the entry host. Another host and `app.test.` against `app.test` do not.
+  The cause of a marked stop names the entry. Another loopback stop keeps
+  its text. No CLI snapshot covers this cause, because the fake lookup of
+  the test build changes only the OAuth resolver, not the MCP connection.
+  A DNS answer in `198.18.0.0/15`, also as `64:ff9b::c612:2a`, gets the
+  DNS proxy hint. A literal in the range and a localhost name with such
+  an answer get no hint.
+  A scheme stop and an endpoint that does not parse give exit code 3.
+  The other stops give exit code 4.
 - An untrusted project cannot grant private access.
   A trusted entry grants the displayed private permission.
   Changed project bytes require trust again.
@@ -730,9 +855,16 @@ Blocked configured literals and direct requests to proxy hostnames receive no SD
 These requests stop:
 
 - Loopback endpoints selected by a non-loopback MCP URL.
+- Direct requests to a configured host name that resolves to a loopback
+  address, for example through `/etc/hosts`. `v0.2.1` completes this
+  login.
 - Private endpoints without private permission.
 - Blocked addresses, regardless of the entry permission.
-- `http` discovery or endpoints on hosts that are not loopback.
+  This includes `198.18.0.0/15` answers from a DNS proxy.
+- `http` endpoints of the authorization server metadata on hosts that
+  are not loopback. These stops keep the exit code 3 of `v0.2.1`.
+- `http` discovery on hosts that are not loopback. `v0.2.1` sent these
+  requests.
 - Loopback HTTP through a proxy on another computer.
 - Automatic registration redirects.
 

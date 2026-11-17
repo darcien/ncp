@@ -78,6 +78,14 @@ pub enum Event<'a> {
     ServerStart {
         elapsed: Duration,
     },
+    /// The address policy stopped an OAuth URL before any request: an
+    /// endpoint of the authorization server, or the URL for the browser.
+    /// A stop during a request shows in the outcome of its `Http` event.
+    OAuthStop {
+        url: &'a str,
+        /// The reason with no backticks, as a log line has none.
+        reason: &'a str,
+    },
 }
 
 /// The function that gets the events. With no function, the client core

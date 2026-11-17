@@ -55,6 +55,10 @@ pub enum Registration {
     /// The metadata names no registration endpoint, and the endpoint
     /// registers nothing.
     Closed,
+    /// The endpoint answers `307` with a redirect to `/register-moved`,
+    /// which registers a client. A client that follows the redirect
+    /// sends its registration to a URL that the metadata does not name.
+    Moved,
 }
 
 /// Client ID Metadata Documents (CIMD). With support, each HTTPS client ID
@@ -65,6 +69,14 @@ pub enum MetadataDocuments {
     Unsupported,
     /// The metadata sets `client_id_metadata_document_supported`.
     Supported,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetadataPlace {
+    WellKnown,
+    /// The well-known path answers `307` with a redirect to the same path
+    /// with `-moved` at its end, which has the metadata.
+    Moved,
 }
 
 /// The behavior of the server. Tests can change it while the server runs.
@@ -95,6 +107,16 @@ pub struct AuthSettings {
     /// The metadata field `service_documentation`.
     pub service_documentation: Option<String>,
     pub metadata_documents: MetadataDocuments,
+    /// A token endpoint that the metadata names in place of its own, as a
+    /// hostile server can.
+    pub token_endpoint: Option<String>,
+    /// A registration endpoint that the metadata names in place of its
+    /// own, as a hostile server can.
+    pub registration_endpoint: Option<String>,
+    /// The authorization server that the protected resource metadata of
+    /// the MCP fixture names in place of this server.
+    pub resource_authorization_server: Option<String>,
+    pub metadata_place: MetadataPlace,
 }
 
 impl Default for AuthSettings {
@@ -113,6 +135,10 @@ impl Default for AuthSettings {
             granted_extra: Vec::new(),
             service_documentation: None,
             metadata_documents: MetadataDocuments::Unsupported,
+            token_endpoint: None,
+            registration_endpoint: None,
+            resource_authorization_server: None,
+            metadata_place: MetadataPlace::WellKnown,
         }
     }
 }
@@ -216,6 +242,12 @@ impl AuthState {
     #[must_use]
     pub fn issuer(&self) -> String {
         format!("{}{}", self.origin, self.lock().settings.issuer_path)
+    }
+
+    #[must_use]
+    pub fn resource_authorization_server(&self) -> String {
+        let named = self.lock().settings.resource_authorization_server.clone();
+        named.unwrap_or_else(|| self.issuer())
     }
 
     #[must_use]
@@ -372,11 +404,25 @@ async fn handle(state: &AuthState, request: http::Request<hyper::body::Incoming>
     let query = parts.uri.query().unwrap_or_default().to_string();
     let issuer_path = state.lock().settings.issuer_path.clone();
     let metadata_path = format!("/.well-known/oauth-authorization-server{issuer_path}");
+    let moved_path = format!("{metadata_path}-moved");
+    let moved = state.lock().settings.metadata_place == MetadataPlace::Moved;
     match (parts.method.as_str(), path.as_str()) {
-        ("GET", path) if path == metadata_path => metadata(state),
+        ("GET", path) if path == metadata_path && moved => {
+            let mut response = text(http::StatusCode::TEMPORARY_REDIRECT, "moved");
+            if let Ok(location) = http::HeaderValue::from_str(&moved_path) {
+                response
+                    .headers_mut()
+                    .insert(http::header::LOCATION, location);
+            }
+            response
+        }
+        ("GET", path) if path == metadata_path || (moved && path == moved_path) => metadata(state),
         ("GET", "/authorize") => authorize(state, &pairs(query.as_bytes())),
         ("POST", "/token") => token(state, &parts.headers, &pairs(&body)),
-        ("POST", "/register") => register(state, &body),
+        ("POST", "/register") if state.lock().settings.registration == Registration::Moved => {
+            moved_registration(state)
+        }
+        ("POST", "/register" | "/register-moved") => register(state, &body),
         _ => text(http::StatusCode::NOT_FOUND, "not found"),
     }
 }
@@ -419,7 +465,9 @@ fn metadata(state: &AuthState) -> Response {
     let mut body = json!({
         "issuer": format!("{origin}{}", settings.issuer_path),
         "authorization_endpoint": format!("{origin}/authorize"),
-        "token_endpoint": format!("{origin}/token"),
+        "token_endpoint": settings
+            .token_endpoint
+            .unwrap_or_else(|| format!("{origin}/token")),
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
@@ -429,7 +477,11 @@ fn metadata(state: &AuthState) -> Response {
         "scopes_supported": settings.scopes_supported,
     });
     if settings.registration != Registration::Closed {
-        body["registration_endpoint"] = json!(format!("{origin}/register"));
+        body["registration_endpoint"] = json!(
+            settings
+                .registration_endpoint
+                .unwrap_or_else(|| format!("{origin}/register"))
+        );
     }
     if let Some(page) = settings.service_documentation {
         body["service_documentation"] = json!(page);
@@ -650,6 +702,16 @@ fn token(state: &AuthState, headers: &http::HeaderMap, form: &HashMap<String, St
         }
         _ => oauth_error(http::StatusCode::BAD_REQUEST, "unsupported_grant_type"),
     }
+}
+
+fn moved_registration(state: &AuthState) -> Response {
+    state.lock().record.register_calls += 1;
+    let mut response = text(http::StatusCode::TEMPORARY_REDIRECT, "moved");
+    response.headers_mut().insert(
+        http::header::LOCATION,
+        http::HeaderValue::from_static("/register-moved"),
+    );
+    response
 }
 
 fn register(state: &AuthState, body: &[u8]) -> Response {

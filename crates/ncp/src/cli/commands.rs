@@ -139,7 +139,10 @@ async fn with_connection<T>(
     work: impl AsyncFn(&Connection) -> Result<T, Failure>,
 ) -> Result<T, Failure> {
     let connection = session::open(context, server).await?;
-    let result = asked(server, &connection, work(&connection).await);
+    // The stop record is read after the work, because the work can stop.
+    let result = work(&connection).await;
+    let result = stopped(server, connection.oauth_stop(), result);
+    let result = asked(server, &connection, result);
     let authorized = connection.is_authorized();
     connection.close().await;
     let challenge = result
@@ -151,12 +154,30 @@ async fn with_connection<T>(
     match challenge {
         Some(challenge) => {
             let connection = session::open_with_login(context, server, Some(&challenge)).await?;
-            let result = asked(server, &connection, work(&connection).await);
+            let result = work(&connection).await;
+            let result = stopped(server, connection.oauth_stop(), result);
+            let result = asked(server, &connection, result);
             connection.close().await;
             result
         }
         None => result,
     }
+}
+
+// A refresh of the tokens during a request can stop at the address
+// policy. The request then fails with only the text of rmcp, so the stop
+// takes its place. A refused question of the server still comes first,
+// because the result is then not the answer to the request.
+fn stopped<T>(
+    server: &Server,
+    stop: Option<crate::oauth::address::SafetyStop>,
+    result: Result<T, Failure>,
+) -> Result<T, Failure> {
+    result.map_err(|failure| match stop {
+        Some(stop) => session::safety_stop_failure(server.name.as_str(), &stop)
+            .map_text(|text| session::file_url(server, &text)),
+        None => failure,
+    })
 }
 
 // Exit 5 when the server asked a question that `ncp` refused: the result
@@ -1078,5 +1099,47 @@ fn print_response(
                 code(server)
             ),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::oauth::address::{Found, Refused, SafetyStop, StopReason};
+
+    fn server() -> Server {
+        let config = crate::config::parse(
+            r#"{"mcpServers": {"web": {"type": "http", "url": "https://mcp.example.com/mcp"}}}"#,
+            &crate::expand::Env::new(),
+        )
+        .unwrap();
+        config.server("web").unwrap().clone()
+    }
+
+    #[test]
+    fn a_stop_during_a_request_replaces_the_text_of_the_library() {
+        let stop = SafetyStop {
+            url: "https://as.example/token".into(),
+            host: "as.example".into(),
+            on_entry_host: false,
+            reason: StopReason::Class {
+                found: Found::Resolved("10.0.0.5".parse().unwrap()),
+                class: Refused::Private,
+            },
+        };
+        let failed: Result<(), Failure> = Err(Failure::protocol("The request failed"));
+        let failure = stopped(&server(), Some(stop), failed).unwrap_err();
+        assert_eq!(failure.exit(), Exit::Auth);
+        assert!(failure.message().contains("on purpose"), "{failure:?}");
+        assert_eq!(failure.diagnostic().data(), ["https://as.example/token"]);
+        assert_eq!(failure.hints().len(), 1, "{failure:?}");
+    }
+
+    #[test]
+    fn a_failure_with_no_stop_stays_as_it_is() {
+        let failed: Result<(), Failure> = Err(Failure::protocol("The request failed"));
+        let failure = stopped(&server(), None, failed).unwrap_err();
+        assert_eq!(failure.message(), "The request failed");
+        assert_eq!(stopped(&server(), None, Ok(1)).unwrap(), 1);
     }
 }

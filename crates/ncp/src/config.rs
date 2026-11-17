@@ -36,10 +36,19 @@ pub(crate) const JSONC: jsonc_parser::ParseOptions = jsonc_parser::ParseOptions 
 const STDIO_KEYS: [&str; 5] = ["type", "command", "args", "env", "cwd"];
 const REMOTE_KEYS: [&str; 4] = ["type", "url", "headers", "oauth"];
 /// The keys of the `oauth` object that `ncp` reads. `ncp` adds a key only
-/// when a real server or an official conformance scenario can test it.
+/// when a real server or an official conformance scenario can test it, or
+/// when a safety check of `ncp` needs a permission from the user.
 /// `ncp` reads `authorizationServer` as the issuer, because other agent
 /// tools write the issuer with this key.
-const OAUTH_KEYS: [&str; 4] = ["clientId", "clientSecret", "issuer", "authorizationServer"];
+const OAUTH_KEYS: [&str; 5] = [
+    "clientId",
+    "clientSecret",
+    "issuer",
+    "authorizationServer",
+    ALLOW_PRIVATE_ADDRESSES,
+];
+
+const ALLOW_PRIVATE_ADDRESSES: &str = "allowPrivateAddresses";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Server {
@@ -185,6 +194,10 @@ pub struct RemoteServer {
     /// `oauth.clientId`: a client that the user registered with the
     /// authorization server. With it, `ncp` does no registration.
     pub oauth_client: Option<PreRegisteredClient>,
+    /// `oauth.allowPrivateAddresses`: the OAuth requests of the entry can
+    /// go to private addresses. The server cannot set it, so only the user
+    /// or a trusted file gives this permission.
+    pub allow_private_addresses: bool,
     /// The values of the `${NAME}` references in `url`. Output hides each
     /// of them wherever it occurs, for example in a URL that a library
     /// makes from the server URL.
@@ -292,9 +305,13 @@ pub enum EntryError {
     #[error("The field `oauth.{0}` needs `oauth.clientId`")]
     WithoutClientId(&'static str),
     /// The URL is the expanded `url` of the entry, so that `auth login`
-    /// can find the issuer that the server names.
+    /// can find the issuer that the server names. That lookup sends OAuth
+    /// requests, so it needs the address permission of the entry too.
     #[error("The field `oauth.clientSecret` needs `oauth.issuer`")]
-    SecretWithoutIssuer { url: ServerUrl },
+    SecretWithoutIssuer {
+        url: ServerUrl,
+        allow_private_addresses: bool,
+    },
     #[error("The fields `oauth.issuer` and `oauth.authorizationServer` do not agree")]
     IssuersDisagree,
     #[error("The field `oauth.clientSecret` is not a valid `${{NAME}}` reference")]
@@ -525,6 +542,12 @@ pub struct Unexpanded {
     /// Each `${NAME}` of `headers` and `oauth.clientSecret` of a remote
     /// entry, with the host that gets its value.
     pub sends: Vec<(String, String)>,
+    /// `oauth.allowPrivateAddresses` of a remote entry, `false` when it
+    /// is missing. A person checks it before a trust, because it lets the
+    /// OAuth requests of the entry reach the private network of the user.
+    /// `None` for a stdio entry, and for a value that is not a boolean:
+    /// then `problem` has the error, and no value shows.
+    pub allow_private_addresses: Option<bool>,
     /// The names that can come from a store.
     pub variables: BTreeSet<String>,
     /// An error of the checks of the loader that need no expansion. The
@@ -606,6 +629,10 @@ fn unexpanded(name: &str, value: &Value) -> Result<Unexpanded, EntryError> {
     Ok(Unexpanded {
         transport: kind.name(),
         variables: names_in(store_values(object, kind)),
+        allow_private_addresses: match target {
+            Target::Remote { .. } => allow_private_addresses(object).ok(),
+            Target::Stdio { .. } => None,
+        },
         target,
         env,
         sends,
@@ -848,12 +875,33 @@ fn remote(
             Expansion::Off => None,
         })
         .collect();
+    let allow_private_addresses = allow_private_addresses(object)?;
     Ok(RemoteServer {
         headers: template_map(object, "headers")?,
-        oauth_client: oauth_client(object, &url)?,
+        oauth_client: oauth_client(object, &url, allow_private_addresses)?,
+        allow_private_addresses,
         url,
         url_values,
     })
+}
+
+// `oauth.allowPrivateAddresses`, `false` when it is missing. A value of
+// another type is an error, so that a quoted `"true"` or `"false"` does
+// not silently give the opposite of what the user meant. An `oauth` value
+// that is not an object gets its error from `oauth_client`.
+fn allow_private_addresses(object: &Map<String, Value>) -> Result<bool, EntryError> {
+    match object
+        .get("oauth")
+        .and_then(Value::as_object)
+        .and_then(|oauth| oauth.get(ALLOW_PRIVATE_ADDRESSES))
+    {
+        None => Ok(false),
+        Some(Value::Bool(allow)) => Ok(*allow),
+        Some(_) => Err(wrong_type(
+            &format!("oauth.{ALLOW_PRIVATE_ADDRESSES}"),
+            "a boolean",
+        )),
+    }
 }
 
 // The pre-registered client of the `oauth` object. A client ID and an
@@ -861,6 +909,7 @@ fn remote(
 fn oauth_client(
     object: &Map<String, Value>,
     url: &ServerUrl,
+    allow_private_addresses: bool,
 ) -> Result<Option<PreRegisteredClient>, EntryError> {
     let Some(oauth) = object.get("oauth") else {
         return Ok(None);
@@ -888,7 +937,12 @@ fn oauth_client(
     };
     let kind = match (secret, issuer) {
         (None, issuer) => ClientKind::Public { issuer },
-        (Some(_), None) => return Err(EntryError::SecretWithoutIssuer { url: url.clone() }),
+        (Some(_), None) => {
+            return Err(EntryError::SecretWithoutIssuer {
+                url: url.clone(),
+                allow_private_addresses,
+            });
+        }
         // The error does not show the value: a literal secret can be in it.
         (Some(secret), Some(issuer)) => ClientKind::Confidential {
             secret: Template::parse(&secret).map_err(|_| EntryError::BadClientSecret)?,
@@ -1033,7 +1087,11 @@ mod tests {
             }
             .to_string(),
             EntryError::WithoutClientId("clientSecret").to_string(),
-            EntryError::SecretWithoutIssuer { url }.to_string(),
+            EntryError::SecretWithoutIssuer {
+                url,
+                allow_private_addresses: false,
+            }
+            .to_string(),
             EntryError::IssuersDisagree.to_string(),
             EntryError::BadClientSecret.to_string(),
             LookupError::NotFound("x".into()).to_string(),
@@ -1090,6 +1148,7 @@ mod tests {
                 url: ServerUrl::parse("https://example.com/mcp").unwrap(),
                 headers: BTreeMap::from([("X-Org".into(), Template::parse("o").unwrap())]),
                 oauth_client: None,
+                allow_private_addresses: false,
                 url_values: Vec::new(),
             })
         );
@@ -1216,6 +1275,95 @@ mod tests {
             oauth_entry(r#"{"clientId": "c1", "clientSecret": "s"}"#),
             Err(EntryError::SecretWithoutIssuer { .. })
         ));
+    }
+
+    fn private_addresses(oauth: &str) -> Result<bool, EntryError> {
+        let config = load(&format!(
+            r#"{{"mcpServers": {{"r": {{"type": "http", "url": "https://x/mcp", "oauth": {oauth}}}}}}}"#
+        ));
+        match config.server("r") {
+            Ok(Server {
+                transport: Transport::Http(remote),
+                ..
+            }) => Ok(remote.allow_private_addresses),
+            Err(LookupError::Invalid { error, .. }) => Err(error),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn reads_allow_private_addresses_as_a_boolean_with_no_client_id() {
+        assert_eq!(
+            private_addresses(r#"{"allowPrivateAddresses": true}"#),
+            Ok(true)
+        );
+        assert_eq!(
+            private_addresses(r#"{"allowPrivateAddresses": false}"#),
+            Ok(false)
+        );
+        assert_eq!(private_addresses("{}"), Ok(false));
+        assert_eq!(
+            private_addresses(r#"{"clientId": "c", "allowPrivateAddresses": true}"#),
+            Ok(true)
+        );
+        for value in [r#""true""#, "1", "null"] {
+            assert_eq!(
+                private_addresses(&format!(r#"{{"allowPrivateAddresses": {value}}}"#)),
+                Err(EntryError::WrongType {
+                    field: "oauth.allowPrivateAddresses".into(),
+                    expected: "a boolean"
+                }),
+                "{value}"
+            );
+        }
+        let config = load(
+            r#"{"mcpServers": {"r": {"type": "http", "url": "https://x/mcp",
+                "oauth": {"allowPrivateAddresses": true}}}}"#,
+        );
+        assert_eq!(config.warnings(), []);
+    }
+
+    #[test]
+    fn a_secret_without_an_issuer_keeps_the_private_permission_for_the_issuer_lookup() {
+        assert!(matches!(
+            oauth_entry(
+                r#"{"clientId": "c1", "clientSecret": "s", "allowPrivateAddresses": true}"#
+            ),
+            Err(EntryError::SecretWithoutIssuer {
+                allow_private_addresses: true,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn the_trust_display_reads_the_private_permission_of_a_remote_entry() {
+        let entries = unexpanded_entries(
+            r#"{"mcpServers": {
+                "corp": {"type": "http", "url": "https://mcp.corp/mcp",
+                         "oauth": {"allowPrivateAddresses": true}},
+                "public": {"type": "http", "url": "https://mcp.example/mcp"},
+                "quoted": {"type": "http", "url": "https://mcp.example/mcp",
+                           "oauth": {"allowPrivateAddresses": "true"}}
+            }}"#,
+        )
+        .unwrap();
+        let shown: Vec<(&str, Option<bool>)> = entries
+            .iter()
+            .map(|entry| {
+                let shape = entry.shape.as_ref().unwrap();
+                (entry.name.as_str(), shape.allow_private_addresses)
+            })
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("corp", Some(true)),
+                ("public", Some(false)),
+                ("quoted", None)
+            ]
+        );
+        assert!(entries[2].shape.as_ref().unwrap().problem.is_some());
     }
 
     #[test]

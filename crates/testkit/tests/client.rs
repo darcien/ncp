@@ -55,6 +55,7 @@ fn http_server(url: &str, headers: &[(&str, &str)]) -> Server {
                 .map(|(k, v)| (k.to_string(), Template::parse(v).unwrap()))
                 .collect(),
             oauth_client: None,
+            allow_private_addresses: false,
             url_values: Vec::new(),
         }),
     )
@@ -115,6 +116,7 @@ impl Setup {
                 }
             }),
             authorized: None,
+            notes: &client::http::ConnectNotes::default(),
             progress: &client::ProgressSink::default(),
             elicitor: None,
         })
@@ -682,6 +684,7 @@ async fn rejects_sse_server() {
             url: ServerUrl::parse("http://localhost:1/sse").unwrap(),
             headers: BTreeMap::new(),
             oauth_client: None,
+            allow_private_addresses: false,
             url_values: Vec::new(),
         }),
     );

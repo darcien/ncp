@@ -38,6 +38,19 @@ pub fn trace_line(
             })
         }
         Event::Http(exchange) => Some(http_line(format, server, exchange, shown_url)),
+        Event::OAuthStop { url, reason } => {
+            let url = shown_url(url);
+            // A reason can name a URL, for example the target of a
+            // redirect, so it gets the same hiding as an error.
+            let reason = shown_url(reason);
+            Some(match format {
+                Format::Text => {
+                    format!("trace: server {server}: stopped {url} on purpose: {reason}\n")
+                }
+                Format::Json => json_line(&json!({"trace": {"server": server,
+                    "oauthStop": {"url": url, "reason": reason}}})),
+            })
+        }
         _ => None,
     }
 }
@@ -50,8 +63,8 @@ fn http_line(
 ) -> String {
     let url = shown_url(&exchange.url);
     let outcome = hide_url_in(&exchange.outcome, &exchange.url, &url);
-    // A status line holds no value. An error can hold a URL.
-    let outcome = if outcome.starts_with("error") {
+    // A status line holds no value. An error or a stop can hold a URL.
+    let outcome = if outcome.starts_with("error") || outcome.starts_with("stopped") {
         shown_url(&outcome)
     } else {
         outcome
@@ -131,7 +144,7 @@ fn record(timings: &Timings, event: &Event<'_>) {
         Event::ServerStart { elapsed } => {
             timings.update(|record| timings::add(&mut record.server_start, *elapsed));
         }
-        Event::Message { .. } | Event::Http(_) => {}
+        Event::Message { .. } | Event::Http(_) | Event::OAuthStop { .. } => {}
     }
 }
 
@@ -234,6 +247,30 @@ mod tests {
             response_body: None,
         };
         let line = trace_line(Format::Text, "gh", &Event::Http(&exchange), &hidden, &same).unwrap();
+        assert!(!line.contains("k3y"), "{line}");
+    }
+
+    #[test]
+    fn oauth_stops_hide_the_known_values_in_their_reason() {
+        let hide = |text: &str| text.replace("k3y", "****");
+        let reason = "The authorization server answered 307 with a redirect to \
+                      https://h.test/t/k3y/register. ncp does not follow this redirect.";
+        let stop = Event::OAuthStop {
+            url: "https://h.test/t/k3y/token",
+            reason,
+        };
+        let line = trace_line(Format::Text, "gh", &stop, &hide, &same).unwrap();
+        assert!(!line.contains("k3y"), "{line}");
+        let exchange = HttpExchange {
+            method: "POST",
+            url: "https://h.test/register".into(),
+            headers: Vec::new(),
+            outcome: format!("stopped on purpose: {reason}"),
+            elapsed: Duration::from_millis(1),
+            request_body: None,
+            response_body: None,
+        };
+        let line = trace_line(Format::Text, "gh", &Event::Http(&exchange), &hide, &same).unwrap();
         assert!(!line.contains("k3y"), "{line}");
     }
 

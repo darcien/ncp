@@ -104,6 +104,19 @@ fn no_proxy_is_set(env: &Env) -> bool {
 
 #[must_use]
 pub fn route(env: &Env, target: &url::Url) -> Route {
+    select(env, target).route
+}
+
+/// The route of a request and, on a proxy route, the proxy as reqwest
+/// takes it, with its credentials. A client that must use only this route
+/// builds its proxy from `proxy`.
+pub struct Selected {
+    pub route: Route,
+    pub proxy: Option<Intercept>,
+}
+
+#[must_use]
+pub fn select(env: &Env, target: &url::Url) -> Selected {
     route_with(env, target, Matcher::from_system, Matcher::from_env)
 }
 
@@ -119,14 +132,15 @@ fn route_with(
     target: &url::Url,
     system: impl FnOnce() -> Matcher,
     variables: impl FnOnce() -> Matcher,
-) -> Route {
+) -> Selected {
+    let direct = |route| Selected { route, proxy: None };
     let Ok(uri) = target.as_str().parse::<http::Uri>() else {
-        return Route::Direct;
+        return direct(Route::Direct);
     };
     // reqwest uses no proxy in a CGI program, because a CGI request can
     // set a proxy variable from a header.
     if env.contains_key("REQUEST_METHOD") {
-        return Route::Direct;
+        return direct(Route::Direct);
     }
     let scheme = if target.scheme() == "https" {
         &HTTPS
@@ -152,10 +166,13 @@ fn route_with(
                 Some((name, _)) if from_variables => Source::Variable(name),
                 _ => Source::SystemSettings,
             };
-            Route::Proxy { url, source }
+            Selected {
+                route: Route::Proxy { url, source },
+                proxy: Some(intercept),
+            }
         }
-        None if variable.is_some() && no_proxy_is_set(env) => Route::DirectByNoProxy,
-        None => Route::Direct,
+        None if variable.is_some() && no_proxy_is_set(env) => direct(Route::DirectByNoProxy),
+        None => direct(Route::Direct),
     }
 }
 
@@ -211,6 +228,7 @@ mod tests {
             || matcher(env, system_https),
             || matcher(env, ""),
         )
+        .route
     }
 
     #[test]

@@ -28,6 +28,7 @@ use crate::{
     config::{EntryError, LookupError, PreRegisteredClient, RemoteServer, Server, Transport},
     credential::CredentialKey,
     oauth::{
+        address::Permission,
         callback::{self, RedirectUri},
         http::OAuthHttp,
         items::{self, ClientItem},
@@ -121,11 +122,13 @@ fn login_failure(
     notes: &crate::client::http::ConnectNotes,
     failure: Failure,
 ) -> Failure {
+    let notes = notes.get();
+    let failure = session::with_safety_stop(word, &notes, failure);
     let failure = match loaded.config.server(word).ok() {
         Some(server) => failure.map_text(|text| session::file_url(server, &text)),
         None => failure,
     };
-    session::with_tls_hint(context.env, &notes.get(), failure)
+    session::with_tls_hint(context.env, &notes, failure)
 }
 
 /// Each step of rmcp has its own limit of 30 s, and discovery tries up to
@@ -142,6 +145,41 @@ pub(super) async fn limited<T>(
         () = context.cancel.cancelled() => Err(session::interrupted(None)),
         () = tokio::time::sleep(limit) => Err(timeout),
     }
+}
+
+// The address permission of the OAuth requests of an entry. It comes only
+// from the entry, so that no response of a server can change it.
+fn permission(remote: &RemoteServer) -> Permission {
+    Permission::of_entry(remote.url.as_url(), remote.allow_private_addresses)
+}
+
+// The OAuth client of an entry and the rmcp manager that sends through it.
+// The caller keeps the client for the checks of the endpoints that rmcp
+// does not check.
+async fn oauth_manager(
+    context: &Context<'_>,
+    observer: &crate::client::observe::Observer,
+    notes: &crate::client::http::ConnectNotes,
+    remote: &RemoteServer,
+    name: &str,
+) -> Result<(Arc<OAuthHttp>, AuthorizationManager), Failure> {
+    let http = Arc::new(
+        OAuthHttp::new(
+            context.env,
+            (observer, notes),
+            (
+                permission(remote),
+                remote.url.as_url().host_str().unwrap_or_default(),
+            ),
+            context.oauth_hosts,
+        )
+        .map_err(|error| session::http_failure(name, &error))?,
+    );
+    let manager =
+        AuthorizationManager::new_with_oauth_http_client(remote.url.without_query(), http.clone())
+            .await
+            .map_err(|error| auth_failure("OAuth setup", name, &error))?;
+    Ok((http, manager))
 }
 
 fn remote(server: &Server) -> Result<&RemoteServer, Failure> {
@@ -193,7 +231,7 @@ fn auth_failure(step: &str, server: &str, error: &AuthError) -> Failure {
 // "Fallbacks for Servers without Metadata Discovery"), and it
 // registers a client at a server that names no authorization server.
 async fn discover(
-    manager: &AuthorizationManager,
+    (manager, http): (&AuthorizationManager, &OAuthHttp),
     challenge: Option<&str>,
     server: &str,
 ) -> Result<AuthorizationMetadata, Failure> {
@@ -211,36 +249,34 @@ async fn discover(
             "The server has no protected resource metadata and no authorization server metadata",
         ));
     }
-    check_https(server, &resolution.metadata)?;
+    check_endpoints(http, server, &resolution.metadata)?;
     Ok(resolution.metadata)
 }
 
-// The endpoints of the authorization server must use HTTPS (MCP
-// 2025-11-25, basic/authorization, "Communication Security"). `ncp`
-// also accepts `http` on a loopback host, because the local tests use
-// a loopback authorization server. rmcp does not do this check.
-fn check_https(server: &str, metadata: &AuthorizationMetadata) -> Result<(), Failure> {
-    let endpoints = [
-        Some(&metadata.authorization_endpoint),
+// The endpoints of the authorization server get the address policy
+// before the login or a refresh uses them. They must use HTTPS (MCP
+// 2025-11-25, basic/authorization, "Communication Security"), or `http`
+// on a loopback host, so that local servers and tests can use HTTP. rmcp
+// does not check these endpoints. The token and registration endpoints
+// get the check of the route of their requests. The browser opens the
+// authorization endpoint, so it gets the check of a browser URL.
+fn check_endpoints(
+    http: &OAuthHttp,
+    server: &str,
+    metadata: &AuthorizationMetadata,
+) -> Result<(), Failure> {
+    let requests = [
         Some(&metadata.token_endpoint),
         metadata.registration_endpoint.as_ref(),
     ];
-    endpoints
-        .into_iter()
-        .flatten()
-        .find(|endpoint| !is_secure(endpoint))
-        .map_or(Ok(()), |endpoint| {
-            Err(Failure::protocol(format!(
-                "The authorization server of the server {} has the endpoint {}, which does not use `https`",
-                code(server),
-                code(endpoint)
-            ))
-            .about(server))
+    http.check_browser_url(&metadata.authorization_endpoint)
+        .and_then(|()| {
+            requests
+                .into_iter()
+                .flatten()
+                .try_for_each(|endpoint| http.check_request_url(endpoint))
         })
-}
-
-fn is_secure(endpoint: &str) -> bool {
-    url::Url::parse(endpoint).is_ok_and(|url| crate::server::is_secure_url(&url))
+        .map_err(|stop| session::safety_stop_failure(server, &stop))
 }
 
 // rmcp requires the issuer only when discovery can derive it. Without an
@@ -297,16 +333,14 @@ async fn login(
         context.timings.clone(),
         session::shown_url(server, context.ui),
     );
-    let http = OAuthHttp::new(context.env, &observer, notes)
-        .map_err(|error| session::http_failure(name, &error))?;
-    let mut manager = AuthorizationManager::new_with_oauth_http_client(
-        remote.url.without_query(),
-        Arc::new(http),
-    )
-    .await
-    .map_err(|error| auth_failure("OAuth setup", name, &error))?;
+    let (http, mut manager) = oauth_manager(context, &observer, notes, remote, name).await?;
     let challenge = session::challenge(context, server).await?;
-    let metadata = discover(&manager, challenge.as_deref(), name).await?;
+    let metadata = discover((&manager, &http), challenge.as_deref(), name).await?;
+    // Each token request and each refresh uses the token endpoint. A
+    // login whose tokens cannot reach it gives the user nothing.
+    http.check_lookup(&metadata.token_endpoint)
+        .await
+        .map_err(|stop| session::safety_stop_failure(name, &stop))?;
     let issuer = issuer_of(&metadata);
     context
         .ui
@@ -560,14 +594,7 @@ pub(super) async fn stored_login(
     let client_id = item.tokens.client_id.clone();
     let stored_binding = item.binding.clone();
     context.ui.debug(Some(name), "read the stored OAuth tokens");
-    let oauth_http = OAuthHttp::new(context.env, observer, notes)
-        .map_err(|error| session::http_failure(name, &error))?;
-    let mut manager = AuthorizationManager::new_with_oauth_http_client(
-        remote.url.without_query(),
-        Arc::new(oauth_http),
-    )
-    .await
-    .map_err(|error| auth_failure("OAuth setup", name, &error))?;
+    let (oauth_http, mut manager) = oauth_manager(context, observer, notes, remote, name).await?;
     manager.set_credential_store(
         TokenStore::new(server.name.clone(), store.clone())
             .with_item(item)
@@ -577,7 +604,7 @@ pub(super) async fn stored_login(
     );
     // The challenge can name the protected resource metadata (RFC 9728
     // §5.1). With metadata in place, rmcp does no discovery of its own.
-    let metadata = discover(&manager, challenge, name).await?;
+    let metadata = discover((&manager, &oauth_http), challenge, name).await?;
     // Check the issuer of the configured client before rmcp reads the
     // tokens, because rmcp removes the tokens of another issuer. The check
     // also comes before a refresh sends the secret.
@@ -1269,9 +1296,16 @@ async fn select<'a>(
     }
     Err(match loaded.config.server(word) {
         Err(LookupError::Invalid {
-            error: EntryError::SecretWithoutIssuer { url },
+            error:
+                EntryError::SecretWithoutIssuer {
+                    url,
+                    allow_private_addresses,
+                },
             ..
-        }) => with_server_issuer(context, failure, word, &url).await,
+        }) => {
+            let permission = Permission::of_entry(url.as_url(), allow_private_addresses);
+            with_server_issuer(context, failure, word, (&url, permission)).await
+        }
         _ => failure,
     })
 }
@@ -1286,23 +1320,25 @@ async fn with_server_issuer(
     context: &Context<'_>,
     failure: Failure,
     name: &str,
-    url: &crate::server::ServerUrl,
+    (url, permission): (&crate::server::ServerUrl, Permission),
 ) -> Failure {
     let notes = crate::client::http::ConnectNotes::default();
     let Ok(http) = OAuthHttp::new(
         context.env,
-        &crate::client::observe::Observer::default(),
-        &notes,
+        (&crate::client::observe::Observer::default(), &notes),
+        (permission, url.as_url().host_str().unwrap_or_default()),
+        context.oauth_hosts,
     ) else {
         return failure;
     };
+    let http = Arc::new(http);
     let Ok(manager) =
-        AuthorizationManager::new_with_oauth_http_client(url.without_query(), Arc::new(http)).await
+        AuthorizationManager::new_with_oauth_http_client(url.without_query(), http.clone()).await
     else {
         return failure;
     };
     let limit = ISSUER_LOOKUP_LIMIT.min(context.request_limit / 2);
-    match tokio::time::timeout(limit, discover(&manager, None, name)).await {
+    match tokio::time::timeout(limit, discover((&manager, &http), None, name)).await {
         // The issuer of the server is the same fix as the general hint,
         // with the value. Thus it replaces that hint.
         Ok(Ok(metadata)) => {
@@ -1834,16 +1870,85 @@ mod tests {
         metadata
     }
 
+    fn endpoints_of(entry: &str, metadata: &AuthorizationMetadata) -> Result<(), Failure> {
+        let entry = url::Url::parse(entry).unwrap();
+        let permission = Permission::of_entry(&entry, false);
+        let http = OAuthHttp::direct_for_tests(permission, entry.host_str().unwrap());
+        check_endpoints(&http, "web", metadata)
+    }
+
     #[test]
-    fn authorization_server_must_use_https_except_on_loopback() {
-        assert!(check_https("web", &metadata("https://as.test")).is_ok());
-        assert!(check_https("web", &metadata("http://127.0.0.1:9")).is_ok());
-        assert!(check_https("web", &metadata("http://localhost:9")).is_ok());
-        let failure = check_https("web", &metadata("http://as.test")).unwrap_err();
-        assert!(
-            failure.message().contains("http://as.test/authorize"),
-            "{failure:?}"
+    fn endpoints_must_use_https_except_on_a_loopback_host() {
+        let local = "http://127.0.0.1:1/mcp";
+        assert!(endpoints_of(local, &metadata("https://as.test")).is_ok());
+        assert!(endpoints_of(local, &metadata("http://127.0.0.1:9")).is_ok());
+        assert!(endpoints_of(local, &metadata("http://localhost:9")).is_ok());
+        let failure = endpoints_of(local, &metadata("http://as.test")).unwrap_err();
+        assert_eq!(failure.exit(), Exit::Protocol);
+        assert!(failure.message().contains("on purpose"), "{failure:?}");
+        assert_eq!(failure.diagnostic().data(), ["http://as.test/authorize"]);
+        let mut unparsed = metadata("https://as.test");
+        unparsed.token_endpoint = "not a url".into();
+        let failure = endpoints_of(local, &unparsed).unwrap_err();
+        assert_eq!(failure.exit(), Exit::Protocol);
+    }
+
+    #[test]
+    fn a_public_entry_cannot_use_loopback_or_blocked_endpoints() {
+        let public = "https://mcp.example.com/mcp";
+        let mut registration = metadata("https://as.test");
+        registration.registration_endpoint = Some("http://127.0.0.1:9/register".into());
+        let mut token = metadata("https://as.test");
+        token.token_endpoint = "https://[::ffff:169.254.169.254]/token".into();
+        for metadata in [metadata("http://localhost:9"), registration, token] {
+            let failure = endpoints_of(public, &metadata).unwrap_err();
+            assert_eq!(failure.exit(), Exit::Auth, "{failure:?}");
+            // No permission in the entry permits these classes, so no
+            // hint suggests one.
+            assert_eq!(failure.hints(), [], "{failure:?}");
+        }
+    }
+
+    #[test]
+    fn the_private_option_of_the_entry_reaches_the_oauth_client() {
+        let remote = |oauth: &str| {
+            let config = crate::config::parse(
+                &format!(
+                    r#"{{"mcpServers": {{"web": {{"type": "http",
+                        "url": "https://mcp.corp.example/mcp", "oauth": {oauth}}}}}}}"#
+                ),
+                &crate::expand::Env::new(),
+            )
+            .unwrap();
+            match &config.server("web").unwrap().transport {
+                Transport::Http(remote) => remote.clone(),
+                _ => panic!("not http"),
+            }
+        };
+        let private_token = |oauth: &str| {
+            let mut metadata = metadata("https://as.corp.example");
+            metadata.token_endpoint = "https://10.0.0.5/token".into();
+            check_endpoints(
+                &OAuthHttp::direct_for_tests(permission(&remote(oauth)), "mcp.corp.example"),
+                "web",
+                &metadata,
+            )
+        };
+        assert!(private_token(r#"{"allowPrivateAddresses": true}"#).is_ok());
+        assert!(private_token("{}").is_err());
+    }
+
+    #[test]
+    fn a_private_literal_endpoint_gets_the_conditional_hint() {
+        let failure =
+            endpoints_of("https://mcp.example.com/mcp", &metadata("https://10.0.0.5")).unwrap_err();
+        let hints: Vec<&str> = failure.hints().iter().map(Hint::message).collect();
+        assert_eq!(
+            hints,
+            ["If this server needs private-network authorization, set \
+              `oauth.allowPrivateAddresses` to `true` in its entry"]
         );
+        assert_eq!(failure.hints()[0].command(), None);
     }
 
     #[test]

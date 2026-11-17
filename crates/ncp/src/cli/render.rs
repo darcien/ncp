@@ -49,12 +49,17 @@ pub fn target_text(target: &Target) -> String {
 }
 
 /// What a person checks before a trust, beside the target: `cwd`, the
-/// names of the `env` variables, and each `${NAME}` with the host that gets
-/// its value. No value shows, because a value can be a literal secret.
+/// names of the `env` variables, each `${NAME}` with the host that gets
+/// its value, and the permission of OAuth requests to private addresses.
+/// No value shows, because a value can be a literal secret.
 pub struct Shown {
     pub cwd: Option<String>,
     pub env: Vec<String>,
     pub sends: Vec<(String, String)>,
+    /// `oauth.allowPrivateAddresses` of a remote entry. A stdio entry
+    /// sends no OAuth request, so it has no value. A value that is not a
+    /// boolean has none either: the entry is then not valid.
+    pub allow_private_addresses: Option<bool>,
 }
 
 /// One row of `server list` and `ncp trust`: an entry with its file.
@@ -128,6 +133,9 @@ impl Row {
                 .iter()
                 .map(|(name, host)| serde_json::json!({"name": name, "host": host}))
                 .collect();
+            if let Some(allow) = shown.allow_private_addresses {
+                row["allowPrivateAddresses"] = serde_json::json!(allow);
+            }
         }
         row
     }
@@ -169,6 +177,7 @@ pub fn project_rows(project: &Project) -> Vec<Row> {
                     },
                     env: shape.env.clone(),
                     sends: shape.sends.clone(),
+                    allow_private_addresses: shape.allow_private_addresses,
                 }),
             }
         })
@@ -177,8 +186,8 @@ pub fn project_rows(project: &Project) -> Vec<Row> {
 
 /// One line for each server, for the user to check before a trust. A
 /// stdio line has the full command, `cwd` and the names of the `env`
-/// variables. An HTTP line has the URL, and each `${NAME}` with the host
-/// that gets it.
+/// variables. An HTTP line has the URL, each `${NAME}` with the host that
+/// gets it, and `oauth.allowPrivateAddresses` when it is `true`.
 ///
 /// No value of `env` or of a header shows, because it can be a literal
 /// secret. The output can go into the transcript of an agent. Each word
@@ -210,6 +219,12 @@ pub fn project_entries(entries: &[UnexpandedEntry]) -> Vec<String> {
                         .sends
                         .iter()
                         .map(|(name, host)| format!("{name} -> {}", shell_word(host))),
+                )
+                .chain(
+                    shape
+                        .allow_private_addresses
+                        .filter(|allow| *allow)
+                        .map(|_| "oauth.allowPrivateAddresses: true".to_string()),
                 )
                 .chain(
                     shape
@@ -876,6 +891,7 @@ mod tests {
                 url: ServerUrl::parse("https://example.com/mcp").unwrap(),
                 headers: BTreeMap::new(),
                 oauth_client: None,
+                allow_private_addresses: false,
                 url_values: Vec::new(),
             }),
         );

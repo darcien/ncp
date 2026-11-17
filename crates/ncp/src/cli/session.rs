@@ -24,6 +24,7 @@ use crate::{
     config::{self, Config, EntryError, LookupError, Server, Target, Transport},
     credential::SecretName,
     expand::{Env, ExpandError},
+    oauth::address::{Found, Refused, SafetyStop, StopReason, is_benchmark},
     paths::Paths,
     project::{self, Project, Trust},
     protocol_version::{ProtocolVersion, VersionCache},
@@ -75,6 +76,9 @@ pub struct Context<'a> {
     pub before_rename: fn(&Path),
     /// The client ID of a login with a Client ID Metadata Document.
     pub client_metadata_url: &'static str,
+    /// Fixed DNS answers for the OAuth requests. The test build gives
+    /// them for names that a test cannot register. `ncp` gives none.
+    pub oauth_hosts: crate::oauth::http::FixedHosts,
 }
 
 impl Context<'_> {
@@ -532,8 +536,10 @@ async fn stored_login(
     )
     .await
     .map_err(|failure| {
+        let notes = login.notes.get();
+        let failure = with_safety_stop(name, &notes, failure);
         let failure = failure.map_text(|text| file_url(login.server, &text));
-        with_tls_hint(context.env, &login.notes.get(), failure)
+        with_tls_hint(context.env, &notes, failure)
     })
 }
 
@@ -685,7 +691,14 @@ impl Prepared {
         server: &Server,
         error: &ConnectError,
     ) -> Failure {
-        let failure = connect_failure(context.env, server, error, &self.notes.get())
+        let notes = self.notes.get();
+        // A stop on purpose is the reason itself, so it gets no hint for a
+        // changed secret.
+        if let Some(stop) = &notes.oauth_stop {
+            return safety_stop_failure(server.name.as_str(), stop)
+                .map_text(|text| file_url(server, &text));
+        }
+        let failure = connect_failure(context.env, server, error, &notes)
             .map_text(|text| file_url(server, &text));
         if error.needs_authorization() {
             with_secret_hints(failure, server, &self.stored)
@@ -707,6 +720,7 @@ impl Prepared {
             cancel: &context.cancel,
             observer: &self.observer,
             authorized: None,
+            notes: &self.notes,
             progress: &self.progress,
             elicitor: self.elicitor.as_ref(),
         }
@@ -929,12 +943,77 @@ fn through_proxy(env: &Env, url: &crate::server::ServerUrl, failure: Failure) ->
                 crate::proxy::Source::SystemSettings => "the system settings".to_string(),
             };
             failure.hint(format!(
-                "ncp sent the request to the proxy {} from {source}. To send requests to a \
-                 loopback host directly, run `export NO_PROXY=localhost,127.0.0.1,::1`.",
+                "ncp sent the request to the proxy {} from {source}. {LOOPBACK_DIRECT}.",
                 code(url)
             ))
         }
         _ => failure,
+    }
+}
+
+const LOOPBACK_DIRECT: &str =
+    "To send requests to a loopback host directly, run `export NO_PROXY=localhost,127.0.0.1,::1`";
+
+/// The fix for an OAuth request that stopped at a private address. It
+/// starts with a condition, because only the user knows that the server
+/// is in a private network. The response of a server proves nothing: a
+/// hostile server names a private address on purpose. Thus the hint has
+/// no command that an agent can run with no review.
+const PRIVATE_NETWORK: &str = "If this server needs private-network authorization, set \
+     `oauth.allowPrivateAddresses` to `true` in its entry";
+
+const BENCHMARK_PROXY: &str = "DNS proxies can use `198.18.0.0/15` for synthetic addresses. \
+     If your DNS proxy provides an HTTP proxy, set `HTTPS_PROXY` to its URL. \
+     Make sure that `NO_PROXY` does not match the OAuth hostname.";
+
+/// The failure of an OAuth request that the address policy stopped. The
+/// message says that the stop is on purpose, so that the user does not
+/// take it for a defect. A scheme stop is a protocol error, because a new
+/// login cannot repair it.
+///
+/// Only a private address gets the hint for the permission: no key of the
+/// entry permits a loopback or a blocked address, or plain `http` to
+/// another computer.
+pub(super) fn safety_stop_failure(name: &str, stop: &SafetyStop) -> Failure {
+    let exit = match stop.reason {
+        StopReason::Scheme | StopReason::NotValid => Exit::Protocol,
+        _ => Exit::Auth,
+    };
+    let failure = Failure::new(
+        exit,
+        format!(
+            "ncp stopped an OAuth request for the server {} on purpose:",
+            code(name)
+        ),
+    )
+    .about(name)
+    .data(stop.url.clone())
+    .cause(stop.describe(&code));
+    match &stop.reason {
+        StopReason::Class {
+            class: Refused::Private,
+            ..
+        } => failure.hint(PRIVATE_NETWORK),
+        StopReason::Class {
+            found: Found::Resolved(address),
+            class: Refused::Blocked,
+        } if is_benchmark(*address) => failure.hint(BENCHMARK_PROXY),
+        StopReason::RemoteProxy { .. } => failure.hint(LOOPBACK_DIRECT),
+        _ => failure,
+    }
+}
+
+/// The failure of a stopped OAuth request in place of the failure that
+/// rmcp gave for it. rmcp keeps only the text of the error, so the stop
+/// comes from the notes of the HTTP client.
+pub(super) fn with_safety_stop(
+    name: &str,
+    notes: &client::http::Notes,
+    failure: Failure,
+) -> Failure {
+    match &notes.oauth_stop {
+        Some(stop) => safety_stop_failure(name, stop),
+        None => failure,
     }
 }
 
@@ -1187,6 +1266,80 @@ mod tests {
                 .len(),
             0
         );
+    }
+
+    fn stop(host: &str, on_entry_host: bool, reason: StopReason) -> SafetyStop {
+        SafetyStop {
+            url: format!("https://{host}/token"),
+            host: host.into(),
+            on_entry_host,
+            reason,
+        }
+    }
+
+    fn resolved(address: &str, class: Refused) -> StopReason {
+        StopReason::Class {
+            found: Found::Resolved(address.parse().unwrap()),
+            class,
+        }
+    }
+
+    fn hints(failure: &Failure) -> Vec<&str> {
+        failure.hints().iter().map(Hint::message).collect()
+    }
+
+    #[test]
+    fn a_loopback_answer_of_the_entry_host_names_the_entry() {
+        let loopback = resolved("127.0.0.1", Refused::Loopback);
+        let entry = safety_stop_failure("web", &stop("app.test", true, loopback.clone()));
+        assert_eq!(
+            entry.diagnostic().causes(),
+            [
+                "The host `app.test` of the entry resolves to `127.0.0.1`, which is a loopback \
+              address. No key of the entry permits a loopback address for a host name."
+            ]
+        );
+        let other = safety_stop_failure("web", &stop("as.test", false, loopback));
+        assert_eq!(
+            other.diagnostic().causes(),
+            [
+                "The host `as.test` resolves to `127.0.0.1`, which is a loopback address. \
+              Only an entry with a loopback URL permits loopback addresses."
+            ]
+        );
+        for failure in [entry, other] {
+            assert_eq!(failure.exit(), Exit::Auth);
+            assert_eq!(hints(&failure), Vec::<&str>::new());
+        }
+    }
+
+    #[test]
+    fn a_benchmark_dns_answer_gets_the_hint_for_a_proxy() {
+        let hint = "DNS proxies can use `198.18.0.0/15` for synthetic addresses. \
+                    If your DNS proxy provides an HTTP proxy, set `HTTPS_PROXY` to its URL. \
+                    Make sure that `NO_PROXY` does not match the OAuth hostname.";
+        for address in ["198.18.0.42", "64:ff9b::c612:2a"] {
+            let failure = safety_stop_failure(
+                "web",
+                &stop("as.test", false, resolved(address, Refused::Blocked)),
+            );
+            assert_eq!(failure.exit(), Exit::Auth, "{address}");
+            assert_eq!(hints(&failure), [hint], "{address}");
+            assert_eq!(failure.hints()[0].command(), None);
+        }
+        let benchmark = "198.18.0.42".parse().unwrap();
+        for reason in [
+            StopReason::Class {
+                found: Found::Literal(benchmark),
+                class: Refused::Blocked,
+            },
+            StopReason::NotLoopback { address: benchmark },
+            resolved("169.254.169.254", Refused::Blocked),
+        ] {
+            let failure = safety_stop_failure("web", &stop("as.test", false, reason.clone()));
+            assert_eq!(failure.exit(), Exit::Auth, "{reason:?}");
+            assert_eq!(hints(&failure), Vec::<&str>::new(), "{reason:?}");
+        }
     }
 
     #[test]

@@ -17,6 +17,10 @@
 //!   immediately before `ncp` renames its new copy over it.
 //! - `NCP_TEST_CLIENT_METADATA_URL` replaces the URL of the Client ID
 //!   Metadata Document, so that a test server can expect its own URL.
+//! - `NCP_TEST_HOSTS` gives fixed DNS answers to the OAuth requests, for
+//!   example `tok.localhost=127.0.0.1;as.test=10.0.0.5,::1`. A test can
+//!   then name a host that resolves to an address of its choice. A name
+//!   that the list does not have goes to the resolver of the system.
 
 use std::{
     io::{BufRead, BufReader, Write},
@@ -105,6 +109,22 @@ fn client_metadata_url() -> &'static str {
     }
 }
 
+// The addresses of the host in `NCP_TEST_HOSTS`. The variable is read at
+// each lookup, because a `fn` cannot keep a parsed list. An address that
+// does not parse is left out.
+fn fixed_hosts(host: &str) -> Option<Vec<std::net::IpAddr>> {
+    let hosts = std::env::var("NCP_TEST_HOSTS").ok()?;
+    hosts.split(';').find_map(|entry| {
+        let (name, addresses) = entry.split_once('=')?;
+        name.eq_ignore_ascii_case(host).then(|| {
+            addresses
+                .split(',')
+                .filter_map(|address| address.trim().parse().ok())
+                .collect()
+        })
+    })
+}
+
 fn main() -> std::process::ExitCode {
     ncp::cli::main_with(Platform {
         open_native: fake_native,
@@ -113,5 +133,6 @@ fn main() -> std::process::ExitCode {
         stdout_terminal: fake_stdout_tty,
         before_rename: change_before_rename,
         client_metadata_url: client_metadata_url(),
+        oauth_hosts: fixed_hosts,
     })
 }

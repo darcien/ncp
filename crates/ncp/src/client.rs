@@ -87,6 +87,10 @@ pub struct Launch<'a> {
     pub observer: &'a observe::Observer,
     /// Only for an http server that needs a login.
     pub authorized: Option<&'a http::Authorized>,
+    /// What the HTTP clients of the server saw that their errors do not
+    /// say. The connection keeps it, because a request after the connect
+    /// can refresh the tokens.
+    pub notes: &'a http::ConnectNotes,
     pub progress: &'a ProgressSink,
     /// A person at a TTY. With no elicitor, `ncp` tells the server that it
     /// cannot answer an elicitation.
@@ -425,6 +429,7 @@ pub struct Connection {
     process: Option<stdio::Process>,
     authorized: bool,
     refused: Arc<AtomicBool>,
+    notes: http::ConnectNotes,
 }
 
 /// Connects to the server and finds its protocol version.
@@ -619,6 +624,7 @@ async fn handshake(
         process,
         authorized: launch.authorized.is_some(),
         refused,
+        notes: launch.notes.clone(),
     })
 }
 
@@ -759,6 +765,14 @@ impl Connection {
     #[must_use]
     pub fn is_authorized(&self) -> bool {
         self.authorized
+    }
+
+    /// The OAuth request that the address policy stopped last, when no
+    /// OAuth request completed after it. A refresh during a request can
+    /// stop, and the error of the request then has only the text of rmcp.
+    #[must_use]
+    pub fn oauth_stop(&self) -> Option<crate::oauth::address::SafetyStop> {
+        self.notes.get().oauth_stop
     }
 
     /// `ncp` refuses a question of a server when it has no one to ask.

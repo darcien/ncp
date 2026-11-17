@@ -901,7 +901,7 @@ async fn oauth_handle(
     {
         let mut document = json!({
             "resource": resource,
-            "authorization_servers": [oauth.auth.issuer()],
+            "authorization_servers": [oauth.auth.resource_authorization_server()],
             "bearer_methods_supported": ["header"],
         });
         if let Some(scopes) = oauth.auth.resource_scopes() {

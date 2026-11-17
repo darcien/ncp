@@ -63,6 +63,9 @@ pub struct Platform {
     pub before_rename: fn(&std::path::Path),
     /// The client ID of a login with a Client ID Metadata Document.
     pub client_metadata_url: &'static str,
+    /// Fixed DNS answers for the OAuth requests. The test build gives
+    /// them for names that a test cannot register. `ncp` gives none.
+    pub oauth_hosts: crate::oauth::http::FixedHosts,
 }
 
 #[must_use]
@@ -74,6 +77,7 @@ pub fn main() -> ExitCode {
         stdout_terminal: ui::stdout_is_terminal,
         before_rename: |_| {},
         client_metadata_url: auth::CLIENT_METADATA_URL,
+        oauth_hosts: crate::oauth::http::system_hosts,
     })
 }
 
@@ -187,6 +191,7 @@ async fn run(
             named_config: cli.options.config_file.is_some(),
             before_rename: platform.before_rename,
             client_metadata_url: platform.client_metadata_url,
+            oauth_hosts: platform.oauth_hosts,
             cache: match (cli.options.no_cache, cli.options.refresh) {
                 (true, _) => session::CacheUse::Off,
                 (false, true) => session::CacheUse::WriteOnly,
