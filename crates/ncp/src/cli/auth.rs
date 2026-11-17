@@ -1401,7 +1401,8 @@ fn show_url(context: &Context<'_>, server: &str, url: &str, read_stdin: bool) {
 
 fn page(status: &str, message: &str) -> String {
     let body = format!(
-        "<!doctype html><title>ncp</title><p>{}</p>",
+        "<!doctype html><meta name=\"color-scheme\" content=\"light dark\"><title>ncp</title>\
+         <style>:root{{font-family:system-ui,sans-serif}}</style><p>{}</p>",
         message.replace('&', "&amp;").replace('<', "&lt;")
     );
     format!(
