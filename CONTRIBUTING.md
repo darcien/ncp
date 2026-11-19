@@ -10,6 +10,7 @@ Read the documents of the task before a change:
 | Each change | This document and [STYLE.md](STYLE.md), the rules for all text |
 | A command, an option, an output or a secret | [docs/command-development.md](docs/command-development.md) |
 | A release | [docs/release.md](docs/release.md) |
+| A dependency or a Renovate pull request | [docs/dependencies.md](docs/dependencies.md) |
 | The live tests | [docs/live-tests.md](docs/live-tests.md) |
 
 AI agents also read [AGENTS.md](AGENTS.md).

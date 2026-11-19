@@ -291,7 +291,7 @@ notifies the maintainer.
 
 ```yaml
 # Checks the advisories of the locked crates each day. The RustSec database
-# changes when the repository does not, so a push cannot show a new advisory.
+# changes when the repository does not, and the check of each push only warns.
 name: advisories
 
 on:
@@ -319,7 +319,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # cargo-deny reads the crates through cargo metadata.
+      # cargo-deny runs cargo metadata, so the job needs the Rust toolchain.
       - run: rustup toolchain install
       - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
@@ -332,7 +332,8 @@ jobs:
           cargo deny --locked check advisories > "$RUNNER_TEMP/deny.txt" 2>&1
           echo "status=$?" >> "$GITHUB_OUTPUT"
           cat "$RUNNER_TEMP/deny.txt"
-      # One open issue holds all reports, so a daily failure adds a comment.
+      # An advisory can stay for many days. Thus a failure adds a comment to the
+      # open issue, and does not open a new issue each day.
       - if: steps.deny.outputs.status != '0'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -394,10 +395,14 @@ that gives cargo the same age:
 # new transitive crate. A malicious or broken release is most dangerous
 # in its first days. The task needs one or more crates, because a run of
 # cargo update with no crate unlocks all crates. Such a run moves each
-# locked crate that is younger than 7 days back, also a young fix.
+# locked crate that is younger than 7 days back to an older version. If
+# the newer version is a vulnerability fix, the vulnerability comes back.
+# The value deny of CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE is the cargo
+# default. The task sets it so that an allow in a cargo configuration
+# cannot turn off the age.
 [tasks."deps:update"]
 description = "Update crates of Cargo.lock inside the version ranges, with versions that are 7 days old or older"
-usage = 'arg "<crate>..." var=#true help="The crates to update"'
+usage = 'arg "<crate>..." var=#true help="The crates to update. For a crate with two locked versions, give CRATE@VERSION."'
 env = { CARGO_REGISTRY_GLOBAL_MIN_PUBLISH_AGE = "7 days", CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE = "deny" }
 run = 'cargo update $(printf -- "-p %s " $usage_crate)'
 ```
@@ -407,120 +412,128 @@ commit, the person makes sure that no such line is a vulnerability fix.
 
 ### 5. The Renovate configuration
 
-The file is `.github/renovate.json5`, as in uv. It sets only values that
-differ from the defaults. These defaults apply:
+The file is `.github/renovate.jsonc`. Renovate reads this file name
+([config file names][rn-filenames]), and its docs recommend `.jsonc` for
+a configuration with comments ([options][rn-options]). The file sets
+only values that differ from the defaults. These defaults apply:
 `internalChecksFilter: "strict"`,
 `minimumReleaseAgeBehaviour: "timestamp-required"`,
 `semanticCommitScope: "deps"` and `lockFileMaintenance.enabled: false`.
 Thus an update gets no branch before its cooldown, and an update with no
 release time waits.
 
-```json5
+```jsonc
 {
-  $schema: "https://docs.renovatebot.com/renovate-schema.json",
-  // config:best-practices without :pinDevDependencies,
-  // security:minimumReleaseAgeNpm and :maintainLockFilesWeekly, and with
-  // the semver comment of each action digest. A full update of Cargo.lock
-  // with the age moves each young crate back, so lock file maintenance
-  // stays off.
-  extends: [
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  // Changes from config:best-practices:
+  // - :pinDevDependencies is left out. It also matches the cargo dep type
+  //   dev-dependencies, so it replaces each version range of the cargo
+  //   dev-dependencies with an exact pin.
+  // - security:minimumReleaseAgeNpm is left out. It sets 3 days in a
+  //   package rule for npm packages, and that rule replaces the 7 days of
+  //   this file.
+  // - :maintainLockFilesWeekly is left out. With the age, a full update of
+  //   Cargo.lock moves each crate younger than 7 days back to an older
+  //   version, also a vulnerability fix.
+  // - helpers:pinGitHubActionDigestsToSemver replaces
+  //   helpers:pinGitHubActionDigests, so the comment of each action digest
+  //   is a full version, for example v7.0.1.
+  "extends": [
     "config:recommended",
     "docker:pinDigests",
     "helpers:pinGitHubActionDigestsToSemver",
     ":configMigration",
-    "abandonments:recommended",
+    "abandonments:recommended"
   ],
-  // Only the files that hold a pin of ncp.
-  enabledManagers: [
+  // The harness packages stay out, because they first need a change of
+  // their package manager.
+  "enabledManagers": [
     "cargo",
     "rust-toolchain",
     "mise",
     "github-actions",
     "dockerfile",
-    "custom.regex",
+    "custom.regex"
   ],
-  // One weekly window. A vulnerability fix ignores it.
-  schedule: ["* 0-3 * * 1"],
+  // A vulnerability fix ignores the schedule.
+  "schedule": ["* 0-3 * * 1"],
   // A routine update is a build change. It does not go into the release
-  // notes, and it does not make a new version. The preset of
-  // config:recommended gives fix to some updates, so it is off.
-  ignorePresets: [":semanticPrefixFixDepsChoreOthers"],
-  semanticCommits: "enabled",
-  semanticCommitType: "build",
-  minimumReleaseAge: "7 days",
+  // notes, and it does not make a new version. config:recommended gives
+  // the type fix to updates of normal dependencies, so this preset is off.
+  "ignorePresets": [":semanticPrefixFixDepsChoreOthers"],
+  "semanticCommits": "enabled",
+  "semanticCommitType": "build",
+  "minimumReleaseAge": "7 days",
   // Renovate gives the age to cargo when it updates Cargo.lock, so new
   // transitive crates wait too. A vulnerability fix gets no age.
-  minimumReleaseAgePackageManagerSync: true,
-  vulnerabilityAlerts: {
-    // A fix goes into the release notes.
-    semanticCommitType: "fix",
-    labels: ["security"],
+  "minimumReleaseAgePackageManagerSync": true,
+  "vulnerabilityAlerts": {
+    // The type fix puts a vulnerability fix into the release notes.
+    "semanticCommitType": "fix",
+    "labels": ["security"]
   },
-  packageRules: [
+  "packageRules": [
     {
-      description: "One pull request for the minor and patch updates of the crates. Cargo treats a minor update of a 0.y crate as breaking, so it gets its own pull request.",
-      matchManagers: ["cargo"],
-      matchUpdateTypes: ["minor", "patch"],
-      matchIsBreaking: false,
-      groupName: "rust crates",
+      "description": "Cargo treats a minor update of a 0.y crate as breaking, so such an update gets its own pull request",
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchIsBreaking": false,
+      "groupName": "rust crates"
     },
     {
-      description: "One pull request for the minor and patch updates of the mise tools",
-      matchManagers: ["mise"],
-      matchUpdateTypes: ["minor", "patch"],
-      groupName: "mise tools",
+      "matchManagers": ["mise"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "mise tools"
     },
     {
-      description: "One pull request for the actions and the tool versions of the workflows",
-      matchFileNames: [".github/workflows/**"],
-      matchUpdateTypes: ["minor", "patch", "digest", "pinDigest"],
-      groupName: "github actions",
+      "matchFileNames": [".github/workflows/**"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pinDigest"],
+      "groupName": "github actions"
     },
     {
-      description: "ncp gives the event type of sse-stream to rmcp, so both must agree",
-      matchManagers: ["cargo"],
-      matchPackageNames: ["rmcp", "sse-stream"],
-      groupName: "rmcp",
+      "description": "ncp gives the event type of sse-stream to rmcp, so ncp must use the sse-stream version of rmcp",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["rmcp", "sse-stream"],
+      "groupName": "rmcp"
     },
     {
-      description: "rmcp 3.10.0 requires sse-stream ^0.2.4. Remove this hold when rmcp accepts sse-stream 0.3.",
-      matchManagers: ["cargo"],
-      matchPackageNames: ["sse-stream"],
-      allowedVersions: "<0.3",
+      "description": "rmcp requires sse-stream 0.2. Remove this hold when rmcp accepts sse-stream 0.3.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["sse-stream"],
+      "allowedVersions": "<0.3"
     },
     {
-      description: "ncp pins the secret-service version of the store, and keyring-core is the trait of the store",
-      matchManagers: ["cargo"],
-      matchPackageNames: ["keyring-core", "zbus-secret-service-keyring-store", "secret-service"],
-      groupName: "Secret Service store",
+      "description": "The three crates have exact pins. ncp uses the secret-service version of the store and the keyring-core trait of the store, so the pins move together.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["keyring-core", "zbus-secret-service-keyring-store", "secret-service"],
+      "groupName": "Secret Service store"
     },
     {
-      description: "hk.pkl loads the configuration package of the hk release in mise.toml",
-      matchPackageNames: ["jdx/hk"],
-      groupName: "hk",
+      "description": "hk.pkl loads the configuration package of the hk release in mise.toml",
+      "matchPackageNames": ["jdx/hk"],
+      "groupName": "hk"
     },
     {
-      description: "Renovate cannot age a digest of the tag trixie-slim, because the tag is not a version. Without this rule, the update waits forever.",
-      matchManagers: ["dockerfile"],
-      matchUpdateTypes: ["digest"],
-      minimumReleaseAgeBehaviour: "timestamp-optional",
-    },
+      "description": "Renovate cannot find the release time of a digest of the tag trixie-slim, because the tag is not a version. Without this rule, the update waits forever. With it, the update gets no cooldown.",
+      "matchManagers": ["dockerfile"],
+      "matchUpdateTypes": ["digest"],
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
+    }
   ],
-  customManagers: [
+  "customManagers": [
     {
-      // The three package URLs of hk.pkl.
-      customType: "regex",
-      managerFilePatterns: ["/^hk\\.pkl$/"],
-      matchStrings: [
-        "package://github\\.com/jdx/hk/releases/download/v(?<currentValue>\\d+\\.\\d+\\.\\d+)/hk@\\d+\\.\\d+\\.\\d+#",
+      "customType": "regex",
+      "managerFilePatterns": ["/^hk\\.pkl$/"],
+      "matchStrings": [
+        "package://github\\.com/jdx/hk/releases/download/v(?<currentValue>\\d+\\.\\d+\\.\\d+)/hk@\\d+\\.\\d+\\.\\d+#"
       ],
-      depNameTemplate: "hk",
-      packageNameTemplate: "jdx/hk",
-      datasourceTemplate: "github-releases",
-      extractVersionTemplate: "^v(?<version>.+)$",
-      autoReplaceStringTemplate: "package://github.com/jdx/hk/releases/download/v{{{newValue}}}/hk@{{{newValue}}}#",
-    },
-  ],
+      "depNameTemplate": "hk",
+      "packageNameTemplate": "jdx/hk",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$",
+      "autoReplaceStringTemplate": "package://github.com/jdx/hk/releases/download/v{{{newValue}}}/hk@{{{newValue}}}#"
+    }
+  ]
 }
 ```
 
@@ -545,35 +558,50 @@ release time waits.
 Renovate does not merge, as in uv and mise. CI does not build for macOS
 or musl, so CI alone cannot accept an update.
 
-CONTRIBUTING.md, "Dependencies", gets these steps for a Renovate pull
-request:
+A new document, `docs/dependencies.md`, gives the dependency rules, and
+the task table of CONTRIBUTING.md links it.
 
-1. Make sure that the pull request changes only the expected pin files
-   (`git diff --stat main...BRANCH`). Make sure that each commit is from
-   `renovate[bot]`. Do this before step 3, because step 3 runs the code
-   of the branch.
-2. Read the release notes and the change of the lock file. A new crate
-   needs a reason, as a new direct dependency does. Refuse a pull
-   request that moves a package back to an older version.
+`docs/dependencies.md` gets these steps for a Renovate pull request:
+
+1. Make sure that the pull request changes only pin files:
+   `crates/*/Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`,
+   `mise.toml`, `mise.lock`, `hk.pkl`, `harness/linux/Dockerfile` or
+   `.github/workflows/*.yaml` (`gh pr diff N --name-only`). Make sure
+   that each commit is from `renovate[bot]`
+   (`gh pr view N --json commits`). Do this before step 3, because
+   step 3 runs the code of the branch.
+2. Read the release notes of the updated packages and the change of the
+   lock file. A new crate needs a reason, as a new direct dependency
+   does. Do not merge a pull request that moves a package back to an
+   older version.
 3. Run `gh pr checkout N`, then `mise run precommit`. This runs the
-   checks and tests on macOS and in the Linux musl container.
-4. Merge with squash. If a `fix(deps)` pull request changes no file that
-   the `ncp` binary builds from, change its type to `build`. The release
-   notes then do not list it.
+   checks and tests on macOS and in the Linux musl container. CI tests
+   only Linux glibc.
+4. Merge with squash. If a `fix(deps)` pull request changes no input of
+   the `ncp` binary, use the type `build` for the squash commit. The
+   release notes then do not list it.
 
 A separate change adds a CI job that runs the macOS tests and the musl
 container tests. After that change, the job can replace step 3.
 
-CONTRIBUTING.md also gets the cooldown rules:
+`docs/dependencies.md` also gets the cooldown rules, the rule for a hold
+(section 7) and the daily advisory job (section 3). The cooldown rules
+are:
 
 - To update crates on the host, run `mise run deps:update CRATE...`,
   not `cargo update`. To find candidates, run
-  `cargo update --dry-run --verbose`. A crate with two locked versions
-  needs `CRATE@VERSION`, for example `sha2`.
-- To add a crate, run `cargo add` with the two variables of the task.
+  `cargo update --dry-run --verbose`. A crate with two locked versions,
+  for example `sha2`, needs `CRATE@VERSION`.
+- cargo prints `Downgrading` for each crate that it moves back. If such
+  a line moves back a vulnerability fix, run the command for a
+  vulnerability fix below before the commit.
+- To add a crate, run `cargo add` with the two variables of the task
+  `deps:update` in `mise.toml`.
 - For a vulnerability fix, run
   `cargo update -p CRATE@LOCKED --precise VERSION` with no age. For an
-  exact pin, change `Cargo.toml` first.
+  exact pin, change `crates/*/Cargo.toml` first. If the version
+  requirement of a parent crate excludes the fix, update the parent
+  first.
 
 ### 7. Holds
 
@@ -599,6 +627,7 @@ not a hold, because Renovate opens a closed group pull request again.
 | The CI check of uv (`check-cargo-cooldowns`) | It needs a new tool, and it fails a young vulnerability fix unless the fix gets an exclusion. |
 | Lock file maintenance of `Cargo.lock`, as mise | A full update with the age brings a young vulnerability fix back to the vulnerable version. |
 | Automerge of minor and patch updates | CI does not cover macOS and musl. mise also turns it off. |
+| The dependency rules in CONTRIBUTING.md, "Dependencies" | The steps of a task with its own document go into that document, as the release steps go into `docs/release.md`. |
 | An advisory error that stops CI | The RustSec database changes when the repository does not. The daily job reports it. |
 | An email from the advisory job, as mise | A new network destination and two secrets. GitHub already notifies the maintainer. |
 | No semantic commits, as uv | CONTRIBUTING.md requires Conventional Commits. |
@@ -607,6 +636,7 @@ not a hold, because Renovate opens a closed group pull request again.
 | No tag rule `creation`, as mise | The app can then push a tag `vX.Y.Z` and publish a release. |
 | `13-slim` in place of `trixie-slim`. It has the same digest, and it is a version. | No Renovate run shows that Renovate ages a digest of `13-slim`. `trixie-slim` with `timestamp-optional` works now, and its warning shows each update. |
 | Renovate updates `rust-version`, with an MSRV build in CI, as uv ([renovate.json5][uv-renovate]) | Out of scope of this RFC. `rust-version` stays manual, and CI gets no MSRV build. |
+| `.github/renovate.json5`, as uv | The Renovate docs recommend `.jsonc` for a configuration with comments ([options][rn-options]). A config migration writes a `.json5` file with JSON5 and drops its comments. It keeps the comments of a `.jsonc` file ([migrated content][rn-migrated]). |
 | `osvVulnerabilityAlerts`, which reads the OSV database for direct dependencies | Renovate marks it as experimental, and neither uv nor mise uses it. This RFC shows no advisory that OSV has and the Dependabot alerts do not. |
 | `cargo vet` (uv), `cargo machete` (mise) | They solve other problems: audits of crate code, and unused crates. Each needs its own decision. |
 
@@ -621,7 +651,7 @@ works:
    stops with a usage error. Thus the task gives cargo the age, and it
    cannot unlock all crates.
 2. **Configuration.** Run `renovate-config-validator --strict` of
-   Renovate 44.251.0 on `.github/renovate.json5`. This runs code from
+   Renovate 44.251.0 on `.github/renovate.jsonc`. This runs code from
    npm, so it needs the approval of the maintainer. Without it, the
    first run of the app shows each error in the Dependency Dashboard.
 3. **Detection.** After the first run, the Dependency Dashboard lists
@@ -664,6 +694,8 @@ works:
 [rn-cargo]: https://github.com/renovatebot/renovate/blob/44.251.0/lib/modules/manager/cargo/readme.md
 [rn-age]: https://github.com/renovatebot/renovate/blob/44.251.0/docs/usage/key-concepts/minimum-release-age.md
 [rn-options]: https://github.com/renovatebot/renovate/blob/44.251.0/docs/usage/configuration-options.md
+[rn-migrated]: https://github.com/renovatebot/renovate/blob/44.251.0/lib/config/migrated-content.ts
+[rn-filenames]: https://github.com/renovatebot/renovate/blob/44.251.0/lib/config/app-strings.ts
 [rn-perms]: https://github.com/renovatebot/renovate/blob/44.251.0/docs/usage/security-and-permissions.md
 [rn-mend]: https://github.com/renovatebot/renovate/blob/44.251.0/docs/usage/mend-hosted/overview.md
 [dependabot-eco]: https://docs.github.com/en/code-security/dependabot/ecosystems-supported-by-dependabot/supported-ecosystems-and-repositories
