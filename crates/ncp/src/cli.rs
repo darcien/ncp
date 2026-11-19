@@ -68,7 +68,6 @@ pub struct Platform {
     pub oauth_hosts: crate::oauth::http::FixedHosts,
 }
 
-#[must_use]
 pub fn main() -> ExitCode {
     main_with(Platform {
         open_native: secrets::open_native,
@@ -81,7 +80,6 @@ pub fn main() -> ExitCode {
     })
 }
 
-#[must_use]
 pub fn main_with(platform: Platform) -> ExitCode {
     let started = Instant::now();
     // The completion scripts run this at each tab. It is not part of the
