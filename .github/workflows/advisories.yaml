@@ -1,0 +1,68 @@
+# Checks the advisories of the locked crates each day. The RustSec database
+# changes when the repository does not, and the check of each push only warns.
+name: advisories
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: advisories
+  cancel-in-progress: false
+
+jobs:
+  advisories:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    env:
+      MISE_AUTO_INSTALL: "false"
+      MISE_LOCKED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # cargo-deny runs cargo metadata, so the job needs the Rust toolchain.
+      - run: rustup toolchain install
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.11.2
+          install_args: cargo-deny
+          cache: false
+      - id: deny
+        run: |
+          set +e
+          cargo deny --locked check advisories > "$RUNNER_TEMP/deny.txt" 2>&1
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/deny.txt"
+      # An advisory can stay for many days. Thus a failure adds a comment to the
+      # open issue, and does not open a new issue each day.
+      - if: steps.deny.outputs.status != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -eu
+          title="cargo deny check advisories failed"
+          {
+            echo "\`cargo deny check advisories\` failed on \`$GITHUB_REF_NAME\` ([run]($RUN_URL))."
+            echo
+            echo '```'
+            head -c 50000 "$RUNNER_TEMP/deny.txt"
+            echo '```'
+          } > "$RUNNER_TEMP/body.md"
+          number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --limit 100 --json number,title \
+            --jq "map(select(.title == \"$title\")) | .[0].number // empty")"
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          fi
+      - if: steps.deny.outputs.status != '0'
+        run: exit 1
