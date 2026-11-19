@@ -58,10 +58,10 @@ code:
 
 ## Stop and ask
 
-Stop and ask before you:
+Do not do these actions until the maintainer decides:
 
 - Add a network destination to `ncp`, its build, its tests or its
-  tools. These destinations need no question:
+  tools. These destinations need no decision:
   - crates.io and the Rust toolchain.
   - A pinned package from the MCP organization, with the dependencies
     that its lock file pins.
@@ -70,7 +70,20 @@ Stop and ask before you:
 - Run code that does not come from these sources.
 
 To read a public page for research or a citation, for example a spec,
-an RFD or the documentation of a tool, you do not need to ask.
+an RFD or the documentation of a tool, you do not need a decision.
+
+Before you ask for a decision, research it. Then show:
+
+1. The problem, and the reason that it needs the maintainer.
+2. The options, their tradeoffs and the evidence. Verify each fact about
+   prior art with a command or a source. Name each claim that you did
+   not verify.
+3. Your recommendation, with its label. For an action in the list
+   above, keep the recommendation neutral and set no default answer.
+
+Do not end with a request for a yes or no. The maintainer decides when
+to decide, and can ask more questions first. If you find a false
+statement in an earlier message, correct it first.
 
 ### GitHub Actions
 
