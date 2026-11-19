@@ -1,0 +1,112 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  // Changes from config:best-practices:
+  // - :pinDevDependencies is left out. It also matches the cargo dep type
+  //   dev-dependencies, so it replaces each version range of the cargo
+  //   dev-dependencies with an exact pin.
+  // - security:minimumReleaseAgeNpm is left out. It sets 3 days in a
+  //   package rule for npm packages, and that rule replaces the 7 days of
+  //   this file.
+  // - :maintainLockFilesWeekly is left out. With the age, a full update of
+  //   Cargo.lock moves each crate younger than 7 days back to an older
+  //   version, also a vulnerability fix.
+  // - helpers:pinGitHubActionDigestsToSemver replaces
+  //   helpers:pinGitHubActionDigests, so the comment of each action digest
+  //   is a full version, for example v7.0.1.
+  "extends": [
+    "config:recommended",
+    "docker:pinDigests",
+    "helpers:pinGitHubActionDigestsToSemver",
+    ":configMigration",
+    "abandonments:recommended"
+  ],
+  // The harness packages stay out, because they first need a change of
+  // their package manager.
+  "enabledManagers": [
+    "cargo",
+    "rust-toolchain",
+    "mise",
+    "github-actions",
+    "dockerfile",
+    "custom.regex"
+  ],
+  // A vulnerability fix ignores the schedule.
+  "schedule": ["* 0-3 * * 1"],
+  // A routine update is a build change. It does not go into the release
+  // notes, and it does not make a new version. config:recommended gives
+  // the type fix to updates of normal dependencies, so this preset is off.
+  "ignorePresets": [":semanticPrefixFixDepsChoreOthers"],
+  "semanticCommits": "enabled",
+  "semanticCommitType": "build",
+  "minimumReleaseAge": "7 days",
+  // Renovate gives the age to cargo when it updates Cargo.lock, so new
+  // transitive crates wait too. A vulnerability fix gets no age.
+  "minimumReleaseAgePackageManagerSync": true,
+  "vulnerabilityAlerts": {
+    // The type fix puts a vulnerability fix into the release notes.
+    "semanticCommitType": "fix",
+    "labels": ["security"]
+  },
+  "packageRules": [
+    {
+      "description": "Cargo treats a minor update of a 0.y crate as breaking, so such an update gets its own pull request",
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchIsBreaking": false,
+      "groupName": "rust crates"
+    },
+    {
+      "matchManagers": ["mise"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "mise tools"
+    },
+    {
+      "matchFileNames": [".github/workflows/**"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pinDigest"],
+      "groupName": "github actions"
+    },
+    {
+      "description": "ncp gives the event type of sse-stream to rmcp, so ncp must use the sse-stream version of rmcp",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["rmcp", "sse-stream"],
+      "groupName": "rmcp"
+    },
+    {
+      "description": "rmcp requires sse-stream 0.2. Remove this hold when rmcp accepts sse-stream 0.3.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["sse-stream"],
+      "allowedVersions": "<0.3"
+    },
+    {
+      "description": "The three crates have exact pins. ncp uses the secret-service version of the store and the keyring-core trait of the store, so the pins move together.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["keyring-core", "zbus-secret-service-keyring-store", "secret-service"],
+      "groupName": "Secret Service store"
+    },
+    {
+      "description": "hk.pkl loads the configuration package of the hk release in mise.toml",
+      "matchPackageNames": ["jdx/hk"],
+      "groupName": "hk"
+    },
+    {
+      "description": "Renovate cannot find the release time of a digest of the tag trixie-slim, because the tag is not a version. Without this rule, the update waits forever. With it, the update gets no cooldown.",
+      "matchManagers": ["dockerfile"],
+      "matchUpdateTypes": ["digest"],
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^hk\\.pkl$/"],
+      "matchStrings": [
+        "package://github\\.com/jdx/hk/releases/download/v(?<currentValue>\\d+\\.\\d+\\.\\d+)/hk@\\d+\\.\\d+\\.\\d+#"
+      ],
+      "depNameTemplate": "hk",
+      "packageNameTemplate": "jdx/hk",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$",
+      "autoReplaceStringTemplate": "package://github.com/jdx/hk/releases/download/v{{{newValue}}}/hk@{{{newValue}}}#"
+    }
+  ]
+}
