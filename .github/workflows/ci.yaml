@@ -41,7 +41,7 @@ jobs:
       - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
           version: 2026.11.2
-          install_args: node cargo-deny typos shellcheck
+          install_args: node cargo-deny typos shellcheck hk
           cache: false
       - run: mise run check
       - run: mise run test
