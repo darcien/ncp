@@ -48,11 +48,11 @@ run = [
 # new transitive crate. A malicious or broken release is most dangerous
 # in its first days. The task needs one or more crates, because a run of
 # cargo update with no crate unlocks all crates. Such a run moves each
-# locked crate that is younger than 7 days back to an older version. If
+# locked version that is younger than 7 days back to an older version. If
 # the newer version is a vulnerability fix, the vulnerability comes back.
 # The value deny of CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE is the cargo
 # default. The task sets it so that an allow in a cargo configuration
-# cannot turn off the age.
+# cannot turn off the cooldown.
 [tasks."deps:update"]
 description = "Update crates of Cargo.lock inside the version ranges, with versions that are 7 days old or older"
 usage = 'arg "<crate>..." var=#true help="The crates to update. For a crate with two locked versions, give CRATE@VERSION."'

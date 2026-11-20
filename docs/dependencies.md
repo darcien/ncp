@@ -22,8 +22,8 @@ a routine update uses only versions that are 7 days old or older.
 - To add a crate, run `cargo add` with the two variables of the task
   `deps:update` in `mise.toml`.
 - For a vulnerability fix, run
-  `cargo update -p CRATE@LOCKED --precise VERSION` with no age. For an
-  exact pin, change `crates/*/Cargo.toml` first. If the version
+  `cargo update -p CRATE@LOCKED --precise VERSION` with no cooldown.
+  For an exact pin, change `crates/*/Cargo.toml` first. If the version
   requirement of a parent crate excludes the fix, update the parent
   first.
 
@@ -79,6 +79,6 @@ remove it.
 | File | Function |
 |---|---|
 | `.github/renovate.jsonc` | The configuration of Renovate: the groups, the cooldown, the commit types and the holds. |
-| `mise.toml` | The task `deps:update`. It gives cargo the age of 7 days. |
+| `mise.toml` | The task `deps:update`. It gives cargo the cooldown of 7 days. |
 | `.github/workflows/advisories.yaml` | The daily advisory check. |
 | `deny.toml` | The rules of cargo-deny. A new dependency must pass them. |

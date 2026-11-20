@@ -7,9 +7,9 @@
   // - security:minimumReleaseAgeNpm is left out. It sets 3 days in a
   //   package rule for npm packages, and that rule replaces the 7 days of
   //   this file.
-  // - :maintainLockFilesWeekly is left out. With the age, a full update of
-  //   Cargo.lock moves each crate younger than 7 days back to an older
-  //   version, also a vulnerability fix.
+  // - :maintainLockFilesWeekly is left out. With the cooldown, a full
+  //   update of Cargo.lock moves each version younger than 7 days back,
+  //   also a vulnerability fix.
   // - helpers:pinGitHubActionDigestsToSemver replaces
   //   helpers:pinGitHubActionDigests, so the comment of each action digest
   //   is a full version, for example v7.0.1.
@@ -39,8 +39,8 @@
   "semanticCommits": "enabled",
   "semanticCommitType": "build",
   "minimumReleaseAge": "7 days",
-  // Renovate gives the age to cargo when it updates Cargo.lock, so new
-  // transitive crates wait too. A vulnerability fix gets no age.
+  // Renovate gives the cooldown to cargo when it updates Cargo.lock, so
+  // new transitive crates wait too. A vulnerability fix gets no cooldown.
   "minimumReleaseAgePackageManagerSync": true,
   "vulnerabilityAlerts": {
     // The type fix puts a vulnerability fix into the release notes.
