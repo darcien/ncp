@@ -69,6 +69,10 @@ description = "Lint shell scripts"
 usage = 'arg "[file]..." var=#true'
 run = 'shellcheck ${usage_file:-$(git ls-files "*.sh")}'
 
+[tasks."check:hk"]
+description = "Check that hk can load hk.pkl"
+run = "hk validate"
+
 # The build output and the container disk grow with no limit. Monitor them
 # to prevent a full disk.
 [tasks."check:disk"]
@@ -109,7 +113,7 @@ fi
 
 [tasks.check]
 description = "Run all static checks"
-depends = ["check:fmt", "check:clippy", "check:deny", "check:typos", "check:shellcheck"]
+depends = ["check:fmt", "check:clippy", "check:deny", "check:typos", "check:shellcheck", "check:hk"]
 
 [tasks.test]
 description = "Run all tests. Tests use only local servers"
