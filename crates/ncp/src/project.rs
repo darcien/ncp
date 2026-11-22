@@ -12,6 +12,7 @@
 //! The I/O is in `cli::project_file`.
 
 use std::{
+    fmt::Write as _,
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
 };
@@ -99,7 +100,13 @@ impl Trust {
 /// The SHA-256 of the bytes, in lowercase hex.
 #[must_use]
 pub fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    Sha256::digest(bytes)
+        .iter()
+        .fold(String::with_capacity(64), |mut hex, byte| {
+            // A write to a String cannot fail.
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
 }
 
 /// The file name of the records of a project file: the digest of its path,
@@ -212,6 +219,14 @@ mod tests {
             Trust::Untrusted { changed: false }
         );
         assert_eq!(Trust::from_records("d1", Some("d1"), true), Trust::Ignored);
+    }
+
+    #[test]
+    fn digest_is_the_lowercase_hex_sha256_of_the_bytes() {
+        assert_eq!(
+            digest(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     #[test]
