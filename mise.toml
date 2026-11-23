@@ -1,16 +1,16 @@
 # Rust itself is pinned in rust-toolchain.toml (rustup). mise pins the other tools.
 [tools]
 # The official MCP conformance suite runs on Node (harness/conformance).
-node = "24.22.2"
+node = "24.22.3"
 cargo-deny = "0.20.2"
-typos = "1.50.3"
+typos = "1.52.2"
 hk = "2.12.0"
 shellcheck = "0.11.0"
 # pnpm installs the interop server (harness/interop). No Corepack.
-pnpm = "12.10.1"
+pnpm = "12.21.0"
 # The release tools (docs/release.md).
 "cargo:git-cliff" = "2.14.2"
-"cargo:cargo-release" = "1.1.6"
+"cargo:cargo-release" = "1.1.7"
 # Updates inline snapshots (CONTRIBUTING.md, "Command snapshots").
 "cargo:cargo-insta" = "1.49.0"
 
