@@ -1,60 +1,37 @@
 # AGENTS.md
 
-Before any work, read [CONTRIBUTING.md](CONTRIBUTING.md) and the documents
+Before significant work, read [CONTRIBUTING.md](CONTRIBUTING.md) and the documents
 that it names for the task.
 
-## Workflow
+## Evidence
 
-### Start from the problem
+Before you fix a problem, show it with evidence, for example a failing
+test, the output of a command, or the code.
 
-A backlog item is a rough issue. It can name a symptom and not the
-problem, propose a fix too early, or be out of date. Before you write
-code:
+## Defaults
 
-1. Show the problem with evidence, for example a failing test, the
-   output of a command, or the code. If you cannot show it, tell the
-   maintainer.
-2. Find the cause and all the places that it affects: other commands,
-   texts, documents and tests. A fix in one place can leave the problem
-   in another.
-3. List the fair solutions. Do not take the fix in the item as given.
-   Compare the solutions with the order of choice.
-4. Decide if the change needs an RFC. If you are not sure, ask.
-5. Tell the maintainer the problem, the cause and the path that you
-   chose.
+Do only the steps that a change needs.
 
-### Write an RFC
-
-1. Put the chosen solution in Determinations and the others in
-   Alternatives.
-2. For prior art, run uv and mise, and quote their output with the
-   version. Help text changes between versions, so memory is not a
-   source.
-3. Edit the tracked RFC directly.
-   Save the initial draft as `.scratch/rfcNNNN/draft-1.md`.
-   Before substantial changes, use a prior Git revision or saved draft as the checkpoint.
-   If neither preserves the current design, save `.scratch/rfcNNNN/draft-N.md` before the change.
-   Compare the checkpoint with the current tracked RFC, without a separate after-copy.
-4. Get reviews (see "Reviews").
-5. Give the maintainer your recommendation. Name each choice that does
-   not follow uv and mise, because the maintainer must decide it.
-6. When the maintainer accepts or abandons the RFC, set its `state`.
+- A backlog item is a rough issue. It can name a symptom and not the
+  problem, propose a fix too early, or be out of date. Do not take the
+  fix in the item as given.
+- Find the cause and all the places that it affects: other commands,
+  texts, documents and tests. A fix in one place can leave the problem
+  in another.
+- When you finish, tell the maintainer the problem, the cause and the
+  change.
 
 ### Reviews
 
 - Get an adversarial review from a subagent for an RFC before the
-  maintainer decides. Do the same for a change to a command, an option,
-  an output field or a message before you commit it.
+  maintainer decides. Do the same for a new or changed command, option
+  or output field before you commit it.
 - Use a new subagent for each round, so that it reads the work fresh.
-  Give it the paths of `STYLE.md`, `CONTRIBUTING.md` and the documents
-  of its task. Do not summarize the rules for it, because a summary can
-  differ from the rules.
+  Give it just enough documents and references.
 - Ask for findings with a severity, the evidence and a fix. Problems
   that a user meets, and false facts, come before the wording.
 - Stop when a round finds no high or medium finding, or after 3 rounds,
   unless the maintainer asks for more.
-- Review substantial design changes together before the next maintainer decision.
-  For major rewrites or substantial shortening, compare the checkpoint with the current RFC for lost facts.
 
 ## Stop and ask
 

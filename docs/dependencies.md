@@ -20,7 +20,8 @@ a routine update uses only versions that are 7 days old or older.
   a line moves back a vulnerability fix, run the command for a
   vulnerability fix below before the commit.
 - To add a crate, run `cargo add` with the two variables of the task
-  `deps:update` in `mise.toml`.
+  `deps:update` in `mise.toml`. Give the reason for the new crate in the
+  commit body.
 - For a vulnerability fix, run
   `cargo update -p CRATE@LOCKED --precise VERSION` with no cooldown.
   For an exact pin, change `crates/*/Cargo.toml` first. If the version

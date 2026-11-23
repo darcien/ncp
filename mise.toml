@@ -11,7 +11,7 @@ pnpm = "12.21.0"
 # The release tools (docs/release.md).
 "cargo:git-cliff" = "2.14.2"
 "cargo:cargo-release" = "1.1.7"
-# Updates inline snapshots (CONTRIBUTING.md, "Command snapshots").
+# Updates inline snapshots (docs/command-tests.md).
 "cargo:cargo-insta" = "1.49.0"
 
 [settings]

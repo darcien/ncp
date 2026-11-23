@@ -12,7 +12,8 @@ comes from the current code.
 ## Changing output text
 
 - Change a text only in one of these cases:
-  - The text breaks a rule (see CONTRIBUTING.md, "Documents").
+  - The text breaks a rule of this document, or a MUST rule of
+    `docs/requirements.md` (see CONTRIBUTING.md, "Documents").
   - The text is false for the code.
   - A change of behavior makes the text false.
 - A text that obeys the rules stays, also when another wording seems
@@ -29,15 +30,9 @@ comes from the current code.
 
 ## Language
 
-- Write in ASD-STE100 Simplified Technical English. These rules apply:
-  - A sentence has at most 20 words in an instruction and at most 25 words
-    in a description.
-  - Use the active voice.
-  - Use simple tenses.
-  - Use one word for one meaning.
-  - Put a condition before the instruction.
-- The STE dictionary and the other STE rules guide new text. They are not a
-  reason to change a text that obeys this document.
+- Write new text in ASD-STE100 Simplified Technical English. Agents use
+  the skill `simplified-technical-english`.
+- STE alone is not a reason to change an existing text.
 - A phrase that uv and mise use comes before the STE word list. The STE
   word list does not cover the command line, and users know these phrases.
   Examples: "Did you mean `X`?", "press Enter", "press Ctrl-D", "Usage:".
@@ -306,8 +301,18 @@ c.", "The form has no field."). It has no labels and no backticks (see
 ## Documents and comments
 
 - A comment explains why, not what. Give the reason in words.
-- CONTRIBUTING.md gives the rules for citations and for the history of a
-  change.
+- Write documents and comments for the current behavior. Do not write the
+  history of a change in them: the commit has it.
+- Cite an external fact with a source that does not change: a versioned
+  MCP spec URL, an RFC section (for example "RFC 9207 §2.4"), or the name
+  of an official conformance scenario. Open the source before you cite it.
+  Do not cite from memory.
+- For a rule that is specific to `ncp`, state the rule and its reason in
+  words.
+- In code, tests and comments, do not cite an MVP document, an `ncp` RFC
+  (`docs/rfcs/`) or a research report, and do not use their IDs (for
+  example `P2` or `B67`). These documents can go away or change form. An
+  IETF RFC section is not an `ncp` RFC.
 
 ## Commit messages
 
