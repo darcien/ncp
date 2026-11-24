@@ -11,14 +11,17 @@
 //   does not make the run fail.
 // - The suite makes the directory <scenario>-<time> before the scenario
 //   starts. A scenario that stops with an exception has no checks.json.
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
-import { parse } from "yaml";
 
 const here = import.meta.dirname;
 const results = join(here, "results");
 const suiteName = "@modelcontextprotocol/conformance";
 const suiteDir = join(here, "node_modules", suiteName);
+// yaml is a dependency of the suite. pnpm puts it only beside the real
+// directory of the suite, behind the link in node_modules.
+const { parse } = createRequire(realpathSync(join(suiteDir, "package.json")))("yaml");
 
 // The time suffix of a scenario directory, for example -2026-10-21T13-12-38-339Z.
 const timeSuffix = /-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
@@ -102,12 +105,12 @@ function run(revision, baseline) {
 }
 
 const [version, commit, target, ...revisions] = process.argv.slice(2);
-const lock = readJson(join(here, "package-lock.json"));
+const suite = readJson(join(suiteDir, "package.json"));
 const baseline = readYaml(join(here, "expected-failures.yaml")).client;
 const report = {
   schema: 1,
   ncp: { version, commit, target },
-  suite: { version: lock.packages[`node_modules/${suiteName}`].version },
+  suite: { version: suite.version },
   date: new Date().toISOString(),
   runs: revisions.map((revision) => run(revision, baseline)),
 };

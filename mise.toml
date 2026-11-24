@@ -1,12 +1,10 @@
 # Rust itself is pinned in rust-toolchain.toml (rustup). mise pins the other tools.
 [tools]
-# The official MCP conformance suite runs on Node (harness/conformance).
 node = "24.22.3"
 cargo-deny = "0.20.2"
 typos = "1.52.2"
 hk = "2.12.0"
 shellcheck = "0.11.0"
-# pnpm installs the interop server (harness/interop). No Corepack.
 pnpm = "12.21.0"
 # The release tools (docs/release.md).
 "cargo:git-cliff" = "2.14.2"
@@ -184,9 +182,8 @@ fi
 # The conformance suite: an online install from the lock file, then an
 # offline run. See harness/conformance/run.sh.
 [tasks."conformance:install"]
-description = "Install the pinned MCP conformance suite from its lock file"
-dir = "harness/conformance"
-run = "npm ci --ignore-scripts"
+description = "Install the pinned MCP conformance suite from the lock file"
+run = "pnpm install --frozen-lockfile --filter ./harness/conformance"
 
 [tasks.conformance]
 description = "Run the official MCP conformance suite against ncp for each protocol version"
@@ -195,9 +192,8 @@ run = "harness/conformance/run.sh"
 # The interop tests: an online install from the lock file, then an offline
 # run against the official everything server.
 [tasks."interop:install"]
-description = "Install the pinned MCP everything server from its lock file"
-dir = "harness/interop"
-run = "pnpm install --frozen-lockfile"
+description = "Install the pinned MCP everything server from the lock file"
+run = "pnpm install --frozen-lockfile --filter ./harness/interop"
 
 [tasks.interop]
 description = "Run the interop tests against the official MCP everything server"

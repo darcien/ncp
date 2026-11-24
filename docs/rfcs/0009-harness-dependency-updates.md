@@ -1,5 +1,5 @@
 ---
-state: proposed
+state: committed
 supersedes: []
 ---
 
@@ -32,7 +32,7 @@ specific to the design:
 - `minimumReleaseAgePackageManagerSync` of RFC 0008 gives pnpm the
   cooldown of 7 days for routine updates and lock file maintenance. A
   security update gets no cooldown from Renovate, so pnpm applies its
-  default of 1 day.
+  own setting, by default 1 day.
 - Renovate reads pnpm files with its manager `npm`. It updates a
   transitive dependency only with lock file maintenance. RFC 0008 keeps
   lock file maintenance off for `Cargo.lock`. The setting can be on for
@@ -69,10 +69,13 @@ These files are at the root:
 - `pnpm-workspace.yaml`:
   - It lists each workspace package by path. Thus a new directory does
     not join by accident.
-  - It sets only `minimumReleaseAgeStrict: true` and
-    `trustPolicy: no-downgrade`, with the comment of the current
-    `harness/interop/pnpm-workspace.yaml`. All other settings stay at
-    the pnpm defaults.
+  - It sets only `minimumReleaseAge: 10080` and
+    `trustPolicy: no-downgrade`. All other settings stay at the pnpm
+    defaults. An explicit `minimumReleaseAge` makes pnpm strict by
+    default ([`minimumReleaseAgeStrict`][pnpm-resolution]).
+  - Renovate reads `minimumReleaseAge` and uses the larger of it and
+    its own cooldown ([cooldown of Renovate][rn-age]). Thus no value
+    needs a copy.
 - `package.json`:
   - It has only `"private": true`.
   - For pnpm, GitHub lists `package.json` as an additional file of the
@@ -82,9 +85,7 @@ These files are at the root:
     `mise.toml` pins pnpm and Node.
 - `pnpm-lock.yaml`:
   - It replaces the lock files of the workspace packages.
-  - Make it with
-    `pnpm install --lockfile-only --config.minimum-release-age=10080`.
-    Then no locked version is younger than the cooldown of Renovate.
+  - Make it with `pnpm install --lockfile-only`.
 - `.gitignore` has `node_modules/`, as the
   [Node template][gh-gitignore] of GitHub.
 
@@ -107,7 +108,7 @@ not from the MCP organization, first get a decision of the maintainer
 (`AGENTS.md`, "Stop and ask").
 
 1. Add its directory to `packages:`.
-2. Run `pnpm install --config.minimum-release-age=10080`.
+2. Run `pnpm install`.
 3. Add its install task.
 
 ### 2. The harness
@@ -141,9 +142,6 @@ After section 1, `.github/renovate.jsonc` adds the Renovate manager
 `npm` to `enabledManagers`, with this setting:
 
 ```jsonc
-  // Lock file maintenance takes the transitive fixes of pnpm. An
-  // override keeps a young fix in place. Cargo has no override, so
-  // Cargo.lock gets no lock file maintenance.
   "npm": { "lockFileMaintenance": { "enabled": true } },
 ```
 
@@ -159,37 +157,14 @@ dependencies with the same cooldown.
 
 ### 4. Transitive vulnerability fixes
 
-A transitive fix waits for lock file maintenance, unless a person adds
-an override (an item of `overrides`). Do not use
-`pnpm audit --fix=update`. It changes only the lock file, so lock file
-maintenance moves a young fix back.
+All pnpm updates wait for the cooldown of 7 days. pnpm reads it from
+`pnpm-workspace.yaml`, so it applies also to a security update and a
+local command. Transitive fixes wait for the weekly lock file
+maintenance. No overrides.
 
 [docs/dependencies.md](../dependencies.md) gets a section "pnpm" with
-these steps:
-
-1. At the root, run `pnpm audit --fix`. It adds overrides, and
-   exclusions for fixes that are younger than 1 day.
-2. Beside each new override and exclusion, add a comment with each
-   advisory that it fixes.
-3. Run `pnpm install`.
-4. Commit `pnpm-workspace.yaml` and `pnpm-lock.yaml`.
-5. When the fix is 7 days old, remove its override and exclusion.
-6. Run `pnpm install`.
-7. If `pnpm audit` finds the advisory again, put the override back. The
-   range of the parent still excludes the fix.
-
-Two cases stop Renovate:
-
-- A locked version that is younger than 7 days stops the routine
-  updates, unless an exclusion permits it. A fix of this section or a
-  security update can add such a version.
-- An override or a direct dependency with no version that is 7 days old
-  stops lock file maintenance, with
-  `ERR_PNPM_NO_MATURE_MATCHING_VERSION`.
-
-The merge steps of `docs/dependencies.md` also get a step for a change
-to the workspace: run the install task and the tests of each workspace
-package. CI does not run the interop tests.
+the steps to add a workspace package, and a merge step that runs each
+install task and its tests.
 
 ## Alternatives
 
@@ -202,6 +177,8 @@ package. CI does not run the interop tests.
 | `yaml` as a direct dependency | It needs a decision of the maintainer (`AGENTS.md`). Renovate then updates it apart from the suite. |
 | `publicHoistPattern: [yaml]` | `report.mjs` then uses a dependency that it does not declare. No test fails when the suite stops using `yaml`. |
 | Dependabot security updates | This adds a second bot. Its fix of a transitive dependency changes only the lock file. Then lock file maintenance moves a young fix back. |
+| Overrides for a young transitive fix (`pnpm audit --fix`) | Each override needs a hand removal later. A young override stops lock file maintenance. Test tools can wait. |
+| The pnpm default cooldown of 1 day | A security update can then lock a version younger than 7 days. That version stops the pnpm updates of Renovate, and each local command needs `--config.minimum-release-age=10080`. |
 
 ## Tests
 

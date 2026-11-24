@@ -1,5 +1,11 @@
+# Each workspace package by path, so that a new directory does not join by
+# accident.
+packages:
+  - harness/conformance
+  - harness/interop
+
 # Only the settings that differ from the pnpm defaults. Do not add
 # allowBuilds entries: with none, an install fails when a dependency has a
 # build script.
-minimumReleaseAgeStrict: true
+minimumReleaseAge: 10080
 trustPolicy: no-downgrade

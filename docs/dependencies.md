@@ -27,12 +27,21 @@ To merge a pull request:
 1. Read the release notes and the diff.
 2. On the branch, run `mise run precommit`. CI tests only Linux glibc.
    This also tests macOS and Linux musl.
-3. Merge with squash. Use the type `build` when a `fix(deps)` pull
+3. If the pull request changes a `package.json`, `pnpm-workspace.yaml`,
+   `pnpm-lock.yaml`, or the `node` or `pnpm` pin, run each `*:install`
+   task and its tests. CI does not run them on a pull request.
+4. Merge with squash. Use the type `build` when a `fix(deps)` pull
    request changes no input of the `ncp` binary.
 
 To hold a dependency, add a `packageRules` entry to
 `.github/renovate.jsonc`, with the reason and the condition to remove
 it. Do not close the pull request, because Renovate opens it again.
+
+## pnpm
+
+To add a workspace package, add its directory to `packages:` in
+`pnpm-workspace.yaml`, run `pnpm install`, and add an install task to
+`mise.toml`.
 
 ## Advisories
 

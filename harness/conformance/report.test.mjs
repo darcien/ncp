@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,20 +20,22 @@ test("reports incomplete checks as failed without changing recorded checks", (t)
   const root = mkdtempSync(join(tmpdir(), "ncp-report-test-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
-  const suite = join(root, "node_modules", "@modelcontextprotocol", "conformance");
-  const yaml = join(root, "node_modules", "yaml");
+  // The layout of pnpm: the suite is a link, and yaml is only beside the
+  // target of the link.
+  const store = join(root, "node_modules", ".pnpm", "conformance", "node_modules");
+  const suite = join(store, "@modelcontextprotocol", "conformance");
+  const yaml = join(store, "yaml");
   const results = join(root, "results", "requirements-test");
   mkdirSync(join(suite, "requirements"), { recursive: true });
   mkdirSync(yaml, { recursive: true });
   mkdirSync(results, { recursive: true });
+  mkdirSync(join(root, "node_modules", "@modelcontextprotocol"));
+  symlinkSync(suite, join(root, "node_modules", "@modelcontextprotocol", "conformance"));
   copyFileSync(join(source, "report.mjs"), join(root, "report.mjs"));
 
   // JSON is valid YAML. This local parser keeps the fixture free of downloads.
-  writeFileSync(join(yaml, "package.json"), '{"type":"module","exports":"./index.mjs"}');
-  writeFileSync(join(yaml, "index.mjs"), "export const parse = JSON.parse;\n");
-  writeFileSync(join(root, "package-lock.json"), JSON.stringify({
-    packages: { "node_modules/@modelcontextprotocol/conformance": { version: "test" } },
-  }));
+  writeFileSync(join(yaml, "index.js"), "exports.parse = JSON.parse;\n");
+  writeFileSync(join(suite, "package.json"), JSON.stringify({ version: "test" }));
   writeFileSync(join(root, "expected-failures.yaml"), JSON.stringify({ client: [] }));
 
   const cases = [
@@ -59,6 +62,7 @@ test("reports incomplete checks as failed without changing recorded checks", (t)
   ], { encoding: "utf8" });
   assert.equal(process.status, 0, process.stderr);
   const report = JSON.parse(readFileSync(join(root, "results", "conformance.json"), "utf8"));
+  assert.equal(report.suite.version, "test");
   const scenarios = report.runs[0].scenarios;
   for (const [name, checks, result] of cases) {
     const scenario = scenarios.find((entry) => entry.scenario === name);

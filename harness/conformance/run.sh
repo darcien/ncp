@@ -6,7 +6,7 @@
 #   harness/conformance/run.sh
 #
 # Run "mise run conformance:install" once first: it installs the suite at
-# the exact version of package-lock.json. This script uses no network: the
+# the exact version of pnpm-lock.yaml. This script uses no network: the
 # suite starts its servers on localhost. The proxy variables are removed,
 # because the suite uses localhost URLs.
 #

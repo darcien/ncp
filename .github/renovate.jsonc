@@ -20,16 +20,16 @@
     ":configMigration",
     "abandonments:recommended"
   ],
-  // The harness packages stay out, because they first need a change of
-  // their package manager.
   "enabledManagers": [
     "cargo",
     "rust-toolchain",
     "mise",
     "github-actions",
     "dockerfile",
-    "custom.regex"
+    "custom.regex",
+    "npm"
   ],
+  "npm": { "lockFileMaintenance": { "enabled": true } },
   // A vulnerability fix ignores the schedule.
   "schedule": ["* 0-3 * * 1"],
   // A routine update is a build change. It does not go into the release
@@ -39,8 +39,9 @@
   "semanticCommits": "enabled",
   "semanticCommitType": "build",
   "minimumReleaseAge": "7 days",
-  // Renovate gives the cooldown to cargo when it updates Cargo.lock, so
-  // new transitive crates wait too. A vulnerability fix gets no cooldown.
+  // Renovate gives the cooldown to cargo and pnpm when it updates
+  // Cargo.lock and pnpm-lock.yaml, so new transitive dependencies wait
+  // too. A vulnerability fix gets no cooldown.
   "minimumReleaseAgePackageManagerSync": true,
   "vulnerabilityAlerts": {
     // The type fix puts a vulnerability fix into the release notes.

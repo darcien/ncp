@@ -11,6 +11,9 @@ on:
       - mise.toml
       - mise.lock
       - harness/conformance/**
+      - package.json
+      - pnpm-workspace.yaml
+      - pnpm-lock.yaml
       - .github/workflows/conformance.yaml
   workflow_dispatch:
 
@@ -29,8 +32,9 @@ jobs:
     # change the Rust cache of the job check in ci.yaml.
     cache-mode: read
     env:
-      # The suite needs only Node from mise. mise run does not install the
-      # other tools of mise.toml, because mise builds some of them from source.
+      # The suite needs only Node and pnpm from mise. mise run does not
+      # install the other tools of mise.toml, because mise builds some of
+      # them from source.
       MISE_AUTO_INSTALL: "false"
       MISE_LOCKED: "1"
     steps:
@@ -49,7 +53,7 @@ jobs:
       - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
         with:
           version: 2026.11.8
-          install_args: node
+          install_args: node pnpm
           cache: false
       - run: mise run conformance:install
       - run: mise run conformance
