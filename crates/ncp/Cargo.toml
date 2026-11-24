@@ -43,8 +43,8 @@ url = "2.5.8"
 # and Zed read them. The cst feature edits a file and keeps its other bytes.
 jsonc-parser = { version = "=0.33.2", default-features = false, features = ["cst", "serde"] }
 
-# The hash of a trusted project file. oauth2 of rmcp already depends on it.
-sha2 = "0.10"
+# The hash of a trusted project file. rmcp already depends on it.
+sha2 = "0.11"
 
 # Pure Rust, so the static musl build needs no libdbus. zbus with async-io
 # blocks with async_io::block_on and not with a tokio runtime, so a call from
