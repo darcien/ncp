@@ -281,7 +281,7 @@ then fails, because the release exists, so the maintainer sees it.
 | Label | none | `security` |
 
 Renovate makes no pull request for a vulnerable transitive crate. The
-daily advisory issue and the Dependabot alerts show it. A person updates
+advisory issues and the Dependabot alerts show it. A person updates
 it with `cargo update --precise` and no cooldown
 ([docs/dependencies.md](../dependencies.md), "Cooldown").
 
@@ -293,12 +293,15 @@ The workflow
 runs `cargo deny --locked check advisories` each day, as mise does
 ([deny-advisories.yml][mise-deny]). It finds what Renovate does not
 fix: an unmaintained, unsound or yanked crate, an advisory with no fix,
-and a vulnerable transitive crate. On a failure, the job opens one issue
-or adds a comment to the open one. Then the run fails, and GitHub
-notifies the maintainer. The checkout takes the ref of the event:
-`main` for the schedule, and the selected branch for a manual run. The
-advisory check of the hook and CI stays a warning (CONTRIBUTING.md,
-"Checks").
+and a vulnerable transitive crate. For each advisory ID with no open
+issue of `github-actions[bot]`, the job opens one issue. The title
+starts with the ID. A run with only advisories succeeds. Another error,
+for example a yanked crate or a check that did not run, fails the run,
+and GitHub notifies the maintainer
+([docs/dependencies.md](../dependencies.md), "Advisories"). The
+checkout takes the ref of the event: `main` for the schedule, and the
+selected branch for a manual run. The advisory check of the hook and CI
+stays a warning (CONTRIBUTING.md, "Checks").
 
 ### 4. A cooldown of 7 days for routine updates
 
@@ -439,8 +442,9 @@ works:
    Renovate pull request with the label `security` and the type `fix`.
 5. **Advisory job.** Push a test branch that removes the `ignore` list
    of `deny.toml`. Run `gh workflow run advisories.yaml --ref BRANCH`.
-   The run fails and opens one issue. A second run adds a comment to
-   it. Then delete the branch and close the issue.
+   The run succeeds and opens one issue for each advisory ID that has
+   no open issue. A second run opens no issue. Then delete the branch
+   and close the issues of the IDs in `ignore`.
 6. **Rulesets.** `gh api repos/darcien/ncp/rules/branches/main` lists
    the rules of the `main` ruleset of section 2. Renovate can open a
    pull request with `collaborators_only`.
