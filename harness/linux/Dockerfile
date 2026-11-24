@@ -10,7 +10,7 @@
 # The digest is the multi-arch index of debian:trixie-slim. The pin keeps
 # each build on the same base. Get a new digest with:
 #   docker buildx imagetools inspect debian:trixie-slim
-FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS toolchain
+FROM debian:trixie-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0 AS toolchain
 
 # gcc and libc6-dev link the build scripts and the proc macros. These run on
 # the host target (gnu), not on the musl target. ring compiles C code for
