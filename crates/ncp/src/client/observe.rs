@@ -23,6 +23,7 @@ use rmcp::{
         Transport,
         streamable_http_client::{
             SseError, StreamableHttpClient, StreamableHttpError, StreamableHttpPostResponse,
+            StreamableHttpResponseLimits,
         },
     },
 };
@@ -322,6 +323,32 @@ impl<C: StreamableHttpClient + Sync> StreamableHttpClient for ObservedHttp<C> {
             auth_header,
             custom_headers,
             max_sse_event_size,
+        );
+        self.observed("POST", &uri, headers, request, post_outcome)
+            .await
+    }
+
+    async fn post_message_with_response_limits(
+        &self,
+        uri: Arc<str>,
+        message: ClientJsonRpcMessage,
+        session_id: Option<Arc<str>>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+        limits: StreamableHttpResponseLimits,
+    ) -> Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
+        let headers = shown_headers(
+            session_id.as_deref(),
+            auth_header.as_deref(),
+            &custom_headers,
+        );
+        let request = self.inner.post_message_with_response_limits(
+            uri.clone(),
+            message,
+            session_id,
+            auth_header,
+            custom_headers,
+            limits,
         );
         self.observed("POST", &uri, headers, request, post_outcome)
             .await
