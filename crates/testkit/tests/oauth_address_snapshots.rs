@@ -375,11 +375,12 @@ async fn a_refresh_stops_at_the_connection_when_the_dns_answer_changes() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_refresh_that_stops_during_a_request_gives_the_stop() {
-    // rmcp refreshes a token when less than 30 s of it remain, in whole
-    // seconds. The token lasts 33 s, and the handshake takes 4 s: the
-    // connect needs no refresh, and the first request after it does.
+    // rmcp refreshes a token when less than half of its lifetime remains,
+    // at most 30 s, in whole seconds. The token lasts 6 s, and the handshake
+    // takes 4 s: the connect needs no refresh, and the first request after
+    // it does.
     let auth = ncp_testkit::auth_server::serve_auth(AuthSettings {
-        expires_in: 33,
+        expires_in: 6,
         ..AuthSettings::default()
     })
     .await
