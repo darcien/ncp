@@ -2161,7 +2161,6 @@ async fn refreshes_a_metadata_document_client_with_no_secret() {
     // stays after the login with the metadata document.
     let (auth, fixture) = oauth_fixture(AuthSettings {
         registration: Registration::WithSecret,
-        expires_in: 5,
         ..AuthSettings::default()
     })
     .await;
@@ -2179,7 +2178,7 @@ async fn refreshes_a_metadata_document_client_with_no_secret() {
         "the code exchange sends no secret"
     );
     assert!(credential_file(&home).contains("oauth/web/client"));
-    // rmcp refreshes a token that ends in less than 30 s.
+    expire_stored_tokens(&file_store(&home));
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
     let record = auth.record();
@@ -2200,7 +2199,6 @@ async fn pre_registered(
 ) {
     let (auth, fixture) = oauth_fixture(AuthSettings {
         registration: Registration::Closed,
-        expires_in: 5,
         service_documentation: Some("https://as.test/register-a-client".into()),
         ..AuthSettings::default()
     })
@@ -2216,7 +2214,6 @@ async fn pre_registered(
 async fn login_and_refresh_send_the_configured_client_secret_to_its_issuer() {
     let (auth, fixture) = oauth_fixture(AuthSettings {
         registration: Registration::Closed,
-        expires_in: 5,
         ..AuthSettings::default()
     })
     .await;
@@ -2231,7 +2228,7 @@ async fn login_and_refresh_send_the_configured_client_secret_to_its_issuer() {
     assert_eq!(record.register_calls, 0);
     assert_eq!(record.token_client_id.as_deref(), Some("pre-2"));
     assert!(record.token_basic, "HTTP Basic is the default method");
-    // rmcp refreshes a token that ends in less than 30 s.
+    expire_stored_tokens(&file_store(&home));
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert!(auth.record().refresh_grants >= 1, "{:?}", auth.record());
@@ -2304,6 +2301,7 @@ async fn refresh_stops_and_keeps_the_tokens_when_the_issuer_changes() {
     )
     .await;
     assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    expire_stored_tokens(&file_store(&home));
     auth.settings(|settings| settings.issuer_path = "/b".into());
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
@@ -2493,13 +2491,10 @@ async fn tool_list_sends_the_stored_token_after_a_login() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn expired_token_is_refreshed_with_no_user_action_and_kept() {
-    let (auth, fixture) = oauth_fixture(AuthSettings {
-        expires_in: 5,
-        ..AuthSettings::default()
-    })
-    .await;
+    let (auth, fixture) = oauth_fixture(AuthSettings::default()).await;
     let home = oauth_home("refresh", &fixture.url);
     assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    expire_stored_tokens(&file_store(&home));
     let before = std::fs::read_to_string(home.root.join("state/ncp/credentials.json")).unwrap();
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
@@ -2508,21 +2503,32 @@ async fn expired_token_is_refreshed_with_no_user_action_and_kept() {
     assert_ne!(before, after, "the new tokens go back to the file");
 }
 
-fn change_stored_tokens(home: &Home, change: impl FnOnce(&mut Value)) {
-    fn find(value: &mut Value) -> Option<&mut Value> {
-        let object = value.as_object_mut()?;
-        if object.contains_key("oauth/web/tokens") {
-            return object.get_mut("oauth/web/tokens");
-        }
-        object.values_mut().find_map(find)
-    }
-    let path = home.root.join("state/ncp/credentials.json");
-    let mut file: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    let item = find(&mut file).unwrap();
-    let mut tokens: Value = serde_json::from_str(item.as_str().unwrap()).unwrap();
+fn file_store(home: &Home) -> ncp::store::FileStore {
+    ncp::store::FileStore::new(home.root.join("state/ncp/credentials.json"))
+}
+
+/// The fake native store of `Home::with_fake_keychain`.
+fn native_store(home: &Home) -> ncp::store::SecurityStore {
+    ncp::store::SecurityStore::with_program(home.root.join("keychain/security"))
+}
+
+fn change_stored_tokens(store: &dyn ncp::store::CredentialStore, change: impl FnOnce(&mut Value)) {
+    let key = ncp::credential::CredentialKey::from_account("oauth/web/tokens").unwrap();
+    let secret = store.load(&key).unwrap().unwrap();
+    let mut tokens: Value = serde_json::from_str(secret.expose()).unwrap();
     change(&mut tokens);
-    *item = json!(tokens.to_string());
-    std::fs::write(&path, file.to_string()).unwrap();
+    let secret = ncp::credential::Secret::new(tokens.to_string());
+    store.save(&key, &secret).unwrap();
+}
+
+/// Moves the receipt of the stored tokens back by their lifetime, as if the
+/// login was that long ago. rmcp then refreshes them before the next request.
+fn expire_stored_tokens(store: &dyn ncp::store::CredentialStore) {
+    change_stored_tokens(store, |tokens| {
+        let lifetime = tokens["token_response"]["expires_in"].as_u64().unwrap();
+        let received = tokens["token_received_at"].as_u64().unwrap();
+        tokens["token_received_at"] = json!(received - lifetime);
+    });
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2530,7 +2536,7 @@ async fn stored_token_for_another_server_url_is_not_sent() {
     let (_auth, fixture) = oauth_fixture(AuthSettings::default()).await;
     let home = oauth_home("binding-url", &fixture.url);
     assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
-    change_stored_tokens(&home, |tokens| {
+    change_stored_tokens(&file_store(&home), |tokens| {
         tokens["ncp_binding"]["resource"] = json!("https://other.example/mcp");
     });
     let run = home.run(&["tool", "list", "web"]);
@@ -2551,7 +2557,7 @@ async fn stored_token_with_no_binding_is_not_sent_until_a_new_login() {
     let (_auth, fixture) = oauth_fixture(AuthSettings::default()).await;
     let home = oauth_home("binding-missing", &fixture.url);
     assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
-    change_stored_tokens(&home, |tokens| {
+    change_stored_tokens(&file_store(&home), |tokens| {
         tokens.as_object_mut().unwrap().remove("ncp_binding");
     });
     let run = home.run(&["tool", "list", "web"]);
@@ -2570,13 +2576,13 @@ async fn stored_token_with_no_binding_is_not_sent_until_a_new_login() {
 #[tokio::test(flavor = "multi_thread")]
 async fn rejected_refresh_asks_for_a_new_login() {
     let (_auth, fixture) = oauth_fixture(AuthSettings {
-        expires_in: 5,
         reject_refresh: true,
         ..AuthSettings::default()
     })
     .await;
     let home = oauth_home("refresh-rejected", &fixture.url);
     assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    expire_stored_tokens(&file_store(&home));
     let run = home.run(&["tool", "list", "web"]);
     assert_eq!(run.code(), 4, "{}", run.describe());
     assert_eq!(run.error()["hints"][0]["command"], "ncp auth login web");
@@ -2671,12 +2677,12 @@ async fn a_login_keeps_the_last_request_only_for_the_same_server() {
     .await;
     let home = oauth_home("last-request", &fixture.url);
     assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
-    change_stored_tokens(&home, |tokens| {
+    change_stored_tokens(&file_store(&home), |tokens| {
         tokens["ncp_requested_scopes"] = json!(["a", "z"]);
     });
     assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
     assert_eq!(auth.record().authorize_scope.unwrap(), "a z");
-    change_stored_tokens(&home, |tokens| {
+    change_stored_tokens(&file_store(&home), |tokens| {
         tokens["ncp_requested_scopes"] = json!(["y"]);
         tokens["ncp_binding"]["issuer"] = json!("https://other.test");
     });
@@ -2842,15 +2848,12 @@ async fn server_with_no_login_never_opens_the_native_store() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn login_to_the_native_store_and_refresh_write_back_there() {
-    let (auth, fixture) = oauth_fixture(AuthSettings {
-        expires_in: 5,
-        ..AuthSettings::default()
-    })
-    .await;
+    let (auth, fixture) = oauth_fixture(AuthSettings::default()).await;
     let home = oauth_home("native-login", &fixture.url).with_fake_keychain();
     let run = home.run(&["auth", "login", "web"]);
     assert_eq!(run.code(), 0, "{}", run.describe());
     assert_eq!(run.stdout()["credentialStore"], "native");
+    expire_stored_tokens(&native_store(&home));
     let items = || std::fs::read_to_string(home.root.join("keychain/items.json")).unwrap();
     let before = items();
     assert!(before.contains("oauth/web/tokens") && before.contains("oauth/web/client"));
@@ -2956,13 +2959,10 @@ async fn login_to_a_server_that_names_no_authorization_server_is_an_error() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn parallel_calls_refresh_the_tokens_one_at_a_time() {
-    let (auth, fixture) = oauth_fixture(AuthSettings {
-        expires_in: 5,
-        ..AuthSettings::default()
-    })
-    .await;
+    let (auth, fixture) = oauth_fixture(AuthSettings::default()).await;
     let home = oauth_home("parallel-refresh", &fixture.url);
     assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    expire_stored_tokens(&file_store(&home));
     let runs: Vec<Run> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..4)
             .map(|_| scope.spawn(|| home.run(&["tool", "list", "web"])))
@@ -2980,13 +2980,10 @@ async fn parallel_calls_refresh_the_tokens_one_at_a_time() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn refresh_that_cannot_write_the_credential_file_is_a_local_error() {
-    let (_auth, fixture) = oauth_fixture(AuthSettings {
-        expires_in: 5,
-        ..AuthSettings::default()
-    })
-    .await;
+    let (_auth, fixture) = oauth_fixture(AuthSettings::default()).await;
     let home = oauth_home("refresh-file-fails", &fixture.url);
     assert_eq!(home.run(&LOGIN_TO_FILE).code(), 0);
+    expire_stored_tokens(&file_store(&home));
     let dir = home.root.join("state/ncp");
     let mode =
         |bits| std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(bits)).unwrap();
@@ -3147,13 +3144,10 @@ fn resource_read_gives_raw_contents_in_a_pipe_and_json_on_request() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn refresh_of_native_tokens_works_when_the_state_dir_is_read_only() {
-    let (auth, fixture) = oauth_fixture(AuthSettings {
-        expires_in: 5,
-        ..AuthSettings::default()
-    })
-    .await;
+    let (auth, fixture) = oauth_fixture(AuthSettings::default()).await;
     let home = oauth_home("native-read-only-state", &fixture.url).with_fake_keychain();
     assert_eq!(home.run(&["auth", "login", "web"]).code(), 0);
+    expire_stored_tokens(&native_store(&home));
     let dir = home.root.join("state/ncp");
     let _ = std::fs::remove_file(dir.join("oauth-web.lock"));
     let mode =
