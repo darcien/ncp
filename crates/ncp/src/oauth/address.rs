@@ -8,7 +8,7 @@
 //! Permission comes only from the entry. Server responses and DNS answers
 //! never add to it, because the server can control both.
 //!
-//! The address classes copy those of the OAuth client of rmcp 3.10.0, so
+//! The address classes copy those of the OAuth client of rmcp, so
 //! that the two checks agree about each address. When the version of rmcp
 //! changes, compare the ranges.
 
